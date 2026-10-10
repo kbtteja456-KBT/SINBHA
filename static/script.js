@@ -26,13 +26,24 @@ document.addEventListener("DOMContentLoaded", () => {
   const devFactsList = document.getElementById("devFactsList");
   const devAuditLogList = document.getElementById("devAuditLogList");
 
-  // Tasks Drawer elements
+  // Tasks Drawer elements (Step 6)
   const taskDrawer = document.getElementById("taskDrawer");
   const closeTaskBtn = document.getElementById("closeTaskBtn");
   const drawerOverlay = document.getElementById("drawerOverlay");
   const emptyTaskState = document.getElementById("emptyTaskState");
   const taskListContainer = document.getElementById("taskListContainer");
-  const taskList = document.getElementById("taskList");
+  const pendingTaskList = document.getElementById("pendingTaskList");
+  const pendingCountBadgeDrawer = document.getElementById("pendingCountBadgeDrawer");
+  const completedTasksAccordion = document.getElementById("completedTasksAccordion");
+  const completedTaskList = document.getElementById("completedTaskList");
+  const completedCountBadge = document.getElementById("completedCountBadge");
+
+  // Task Delete Modal elements (Step 6)
+  const taskDeleteModal = document.getElementById("taskDeleteModal");
+  const taskDeleteModalMessage = document.getElementById("taskDeleteModalMessage");
+  const cancelTaskDeleteBtn = document.getElementById("cancelTaskDeleteBtn");
+  const confirmTaskDeleteBtn = document.getElementById("confirmTaskDeleteBtn");
+  let taskToDeleteId = null;
 
   // Settings & Purge elements
   const openSettingsBtn = document.getElementById("openSettingsBtn");
@@ -138,6 +149,40 @@ document.addEventListener("DOMContentLoaded", () => {
             </div>
           </div>
         `;
+      } else if (proposal.type === "task_complete") {
+        // Step 6: Task completion confirmation card
+        proposalHtml = `
+          <div class="task-action-card" id="task-action-${proposal.task_id}">
+            <div class="task-action-header">
+              <span>🎉</span>
+              <span>Task Completion</span>
+            </div>
+            <div class="task-action-title">
+              ${escapeHtml(proposal.prompt || `Mark '${proposal.task_title}' as done?`)}
+            </div>
+            <div class="task-action-actions">
+              <button class="task-action-confirm-btn" data-id="${proposal.task_id}">✓ Yes, mark done</button>
+              <button class="task-action-cancel-btn" data-id="${proposal.task_id}">✕ Keep pending</button>
+            </div>
+          </div>
+        `;
+      } else if (proposal.type === "task_delete") {
+        // Step 6: Task deletion confirmation card
+        proposalHtml = `
+          <div class="task-action-card" id="task-action-${proposal.task_id}">
+            <div class="task-action-header">
+              <span>🗑️</span>
+              <span>Delete Task</span>
+            </div>
+            <div class="task-action-title">
+              ${escapeHtml(proposal.prompt || `Delete '${proposal.task_title}'?`)}
+            </div>
+            <div class="task-action-actions">
+              <button class="task-action-delete-btn" data-id="${proposal.task_id}">✓ Yes, delete</button>
+              <button class="task-action-cancel-btn" data-id="${proposal.task_id}">✕ Cancel</button>
+            </div>
+          </div>
+        `;
       } else if (proposal.type === "confirm_forget") {
         // Memory forget confirmation card
         proposalHtml = `
@@ -183,6 +228,27 @@ document.addEventListener("DOMContentLoaded", () => {
           confirmBtn.disabled = true;
           cancelBtn.disabled = true;
           await handleTaskCancel(proposal.id, card);
+        });
+      }
+    }
+
+    // Attach event listeners to task complete / delete action buttons (Step 6)
+    if (proposal && (proposal.type === "task_complete" || proposal.type === "task_delete")) {
+      const card = group.querySelector(".task-action-card");
+      const confirmBtn = group.querySelector(".task-action-confirm-btn, .task-action-delete-btn");
+      const cancelBtn = group.querySelector(".task-action-cancel-btn");
+
+      if (confirmBtn && cancelBtn) {
+        confirmBtn.addEventListener("click", async () => {
+          confirmBtn.disabled = true;
+          cancelBtn.disabled = true;
+          await handleTaskActionCardConfirmation("confirm", proposal.type, card);
+        });
+
+        cancelBtn.addEventListener("click", async () => {
+          confirmBtn.disabled = true;
+          cancelBtn.disabled = true;
+          await handleTaskActionCardConfirmation("cancel", proposal.type, card);
         });
       }
     }
@@ -301,6 +367,40 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // Handle clicking Confirm / Cancel on task action cards (complete or delete) (Step 6)
+  async function handleTaskActionCardConfirmation(action, type, cardElement) {
+    try {
+      const res = await fetch("/api/confirm-action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: action })
+      });
+      const data = await res.json();
+      
+      if (cardElement) {
+        const actionsDiv = cardElement.querySelector(".task-action-actions");
+        if (actionsDiv) {
+          if (action === "confirm") {
+            const label = type === "task_complete" ? "✓ Marked as completed" : "✓ Task deleted";
+            actionsDiv.outerHTML = `<div class="task-proposal-resolved confirmed">${label}</div>`;
+          } else {
+            const label = type === "task_complete" ? "✕ Kept pending" : "✕ Kept in tasks";
+            actionsDiv.outerHTML = `<div class="task-proposal-resolved cancelled">${label}</div>`;
+          }
+        }
+      }
+
+      if (data.reply) {
+        appendAiMessage(data.reply);
+      }
+
+      loadTasks();
+      if (isDevMode) loadDevData();
+    } catch (e) {
+      console.error("Task action card confirmation failed", e);
+    }
+  }
+
   // Add a system notice (e.g. STOP command)
   function appendSystemNotice(text) {
     const notice = document.createElement("div");
@@ -360,16 +460,20 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Load Tasks into Tasks Drawer (Step 5: Read-only)
+  // Load Tasks into Tasks Drawer (Step 6: Interactive)
   async function loadTasks() {
     try {
       const res = await fetch("/api/tasks");
       if (!res.ok) return;
       const data = await res.json();
       const tasks = data.tasks || [];
+      const pendingCount = typeof data.pending_count === "number" ? data.pending_count : tasks.filter(t => t.status === "pending").length;
 
-      // Update header badge
-      taskCountBadge.textContent = tasks.length;
+      // Update header badge (pending tasks only)
+      taskCountBadge.textContent = pendingCount;
+      if (pendingCountBadgeDrawer) {
+        pendingCountBadgeDrawer.textContent = `${pendingCount} pending`;
+      }
 
       renderTasks(tasks);
     } catch (e) {
@@ -386,25 +490,149 @@ document.addEventListener("DOMContentLoaded", () => {
 
     emptyTaskState.style.display = "none";
     taskListContainer.style.display = "block";
-    taskList.innerHTML = "";
 
-    tasks.forEach(t => {
-      const li = document.createElement("li");
-      li.className = "task-card-item";
-      li.innerHTML = `
-        <div class="task-card-top">
-          <span class="task-card-title">${escapeHtml(t.title)}</span>
-          <span class="task-status-pill ${escapeHtml(t.status)}">${escapeHtml(t.status)}</span>
-        </div>
-        ${t.due_date ? `<div class="task-card-due">📅 Due: ${escapeHtml(t.due_date)}</div>` : `<div class="task-card-due" style="color: #6b7280; font-weight: 500;">📅 No deadline</div>`}
-        ${t.notes ? `<div class="task-card-notes">📝 ${escapeHtml(t.notes)}</div>` : ''}
-        <div class="task-card-footer">
-          <span>Added ${formatTime(t.created_at)}</span>
-          <span>Step 5: Read-only</span>
-        </div>
-      `;
-      taskList.appendChild(li);
-    });
+    const pendingTasks = tasks.filter(t => t.status === "pending");
+    const completedTasks = tasks.filter(t => t.status === "completed");
+
+    // Render pending tasks list
+    pendingTaskList.innerHTML = "";
+    if (pendingTasks.length === 0) {
+      pendingTaskList.innerHTML = `<li style="font-size: 0.84rem; color: #9ca3af; text-align: center; padding: 14px 0;">All caught up! No pending tasks 🌸</li>`;
+    } else {
+      pendingTasks.forEach(t => {
+        const li = document.createElement("li");
+        li.className = `task-card-item ${t.is_overdue ? "overdue" : ""}`;
+        li.dataset.id = t.id;
+
+        li.innerHTML = `
+          <div class="task-card-main">
+            <label class="task-checkbox-container" title="Mark as done">
+              <input type="checkbox" class="task-checkbox" data-id="${t.id}" />
+              <span class="custom-checkmark"></span>
+            </label>
+            <div class="task-card-info">
+              <div class="task-card-title-row">
+                <span class="task-card-title">${escapeHtml(t.title)}</span>
+                ${t.is_overdue ? `<span class="task-overdue-badge">⚠️ Overdue</span>` : ""}
+              </div>
+              <div class="task-card-meta">
+                ${t.due_date ? `<span class="task-card-due ${t.is_overdue ? "overdue-text" : ""}">📅 Due: ${escapeHtml(t.due_date)}</span>` : `<span class="task-card-due no-date">📅 No due date</span>`}
+                ${t.notes ? `<span class="task-card-notes">📝 ${escapeHtml(t.notes)}</span>` : ""}
+              </div>
+            </div>
+            <button class="task-delete-btn" data-id="${t.id}" title="Delete task">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+            </button>
+          </div>
+        `;
+
+        // Checkbox event listener (toggle to completed with friendly micro-animation)
+        const chk = li.querySelector(".task-checkbox");
+        chk.addEventListener("change", () => {
+          li.classList.add("completing");
+          setTimeout(async () => {
+            await updateTaskStatus(t.id, "completed");
+            showToast("🌸 Great job! Task marked as done!");
+          }, 240);
+        });
+
+        // Delete button listener
+        const delBtn = li.querySelector(".task-delete-btn");
+        delBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          openTaskDeleteModal(t.id, t.title);
+        });
+
+        pendingTaskList.appendChild(li);
+      });
+    }
+
+    // Render completed tasks in collapsible section
+    completedTaskList.innerHTML = "";
+    if (completedTasks.length > 0) {
+      completedTasksAccordion.style.display = "block";
+      completedCountBadge.textContent = completedTasks.length;
+
+      completedTasks.forEach(t => {
+        const li = document.createElement("li");
+        li.className = "task-card-item completed";
+        li.dataset.id = t.id;
+
+        li.innerHTML = `
+          <div class="task-card-main">
+            <label class="task-checkbox-container" title="Uncheck to reopen task">
+              <input type="checkbox" class="task-checkbox" data-id="${t.id}" checked />
+              <span class="custom-checkmark"></span>
+            </label>
+            <div class="task-card-info">
+              <div class="task-card-title-row">
+                <span class="task-card-title">${escapeHtml(t.title)}</span>
+              </div>
+              <div class="task-card-meta">
+                ${t.due_date ? `<span class="task-card-due no-date">📅 ${escapeHtml(t.due_date)}</span>` : `<span class="task-card-due no-date">📅 No due date</span>`}
+                ${t.notes ? `<span class="task-card-notes">📝 ${escapeHtml(t.notes)}</span>` : ""}
+              </div>
+            </div>
+            <button class="task-delete-btn" data-id="${t.id}" title="Delete task">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+            </button>
+          </div>
+        `;
+
+        // Checkbox event listener (unchecking brings back to pending)
+        const chk = li.querySelector(".task-checkbox");
+        chk.addEventListener("change", async () => {
+          await updateTaskStatus(t.id, "pending");
+          showToast("Task brought back to pending 🌸");
+        });
+
+        // Delete button
+        const delBtn = li.querySelector(".task-delete-btn");
+        delBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          openTaskDeleteModal(t.id, t.title);
+        });
+
+        completedTaskList.appendChild(li);
+      });
+    } else {
+      completedTasksAccordion.style.display = "none";
+      completedCountBadge.textContent = "0";
+    }
+  }
+
+  // Update task status via PATCH endpoint (Step 6)
+  async function updateTaskStatus(taskId, status) {
+    try {
+      const res = await fetch(`/api/tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: status })
+      });
+      if (res.ok) {
+        await loadTasks();
+        if (isDevMode) loadDevData();
+      }
+    } catch (e) {
+      console.error("Failed to update task status:", e);
+    }
+  }
+
+  // Open Task Delete Confirmation Modal (Step 6)
+  function openTaskDeleteModal(taskId, taskTitle) {
+    taskToDeleteId = taskId;
+    if (taskDeleteModalMessage) {
+      taskDeleteModalMessage.textContent = `Are you sure you want to delete '${taskTitle}'? This will remove it permanently.`;
+    }
+    if (taskDeleteModal) {
+      taskDeleteModal.style.display = "flex";
+    }
   }
 
   // Fetch App Info and Check DEV_MODE
@@ -534,13 +762,17 @@ document.addEventListener("DOMContentLoaded", () => {
         setStopUiState(true);
       }
 
-      if (data.task_confirmed) {
+      if (data.task_confirmed || data.task_action_performed) {
         loadTasks();
-        showToast("🌸 Task saved to your list!");
+        if (data.task_action_performed) {
+          showToast("🌸 Tasks updated!");
+        } else {
+          showToast("🌸 Task saved to your list!");
+        }
       }
 
       // If facts or proposals were updated, reload dev data in background
-      if (isDevMode && (data.new_facts?.length > 0 || data.updated_fact || data.action_performed || data.proposal || data.task_confirmed || data.task_cancelled)) {
+      if (isDevMode && (data.new_facts?.length > 0 || data.updated_fact || data.action_performed || data.proposal || data.task_confirmed || data.task_cancelled || data.task_action_performed)) {
         loadDevData();
       }
     } catch (err) {
@@ -557,8 +789,8 @@ document.addEventListener("DOMContentLoaded", () => {
     showToast("🛑 Emergency STOP activated", 3500);
     appendSystemNotice("🛑 Emergency STOP triggered. All processing halted.");
 
-    // Requirement 6: cancel any pending proposal cards visibly on screen
-    document.querySelectorAll(".task-proposal-actions").forEach(el => {
+    // Requirement 6 & 7: cancel any pending proposal cards visibly on screen
+    document.querySelectorAll(".task-proposal-actions, .task-action-actions, .proposal-card-actions").forEach(el => {
       el.innerHTML = `<div class="task-proposal-resolved cancelled">🛑 Cancelled due to STOP</div>`;
     });
 
@@ -584,6 +816,53 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   bannerResumeBtn.addEventListener("click", resumeChat);
+
+  // Task Delete Modal Handlers (Step 6)
+  if (cancelTaskDeleteBtn) {
+    cancelTaskDeleteBtn.addEventListener("click", () => {
+      if (taskDeleteModal) taskDeleteModal.style.display = "none";
+      taskToDeleteId = null;
+    });
+  }
+
+  if (confirmTaskDeleteBtn) {
+    confirmTaskDeleteBtn.addEventListener("click", async () => {
+      if (!taskToDeleteId) return;
+      try {
+        confirmTaskDeleteBtn.disabled = true;
+        confirmTaskDeleteBtn.textContent = "Deleting...";
+
+        const res = await fetch(`/api/tasks/${taskToDeleteId}`, {
+          method: "DELETE"
+        });
+
+        if (res.ok) {
+          if (taskDeleteModal) taskDeleteModal.style.display = "none";
+          showToast("🗑️ Task removed");
+          await loadTasks();
+          if (isDevMode) loadDevData();
+        } else {
+          showToast("Could not delete task");
+        }
+      } catch (e) {
+        console.error("Failed to delete task:", e);
+        showToast("Error deleting task");
+      } finally {
+        confirmTaskDeleteBtn.disabled = false;
+        confirmTaskDeleteBtn.textContent = "Yes, Delete";
+        taskToDeleteId = null;
+      }
+    });
+  }
+
+  if (taskDeleteModal) {
+    taskDeleteModal.addEventListener("click", (e) => {
+      if (e.target === taskDeleteModal) {
+        taskDeleteModal.style.display = "none";
+        taskToDeleteId = null;
+      }
+    });
+  }
 
   // Settings & Purge handling
   openSettingsBtn.addEventListener("click", () => {
@@ -693,6 +972,10 @@ document.addEventListener("DOMContentLoaded", () => {
       closeDrawers();
       settingsModal.style.display = "none";
       purgeConfirmModal.style.display = "none";
+      if (taskDeleteModal) {
+        taskDeleteModal.style.display = "none";
+        taskToDeleteId = null;
+      }
     }
   });
 

@@ -329,20 +329,107 @@ def create_task(title: str, due_date: str = None, notes: str = None, status: str
     return task_id
 
 def get_all_tasks() -> list:
-    """Fetches all tasks from the database."""
+    """Fetches all tasks, sorted by urgency: overdue first, then upcoming by date, then no date, then completed."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT id, title, due_date, notes, status, created_at FROM tasks ORDER BY id DESC")
     rows = cursor.fetchall()
     conn.close()
-    return [{
-        "id": r["id"],
-        "title": r["title"],
-        "due_date": r["due_date"],
-        "notes": r["notes"],
-        "status": r["status"],
-        "created_at": r["created_at"]
-    } for r in rows]
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    tasks = []
+
+    for r in rows:
+        due = r["due_date"]
+        status = r["status"]
+        is_overdue = False
+        due_date_iso = ""
+
+        if due:
+            m = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", due)
+            if m:
+                due_date_iso = m.group(1)
+                if status == "pending" and due_date_iso < today_str:
+                    is_overdue = True
+
+        tasks.append({
+            "id": r["id"],
+            "title": r["title"],
+            "due_date": due,
+            "due_date_iso": due_date_iso,
+            "notes": r["notes"],
+            "status": status,
+            "is_overdue": is_overdue,
+            "created_at": r["created_at"]
+        })
+
+    # Sort tasks:
+    # 0: Pending & Overdue (due_date_iso ASC)
+    # 1: Pending & with due_date (due_date_iso ASC)
+    # 2: Pending & without due_date (id DESC)
+    # 3: Completed (id DESC)
+    def task_sort_key(t):
+        if t["status"] == "completed":
+            return (3, 999999 - t["id"])
+        if t["is_overdue"]:
+            return (0, t["due_date_iso"] or "9999-99-99")
+        if t["due_date_iso"]:
+            return (1, t["due_date_iso"])
+        return (2, 999999 - t["id"])
+
+    tasks.sort(key=task_sort_key)
+    return tasks
+
+def get_pending_tasks_count() -> int:
+    """Counts pending tasks."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) as cnt FROM tasks WHERE status = 'pending'")
+    row = cursor.fetchone()
+    conn.close()
+    return row["cnt"] if row else 0
+
+def update_task_status(task_id: int, new_status: str) -> bool:
+    """Updates task status ('pending' or 'completed') and logs audit event."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT title, status FROM tasks WHERE id = ?", (task_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return False
+
+    title = row["title"]
+    cursor.execute("UPDATE tasks SET status = ? WHERE id = ?", (new_status, task_id))
+    conn.commit()
+    conn.close()
+
+    if new_status == "completed":
+        log_audit("TASK_COMPLETED", f"Completed task #{task_id}: '{title}'")
+    elif new_status == "pending":
+        log_audit("TASK_REOPENED", f"Reopened task #{task_id}: '{title}'")
+    else:
+        log_audit("TASK_STATUS_CHANGED", f"Task #{task_id} status changed to {new_status}")
+
+    return True
+
+def delete_task(task_id: int) -> bool:
+    """Deletes a task and logs audit event."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT title FROM tasks WHERE id = ?", (task_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return False
+
+    title = row["title"]
+    cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+    conn.commit()
+    conn.close()
+
+    log_audit("TASK_DELETED", f"Deleted task #{task_id}: '{title}'")
+    return True
 
 def get_task_by_id(task_id: int) -> dict | None:
     """Fetches a single task by ID."""
@@ -476,6 +563,100 @@ def confirm_pending_proposal() -> dict | None:
         "notes": prop.get("notes"),
         "status": "pending"
     }
+
+def set_pending_task_action(action_type: str, task_id: int, task_title: str) -> int:
+    """Sets a pending action to complete or delete a task, requiring user confirmation."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM pending_actions WHERE action_type IN ('task_complete', 'task_delete')")
+    cursor.execute(
+        "INSERT INTO pending_actions (action_type, target_id, target_text, created_at) VALUES (?, ?, ?, datetime('now', 'localtime'))",
+        (action_type, task_id, task_title)
+    )
+    action_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return action_id
+
+def get_pending_task_action() -> dict | None:
+    """Retrieves current pending task action (complete or delete) if not expired (>30m)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, action_type, target_id, target_text, created_at FROM pending_actions WHERE action_type IN ('task_complete', 'task_delete') ORDER BY id DESC LIMIT 1"
+    )
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return None
+
+    try:
+        created_time = datetime.strptime(row["created_at"], "%Y-%m-%d %H:%M:%S")
+        elapsed = (datetime.now() - created_time).total_seconds()
+    except Exception:
+        elapsed = 0
+
+    if elapsed > 1800:
+        cursor.execute("DELETE FROM pending_actions WHERE id = ?", (row["id"],))
+        conn.commit()
+        conn.close()
+        log_audit("TASK_CANCELLED", f"Action {row['action_type']} for task #{row['target_id']} expired after 30 minutes.")
+        return None
+
+    conn.close()
+    return {
+        "id": row["id"],
+        "action_type": row["action_type"],
+        "task_id": row["target_id"],
+        "task_title": row["target_text"],
+        "created_at": row["created_at"]
+    }
+
+def confirm_pending_task_action() -> dict | None:
+    """Executes the pending task action (complete or delete) after user confirms."""
+    act = get_pending_task_action()
+    if not act:
+        return None
+
+    action_type = act["action_type"]
+    task_id = act["task_id"]
+    task_title = act["task_title"]
+
+    success = False
+    if action_type == "task_complete":
+        success = update_task_status(task_id, "completed")
+    elif action_type == "task_delete":
+        success = delete_task(task_id)
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM pending_actions WHERE id = ?", (act["id"],))
+    conn.commit()
+    conn.close()
+
+    return {
+        "action_type": action_type,
+        "task_id": task_id,
+        "task_title": task_title,
+        "success": success
+    }
+
+def cancel_pending_task_action(reason: str = "User cancelled") -> bool:
+    """Cancels any pending task complete or delete action."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, action_type, target_text FROM pending_actions WHERE action_type IN ('task_complete', 'task_delete') ORDER BY id DESC LIMIT 1"
+    )
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return False
+
+    cursor.execute("DELETE FROM pending_actions WHERE id = ?", (row["id"],))
+    conn.commit()
+    conn.close()
+    return True
 
 # Initialize tables immediately on import
 init_db()

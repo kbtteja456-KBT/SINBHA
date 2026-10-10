@@ -18,6 +18,8 @@ from app.ai_brain import (
     is_forget_intent,
     find_target_fact_to_forget,
     parse_relative_date,
+    find_matching_tasks,
+    detect_task_chat_intent,
 )
 from app import database as db
 
@@ -34,6 +36,9 @@ class ActionConfirmRequest(BaseModel):
 
 class TaskActionRequest(BaseModel):
     proposal_id: Optional[int] = None
+
+class TaskStatusUpdateRequest(BaseModel):
+    status: str  # "pending" or "completed"
 
 class FactCreateRequest(BaseModel):
     fact: str
@@ -77,8 +82,9 @@ async def chat_endpoint(payload: ChatRequest):
         emergency_stop_triggered = True
         db.save_message("user", user_msg)
         
-        # Requirement 6: If STOP is triggered, cancel any pending proposal
+        # Requirement 6 & 7: If STOP is triggered, cancel any pending proposal or card
         db.cancel_pending_proposal(reason="Emergency STOP command received in chat")
+        db.cancel_pending_task_action(reason="Emergency STOP command received in chat")
         
         stop_reply = "🛑 STOP command received. All operations halted immediately. Type any message or click 'Resume Chat' to continue whenever you're ready 🌸"
         db.save_message("assistant", stop_reply)
@@ -94,7 +100,39 @@ async def chat_endpoint(payload: ChatRequest):
         emergency_stop_triggered = False
         db.log_audit("STOP_RESUMED", "Chat resumed by normal message.")
 
-    # 1. Check for pending task proposal confirmation in chat ("confirm", "yes", "save it" / "cancel", "no")
+    # 1. Check for pending task action confirmation in chat (complete or delete)
+    pending_task_act = db.get_pending_task_action()
+    if pending_task_act:
+        lower_msg = user_msg.lower()
+        is_confirm = bool(re.search(r"^(yes|yeah|yep|yup|confirm|sure|mark\s+it|do\s+it|delete\s+it|remove\s+it|please\s+do)\b", lower_msg))
+        is_cancel = bool(re.search(r"^(no|nope|cancel|don't|drop\s+it|nevermind|nah|mat\s+karo)\b", lower_msg))
+
+        if is_confirm:
+            res = db.confirm_pending_task_action()
+            if res:
+                db.save_message("user", user_msg)
+                if res["action_type"] == "task_complete":
+                    reply_msg = f"Woohoo! 🎉 Marked '{res['task_title']}' as completed! Amazing job! 🌸"
+                else:
+                    reply_msg = f"I've removed '{res['task_title']}' from your tasks 🌸"
+                db.save_message("assistant", reply_msg)
+                return JSONResponse({
+                    "reply": reply_msg,
+                    "proposal": None,
+                    "task_action_performed": res
+                })
+        elif is_cancel:
+            db.cancel_pending_task_action(reason="User cancelled in chat")
+            db.save_message("user", user_msg)
+            reply_msg = "No problem at all! Kept it just as it is 🌸"
+            db.save_message("assistant", reply_msg)
+            return JSONResponse({
+                "reply": reply_msg,
+                "proposal": None,
+                "action_cancelled": True
+            })
+
+    # 2. Check for pending task proposal confirmation in chat ("confirm", "yes", "save it" / "cancel", "no")
     pending_task = db.get_pending_proposal()
     if pending_task:
         lower_msg = user_msg.lower()
@@ -123,7 +161,7 @@ async def chat_endpoint(payload: ChatRequest):
                 "task_cancelled": True
             })
 
-    # 2. Check for pending memory fact deletion confirmation
+    # 3. Check for pending memory fact deletion confirmation
     pending_mem = db.get_pending_action()
     if pending_mem and pending_mem["action_type"] == "forget_fact":
         lower_msg = user_msg.lower()
@@ -156,7 +194,54 @@ async def chat_endpoint(payload: ChatRequest):
         else:
             db.clear_pending_action()
 
-    # 3. Check for forget request ("forget X", "forget that", "forget my name")
+    # 4. Check for task completion or deletion intent through chat (Step 6)
+    all_current_tasks = db.get_all_tasks()
+    task_intent = detect_task_chat_intent(user_msg, all_current_tasks)
+    
+    if task_intent["intent"] == "complete":
+        matched = task_intent["task"]
+        act_id = db.set_pending_task_action("task_complete", matched["id"], matched["title"])
+        db.save_message("user", user_msg)
+        reply = f"Woohoo! That's awesome! 🎉 Should I mark '{matched['title']}' as done?"
+        db.save_message("assistant", reply)
+        return JSONResponse({
+            "reply": reply,
+            "proposal": {
+                "type": "task_complete",
+                "task_id": matched["id"],
+                "task_title": matched["title"],
+                "prompt": f"Mark '{matched['title']}' as done?"
+            }
+        })
+    elif task_intent["intent"] == "delete":
+        matched = task_intent["task"]
+        act_id = db.set_pending_task_action("task_delete", matched["id"], matched["title"])
+        db.save_message("user", user_msg)
+        reply = f"Are you sure you want me to remove '{matched['title']}' from your tasks? 🌸"
+        db.save_message("assistant", reply)
+        return JSONResponse({
+            "reply": reply,
+            "proposal": {
+                "type": "task_delete",
+                "task_id": matched["id"],
+                "task_title": matched["title"],
+                "prompt": f"Delete '{matched['title']}'?"
+            }
+        })
+    elif task_intent["intent"] == "ambiguous_complete":
+        db.save_message("user", user_msg)
+        c_names = ", ".join([f"'{c['title']}'" for c in task_intent["candidates"]])
+        reply = f"I found a few matching tasks: {c_names}. Which one did you finish? 🌸"
+        db.save_message("assistant", reply)
+        return JSONResponse({"reply": reply, "proposal": None})
+    elif task_intent["intent"] == "ambiguous_delete":
+        db.save_message("user", user_msg)
+        c_names = ", ".join([f"'{c['title']}'" for c in task_intent["candidates"]])
+        reply = f"I found a few matching tasks: {c_names}. Which one would you like to delete? 🌸"
+        db.save_message("assistant", reply)
+        return JSONResponse({"reply": reply, "proposal": None})
+
+    # 5. Check for memory forget request ("forget X", "forget that", "forget my name")
     facts = db.get_all_facts()
     if is_forget_intent(user_msg):
         db.save_message("user", user_msg)
@@ -180,7 +265,7 @@ async def chat_endpoint(payload: ChatRequest):
             }
         })
 
-    # 4. Check for fact correction ("my name is Ravi, not Rahul")
+    # 6. Check for fact correction ("my name is Ravi, not Rahul")
     target_id, updated_text, old_text = detect_fact_correction(user_msg, facts)
     if target_id and updated_text:
         db.save_message("user", user_msg)
@@ -201,7 +286,7 @@ async def chat_endpoint(payload: ChatRequest):
             "updated_fact": {"id": target_id, "fact": updated_text}
         })
 
-    # 5. Standard message flow: call SINBHA brain
+    # 7. Standard message flow: call SINBHA brain
     db.save_message("user", user_msg)
     db.log_audit("CHAT_MESSAGE", f"User sent: '{user_msg[:80]}...'")
 
@@ -215,7 +300,7 @@ async def chat_endpoint(payload: ChatRequest):
     )
     ai_reply = brain_result.get("reply", "I'm right here with you 🌸")
 
-    # 6. Step 5: Check if AI proposed a structured task
+    # 8. Check if AI proposed a structured task
     task_proposal_obj = None
     raw_prop = brain_result.get("raw_task_proposal")
     if raw_prop and isinstance(raw_prop, dict) and raw_prop.get("title"):
@@ -245,7 +330,7 @@ async def chat_endpoint(payload: ChatRequest):
 
     db.save_message("assistant", ai_reply)
 
-    # 7. Background fact extraction
+    # 9. Background fact extraction
     new_facts_saved = []
     try:
         extracted = await extract_explicit_facts(user_msg)
@@ -262,12 +347,43 @@ async def chat_endpoint(payload: ChatRequest):
         "new_facts": new_facts_saved
     })
 
-# ----------------- Task Proposal & Management Endpoints (Step 5) -----------------
+# ----------------- Task Management Endpoints (Step 5 & 6) -----------------
 
 @app.get("/api/tasks")
 async def get_tasks_endpoint():
-    """Returns all confirmed tasks for Tasks drawer."""
-    return {"tasks": db.get_all_tasks()}
+    """Returns all tasks (sorted: overdue first, then by date, no date, completed) and pending count."""
+    tasks = db.get_all_tasks()
+    pending_count = db.get_pending_tasks_count()
+    return {"tasks": tasks, "pending_count": pending_count}
+
+@app.patch("/api/tasks/{task_id}")
+async def update_task_status_endpoint(task_id: int, payload: TaskStatusUpdateRequest):
+    """Updates task status ('completed' or 'pending')."""
+    new_status = payload.status.strip().lower()
+    if new_status not in ("pending", "completed"):
+        raise HTTPException(status_code=400, detail="Status must be 'pending' or 'completed'")
+    
+    ok = db.update_task_status(task_id, new_status)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    return {
+        "success": True,
+        "task": db.get_task_by_id(task_id),
+        "pending_count": db.get_pending_tasks_count()
+    }
+
+@app.delete("/api/tasks/{task_id}")
+async def delete_task_endpoint(task_id: int):
+    """Deletes a task directly from the database."""
+    ok = db.delete_task(task_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    return {
+        "success": True,
+        "pending_count": db.get_pending_tasks_count()
+    }
 
 @app.post("/api/tasks/confirm")
 async def confirm_task_endpoint(payload: TaskActionRequest = None):
@@ -284,7 +400,8 @@ async def confirm_task_endpoint(payload: TaskActionRequest = None):
     return JSONResponse({
         "success": True,
         "reply": reply_msg,
-        "task": confirmed
+        "task": confirmed,
+        "pending_count": db.get_pending_tasks_count()
     })
 
 @app.post("/api/tasks/cancel")
@@ -298,13 +415,38 @@ async def cancel_task_endpoint(payload: TaskActionRequest = None):
         "reply": reply_msg
     })
 
-# Action confirmation endpoint (for clicking Confirm/Cancel on memory deletion)
+# Action confirmation endpoint (for clicking Confirm/Cancel on chat cards: complete, delete, memory)
 @app.post("/api/confirm-action")
 async def confirm_action_endpoint(payload: ActionConfirmRequest):
-    """Handles memory confirmation (such as confirming deletion of a fact)."""
+    """Handles action confirmation (completing/deleting a task or memory deletion)."""
     action = payload.action.strip().lower()
+
+    # Check pending task action (complete or delete)
+    pending_task_act = db.get_pending_task_action()
+    if pending_task_act:
+        if action == "confirm":
+            res = db.confirm_pending_task_action()
+            if res:
+                if res["action_type"] == "task_complete":
+                    reply = f"Woohoo! 🎉 Marked '{res['task_title']}' as completed! Amazing job! 🌸"
+                else:
+                    reply = f"I've removed '{res['task_title']}' from your tasks 🌸"
+                db.save_message("assistant", reply)
+                return JSONResponse({
+                    "success": True,
+                    "reply": reply,
+                    "action_performed": res["action_type"],
+                    "task_id": res["task_id"],
+                    "pending_count": db.get_pending_tasks_count()
+                })
+        else:
+            db.cancel_pending_task_action(reason="User clicked Cancel")
+            reply = "No problem at all! Kept it just as it is 🌸"
+            db.save_message("assistant", reply)
+            return JSONResponse({"success": True, "reply": reply, "action_performed": "cancelled"})
+
+    # Check pending memory fact deletion
     pending = db.get_pending_action()
-    
     if not pending:
         return JSONResponse({"success": False, "reply": "No pending action found 🌸"})
 
@@ -336,8 +478,9 @@ async def stop_endpoint():
     global emergency_stop_triggered
     emergency_stop_triggered = True
     
-    # Requirement 6: If STOP is triggered, cancel any pending proposal
+    # Requirement 6 & 7: If STOP is triggered, cancel any pending proposal or task action
     db.cancel_pending_proposal(reason="Emergency STOP button clicked in header")
+    db.cancel_pending_task_action(reason="Emergency STOP button clicked in header")
     db.log_audit("STOP_TRIGGERED", "Emergency STOP button clicked in header.")
     
     return JSONResponse({

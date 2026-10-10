@@ -433,3 +433,101 @@ def find_target_fact_to_forget(user_msg: str, current_facts: list) -> dict | Non
 
     # Fallback to most recent fact
     return current_facts[0]
+
+# ----------------- Task Chat Intent Matching (Step 6) -----------------
+
+def find_matching_tasks(query: str, tasks: list) -> list:
+    """Finds tasks matching the query by title or keywords."""
+    if not tasks:
+        return []
+
+    clean = query.strip().lower()
+    # Strip common command words & fluff
+    fluff = [
+        r"\b(i\s+finished|i've\s+finished|finished|i\s+completed|completed|i'm\s+done\s+with|done\s+with|done|checked\s+off|mark\s+done|marked\s+done)\b",
+        r"\b(delete|remove|drop|erase|clear|trash|wipe)\b",
+        r"\b(my|the|this|that|task|todo|to-do|assignment|item|it)\b",
+        r"\b(please|already|finally|just|now)\b"
+    ]
+    cleaned_query = clean
+    for pat in fluff:
+        cleaned_query = re.sub(pat, " ", cleaned_query)
+    cleaned_query = re.sub(r"[^\w\s]", " ", cleaned_query).strip()
+
+    if not cleaned_query:
+        # If generic query like "finished it" or "done", check if there's only 1 pending task
+        pending_tasks = [t for t in tasks if t.get("status") == "pending"]
+        return [pending_tasks[0]] if len(pending_tasks) == 1 else []
+
+    # 1. Direct substring match (case insensitive)
+    exact_matches = []
+    for t in tasks:
+        t_clean = t["title"].lower()
+        if cleaned_query in t_clean or t_clean in cleaned_query:
+            exact_matches.append(t)
+    if exact_matches:
+        return exact_matches
+
+    # 2. Token overlap match
+    tokens = [w for w in cleaned_query.split() if len(w) > 2]
+    if not tokens:
+        return []
+
+    scored_matches = []
+    for t in tasks:
+        t_clean = t["title"].lower()
+        score = sum(1 for tok in tokens if tok in t_clean)
+        if score > 0:
+            scored_matches.append((score, t))
+
+    if not scored_matches:
+        return []
+
+    # Get matches with top score
+    max_score = max(s for s, _ in scored_matches)
+    return [t for s, t in scored_matches if s == max_score]
+
+def detect_task_chat_intent(user_msg: str, tasks: list) -> dict:
+    """
+    Detects if user is asking to complete or delete a task through chat.
+    Returns:
+    - {'intent': 'complete', 'task': task_dict} (single match)
+    - {'intent': 'ambiguous_complete', 'candidates': [...]} (multiple matches)
+    - {'intent': 'delete', 'task': task_dict} (single match)
+    - {'intent': 'ambiguous_delete', 'candidates': [...]} (multiple matches)
+    - {'intent': 'none'}
+    """
+    clean = user_msg.strip().lower()
+
+    # Completion patterns
+    complete_patterns = r"\b(i\s+finished|finished|completed|done\s+with|i'm\s+done|checked\s+off|marked?\s+as?\s+done|turned\s+in|submitted)\b"
+    # Delete patterns
+    delete_patterns = r"\b(delete\s+(?:the\s+|my\s+)?task|remove\s+(?:the\s+|my\s+)?task|delete\s+my|remove\s+my|drop\s+(?:the\s+|my\s+)?task|delete\s+task|remove\s+task)\b"
+
+    is_complete = bool(re.search(complete_patterns, clean))
+    is_delete = bool(re.search(delete_patterns, clean))
+
+    if not is_complete and not is_delete:
+        return {"intent": "none"}
+
+    # Target tasks: for completion, prioritize pending tasks
+    target_tasks = [t for t in tasks if t.get("status") == "pending"] if is_complete else tasks
+
+    matches = find_matching_tasks(clean, target_tasks)
+
+    if is_complete:
+        if len(matches) == 1:
+            return {"intent": "complete", "task": matches[0]}
+        elif len(matches) > 1:
+            return {"intent": "ambiguous_complete", "candidates": matches}
+        return {"intent": "none"}
+
+    if is_delete:
+        if len(matches) == 1:
+            return {"intent": "delete", "task": matches[0]}
+        elif len(matches) > 1:
+            return {"intent": "ambiguous_delete", "candidates": matches}
+        return {"intent": "none"}
+
+    return {"intent": "none"}
+

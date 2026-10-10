@@ -170,7 +170,20 @@
     </div>
   </div>
 
-  <!-- TASKS DRAWER (Step 5 & 6) -->
+  <!-- TASK DELETE CONFIRMATION MODAL (Step 6) -->
+  <div class="confirm-modal-overlay" id="taskDeleteModal" style="display: none;">
+    <div class="confirm-modal-card">
+      <div class="confirm-icon-box">🗑️</div>
+      <h3>Delete this task?</h3>
+      <p id="taskDeleteModalMessage">Are you sure you want to remove this task? This cannot be undone.</p>
+      <div class="confirm-modal-actions">
+        <button id="cancelTaskDeleteBtn" class="confirm-btn-secondary">Cancel</button>
+        <button id="confirmTaskDeleteBtn" class="confirm-btn-danger">Yes, Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TASKS DRAWER (Step 6: Interactive Task List) -->
   <aside class="side-drawer" id="taskDrawer" aria-hidden="true">
     <div class="drawer-header">
       <div class="drawer-title-group">
@@ -182,8 +195,8 @@
     
     <div class="drawer-content">
       <div class="task-drawer-subheader">
-        <span>Confirmed Tasks</span>
-        <span class="task-step-tag">Step 5: Read-only</span>
+        <span>To-Do List</span>
+        <span id="pendingCountBadgeDrawer" class="count-tag">0 pending</span>
       </div>
 
       <div class="empty-task-state" id="emptyTaskState">
@@ -193,9 +206,25 @@
       </div>
 
       <div class="task-list-container" id="taskListContainer" style="display: none;">
-        <ul class="task-list" id="taskList">
-          <!-- Populated dynamically from SQLite tasks table -->
+        <!-- Pending Tasks List (Sorted: Overdue first, then by date, then no date) -->
+        <ul class="task-list" id="pendingTaskList">
+          <!-- Populated dynamically -->
         </ul>
+
+        <!-- Completed Tasks Collapsible Section -->
+        <details class="completed-tasks-accordion" id="completedTasksAccordion" style="display: none;">
+          <summary class="completed-summary">
+            <div class="completed-summary-title">
+              <span class="completed-check-icon">✓</span>
+              <span>Completed</span>
+              <span id="completedCountBadge" class="count-tag completed-tag">0</span>
+            </div>
+            <span class="accordion-chevron">▾</span>
+          </summary>
+          <ul class="task-list completed-task-list" id="completedTaskList">
+            <!-- Populated dynamically -->
+          </ul>
+        </details>
       </div>
     </div>
   </aside>
