@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#fff5f7">
+  <title>SINBHA - Your Personal Companion</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Top Header Bar -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="avatar-container">
+          <div class="avatar">🌸</div>
+          <span class="status-dot" title="Online"></span>
+        </div>
+        <div class="companion-details">
+          <h1 class="companion-name">SINBHA</h1>
+          <span class="companion-status">Here for you</span>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <button id="tasksBtn" class="header-btn tasks-btn" title="View your tasks">
+          <span class="btn-icon">📋</span>
+          <span class="btn-text">Tasks</span>
+          <span id="taskCountBadge" class="badge">0</span>
+        </button>
+
+        <button id="stopBtn" class="header-btn stop-btn" title="Immediate Emergency Stop">
+          <span class="btn-icon">🛑</span>
+          <span class="btn-text">STOP</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Chat Messages Scroll Area -->
+    <main class="chat-container" id="chatContainer">
+      <div class="chat-messages" id="chatMessages">
+        <div class="message-group ai-group">
+          <div class="message-avatar">🌸</div>
+          <div class="message-bubble ai-bubble">
+            <p>Hey there! I'm <strong>SINBHA</strong> 🌸</p>
+            <p>I'm your warm, supportive friend. Whenever you want to share how you're feeling or talk through something you need to get done, I'm right here.</p>
+            <span class="message-time" id="welcomeTime">Just now</span>
+          </div>
+        </div>
+      </div>
+      <div id="scrollAnchor"></div>
+    </main>
+
+    <!-- Bottom Input Area (Mobile Safe) -->
+    <footer class="input-area">
+      <div class="input-card">
+        <textarea
+          id="messageInput"
+          placeholder="Message SINBHA... (or type STOP to halt)"
+          rows="1"
+          maxlength="2000"
+          autocomplete="off"
+        ></textarea>
+        <button id="sendBtn" class="send-btn" title="Send message" disabled>
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </div>
+      <div class="input-footer-note">
+        <span>Private & local on your home Wi-Fi</span>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Task Drawer (Slides out from right / bottom sheet on mobile) -->
+  <div class="drawer-overlay" id="drawerOverlay"></div>
+  <aside class="task-drawer" id="taskDrawer" aria-hidden="true">
+    <div class="drawer-header">
+      <div class="drawer-title-group">
+        <span class="drawer-icon">🌸</span>
+        <h2>My Tasks</h2>
+      </div>
+      <button id="closeDrawerBtn" class="close-drawer-btn" aria-label="Close task drawer">&times;</button>
+    </div>
+    
+    <div class="drawer-content">
+      <div class="empty-task-state">
+        <div class="empty-icon-card">🌸</div>
+        <h3>No tasks yet</h3>
+        <p>When you talk about assignments or to-dos with SINBHA, she'll suggest them here and wait for your <strong>Confirm</strong> before saving anything.</p>
+      </div>
+      <ul class="task-list" id="taskList">
+        <!-- Confirmed tasks will appear here in Step 5 & 6 -->
+      </ul>
+    </div>
+  </aside>
+
+  <!-- Status Notification Toast -->
+  <div id="toast" class="toast"></div>
+
+  <script src="/static/script.js"></script>
+</body>
+</html>
