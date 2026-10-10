@@ -1,5 +1,5 @@
 // ========================================================
-// SINBHA - Client Script (Conversational Memory & Dev Mode)
+// SINBHA - Client Script (Conversational Memory & Tasks Gate)
 // ========================================================
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -10,6 +10,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Header controls
   const tasksBtn = document.getElementById("tasksBtn");
+  const taskCountBadge = document.getElementById("taskCountBadge");
   const stopBtn = document.getElementById("stopBtn");
   const stopBanner = document.getElementById("stopBanner");
   const bannerResumeBtn = document.getElementById("bannerResumeBtn");
@@ -25,10 +26,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const devFactsList = document.getElementById("devFactsList");
   const devAuditLogList = document.getElementById("devAuditLogList");
 
-  // Tasks Drawer
+  // Tasks Drawer elements
   const taskDrawer = document.getElementById("taskDrawer");
   const closeTaskBtn = document.getElementById("closeTaskBtn");
   const drawerOverlay = document.getElementById("drawerOverlay");
+  const emptyTaskState = document.getElementById("emptyTaskState");
+  const taskListContainer = document.getElementById("taskListContainer");
+  const taskList = document.getElementById("taskList");
 
   // Settings & Purge elements
   const openSettingsBtn = document.getElementById("openSettingsBtn");
@@ -108,20 +112,48 @@ document.addEventListener("DOMContentLoaded", () => {
     group.className = "message-group ai-group";
     
     let proposalHtml = "";
-    if (proposal && proposal.type === "confirm_forget") {
-      proposalHtml = `
-        <div class="proposal-card" id="proposal-${proposal.fact_id}">
-          <div class="proposal-card-header">
-            <span>⚠️</span>
-            <span>${escapeHtml(proposal.prompt || "Confirm deletion")}</span>
+    if (proposal) {
+      if (proposal.type === "task_proposal") {
+        // Step 5: Task proposal card with Confirm / Cancel gate
+        proposalHtml = `
+          <div class="task-proposal-card" id="task-prop-${proposal.id}">
+            <div class="task-proposal-header">
+              <span>📋</span>
+              <span>Task Proposal</span>
+            </div>
+            <div class="task-proposal-body">
+              <div class="task-proposal-title-row">
+                <span>📌</span>
+                <span>${escapeHtml(proposal.title)}</span>
+              </div>
+              <div class="task-proposal-due-row">
+                <span>📅</span>
+                ${proposal.due_date ? `<span class="task-proposal-due-badge">${escapeHtml(proposal.due_date)}</span>` : `<span style="color: #6b7280; font-size: 0.82rem;">No deadline</span>`}
+              </div>
+              ${proposal.notes ? `<div class="task-proposal-notes-row">📝 ${escapeHtml(proposal.notes)}</div>` : ''}
+            </div>
+            <div class="task-proposal-actions">
+              <button class="task-confirm-btn" data-id="${proposal.id}">✓ Confirm & Save Task</button>
+              <button class="task-cancel-btn" data-id="${proposal.id}">✕ Cancel</button>
+            </div>
           </div>
-          <div class="proposal-card-fact">${escapeHtml(proposal.fact_text)}</div>
-          <div class="proposal-card-actions">
-            <button class="proposal-confirm-btn" data-action="confirm" data-id="${proposal.fact_id}">✓ Yes, forget it</button>
-            <button class="proposal-cancel-btn" data-action="cancel" data-id="${proposal.fact_id}">✕ Keep it</button>
+        `;
+      } else if (proposal.type === "confirm_forget") {
+        // Memory forget confirmation card
+        proposalHtml = `
+          <div class="proposal-card" id="proposal-${proposal.fact_id}">
+            <div class="proposal-card-header">
+              <span>⚠️</span>
+              <span>${escapeHtml(proposal.prompt || "Confirm deletion")}</span>
+            </div>
+            <div class="proposal-card-fact">${escapeHtml(proposal.fact_text)}</div>
+            <div class="proposal-card-actions">
+              <button class="proposal-confirm-btn" data-action="confirm" data-id="${proposal.fact_id}">✓ Yes, forget it</button>
+              <button class="proposal-cancel-btn" data-action="cancel" data-id="${proposal.fact_id}">✕ Keep it</button>
+            </div>
           </div>
-        </div>
-      `;
+        `;
+      }
     }
 
     group.innerHTML = `
@@ -134,7 +166,28 @@ document.addEventListener("DOMContentLoaded", () => {
     `;
     chatMessages.appendChild(group);
 
-    // Attach event listeners to inline proposal action buttons
+    // Attach event listeners to task proposal buttons (Step 5)
+    if (proposal && proposal.type === "task_proposal") {
+      const card = group.querySelector(".task-proposal-card");
+      const confirmBtn = group.querySelector(".task-confirm-btn");
+      const cancelBtn = group.querySelector(".task-cancel-btn");
+
+      if (confirmBtn && cancelBtn) {
+        confirmBtn.addEventListener("click", async () => {
+          confirmBtn.disabled = true;
+          cancelBtn.disabled = true;
+          await handleTaskConfirm(proposal.id, card);
+        });
+
+        cancelBtn.addEventListener("click", async () => {
+          confirmBtn.disabled = true;
+          cancelBtn.disabled = true;
+          await handleTaskCancel(proposal.id, card);
+        });
+      }
+    }
+
+    // Attach event listeners to memory forget buttons
     if (proposal && proposal.type === "confirm_forget") {
       const card = group.querySelector(".proposal-card");
       const confirmBtn = group.querySelector(".proposal-confirm-btn");
@@ -144,13 +197,13 @@ document.addEventListener("DOMContentLoaded", () => {
         confirmBtn.addEventListener("click", async () => {
           confirmBtn.disabled = true;
           cancelBtn.disabled = true;
-          await handleActionConfirmation("confirm", card);
+          await handleMemoryActionConfirmation("confirm", card);
         });
 
         cancelBtn.addEventListener("click", async () => {
           confirmBtn.disabled = true;
           cancelBtn.disabled = true;
-          await handleActionConfirmation("cancel", card);
+          await handleMemoryActionConfirmation("cancel", card);
         });
       }
     }
@@ -158,8 +211,71 @@ document.addEventListener("DOMContentLoaded", () => {
     scrollToBottom();
   }
 
-  // Handle clicking Confirm / Cancel on proposal cards
-  async function handleActionConfirmation(action, cardElement) {
+  // Handle confirming a proposed task (Step 5)
+  async function handleTaskConfirm(proposalId, cardElement) {
+    try {
+      const res = await fetch("/api/tasks/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ proposal_id: proposalId })
+      });
+      const data = await res.json();
+      
+      if (data.success) {
+        if (cardElement) {
+          const actionsDiv = cardElement.querySelector(".task-proposal-actions");
+          if (actionsDiv) {
+            actionsDiv.outerHTML = `<div class="task-proposal-resolved confirmed">✓ Confirmed & saved to your tasks</div>`;
+          }
+        }
+        if (data.reply) {
+          appendAiMessage(data.reply);
+        }
+        showToast("🌸 Task saved to your list!");
+        loadTasks();
+        if (isDevMode) loadDevData();
+      } else {
+        showToast(data.reply || "Could not confirm task");
+        if (cardElement) {
+          const actionsDiv = cardElement.querySelector(".task-proposal-actions");
+          if (actionsDiv) {
+            actionsDiv.outerHTML = `<div class="task-proposal-resolved expired">⚠️ ${escapeHtml(data.reply || "Expired")}</div>`;
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Task confirmation failed", e);
+    }
+  }
+
+  // Handle cancelling a proposed task (Step 5)
+  async function handleTaskCancel(proposalId, cardElement) {
+    try {
+      const res = await fetch("/api/tasks/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ proposal_id: proposalId })
+      });
+      const data = await res.json();
+      
+      if (cardElement) {
+        const actionsDiv = cardElement.querySelector(".task-proposal-actions");
+        if (actionsDiv) {
+          actionsDiv.outerHTML = `<div class="task-proposal-resolved cancelled">✕ Proposal cancelled</div>`;
+        }
+      }
+      if (data.reply) {
+        appendAiMessage(data.reply);
+      }
+      showToast("Task proposal dropped");
+      if (isDevMode) loadDevData();
+    } catch (e) {
+      console.error("Task cancel failed", e);
+    }
+  }
+
+  // Handle clicking Confirm / Cancel on memory deletion cards
+  async function handleMemoryActionConfirmation(action, cardElement) {
     try {
       const res = await fetch("/api/confirm-action", {
         method: "POST",
@@ -181,7 +297,7 @@ document.addEventListener("DOMContentLoaded", () => {
         loadDevData();
       }
     } catch (e) {
-      console.error("Action confirmation failed", e);
+      console.error("Memory confirmation failed", e);
     }
   }
 
@@ -244,6 +360,53 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // Load Tasks into Tasks Drawer (Step 5: Read-only)
+  async function loadTasks() {
+    try {
+      const res = await fetch("/api/tasks");
+      if (!res.ok) return;
+      const data = await res.json();
+      const tasks = data.tasks || [];
+
+      // Update header badge
+      taskCountBadge.textContent = tasks.length;
+
+      renderTasks(tasks);
+    } catch (e) {
+      console.error("Failed to load tasks:", e);
+    }
+  }
+
+  function renderTasks(tasks) {
+    if (!tasks || tasks.length === 0) {
+      emptyTaskState.style.display = "block";
+      taskListContainer.style.display = "none";
+      return;
+    }
+
+    emptyTaskState.style.display = "none";
+    taskListContainer.style.display = "block";
+    taskList.innerHTML = "";
+
+    tasks.forEach(t => {
+      const li = document.createElement("li");
+      li.className = "task-card-item";
+      li.innerHTML = `
+        <div class="task-card-top">
+          <span class="task-card-title">${escapeHtml(t.title)}</span>
+          <span class="task-status-pill ${escapeHtml(t.status)}">${escapeHtml(t.status)}</span>
+        </div>
+        ${t.due_date ? `<div class="task-card-due">📅 Due: ${escapeHtml(t.due_date)}</div>` : `<div class="task-card-due" style="color: #6b7280; font-weight: 500;">📅 No deadline</div>`}
+        ${t.notes ? `<div class="task-card-notes">📝 ${escapeHtml(t.notes)}</div>` : ''}
+        <div class="task-card-footer">
+          <span>Added ${formatTime(t.created_at)}</span>
+          <span>Step 5: Read-only</span>
+        </div>
+      `;
+      taskList.appendChild(li);
+    });
+  }
+
   // Fetch App Info and Check DEV_MODE
   async function checkAppInfo() {
     try {
@@ -253,7 +416,6 @@ document.addEventListener("DOMContentLoaded", () => {
       
       isDevMode = Boolean(data.dev_mode);
       if (isDevMode) {
-        // Show developer badge button and load dev data
         devMemoryBtn.style.display = "inline-flex";
         loadDevData();
       } else {
@@ -275,14 +437,10 @@ document.addEventListener("DOMContentLoaded", () => {
       const facts = data.facts || [];
       const auditLogs = data.audit_logs || [];
 
-      // Update badge counts
       devFactBadge.textContent = facts.length;
       devFactsCountLabel.textContent = facts.length;
 
-      // Render SQLite facts
       renderDevFacts(facts);
-
-      // Render audit log
       renderDevAuditLogs(auditLogs);
     } catch (e) {
       console.error("Dev data load failed:", e);
@@ -376,8 +534,13 @@ document.addEventListener("DOMContentLoaded", () => {
         setStopUiState(true);
       }
 
-      // If facts were added, updated, or deleted, reload dev data in the background
-      if (isDevMode && (data.new_facts?.length > 0 || data.updated_fact || data.action_performed)) {
+      if (data.task_confirmed) {
+        loadTasks();
+        showToast("🌸 Task saved to your list!");
+      }
+
+      // If facts or proposals were updated, reload dev data in background
+      if (isDevMode && (data.new_facts?.length > 0 || data.updated_fact || data.action_performed || data.proposal || data.task_confirmed || data.task_cancelled)) {
         loadDevData();
       }
     } catch (err) {
@@ -394,8 +557,14 @@ document.addEventListener("DOMContentLoaded", () => {
     showToast("🛑 Emergency STOP activated", 3500);
     appendSystemNotice("🛑 Emergency STOP triggered. All processing halted.");
 
+    // Requirement 6: cancel any pending proposal cards visibly on screen
+    document.querySelectorAll(".task-proposal-actions").forEach(el => {
+      el.innerHTML = `<div class="task-proposal-resolved cancelled">🛑 Cancelled due to STOP</div>`;
+    });
+
     try {
       await fetch("/api/stop", { method: "POST" });
+      if (isDevMode) loadDevData();
     } catch (e) {
       console.error("Stop call failed", e);
     }
@@ -447,6 +616,7 @@ document.addEventListener("DOMContentLoaded", () => {
         appendAiMessage("All past conversations and memory have been wiped cleanly. We have a fresh, blank canvas together 🌸");
         showToast("🧹 All data wiped cleanly");
 
+        loadTasks();
         if (isDevMode) {
           loadDevData();
         }
@@ -478,6 +648,7 @@ document.addEventListener("DOMContentLoaded", () => {
     taskDrawer.classList.add("open");
     drawerOverlay.classList.add("active");
     taskDrawer.setAttribute("aria-hidden", "false");
+    loadTasks();
   }
 
   function openDevDrawer() {
@@ -527,5 +698,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Initialize
   loadChatHistory();
+  loadTasks();
   checkAppInfo();
 });

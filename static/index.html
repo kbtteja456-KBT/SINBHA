@@ -181,14 +181,22 @@
     </div>
     
     <div class="drawer-content">
-      <div class="empty-task-state">
+      <div class="task-drawer-subheader">
+        <span>Confirmed Tasks</span>
+        <span class="task-step-tag">Step 5: Read-only</span>
+      </div>
+
+      <div class="empty-task-state" id="emptyTaskState">
         <div class="empty-icon-card">🌸</div>
         <h3>No tasks yet</h3>
-        <p>When you talk about assignments or to-dos with SINBHA, she'll suggest them with <strong>Confirm / Cancel</strong> buttons before saving anything.</p>
+        <p>When you talk about assignments or to-dos with SINBHA, she'll propose them with <strong>Confirm / Cancel</strong> buttons in chat before saving anything.</p>
       </div>
-      <ul class="task-list" id="taskList">
-        <!-- Tasks will populate in Step 5 & 6 -->
-      </ul>
+
+      <div class="task-list-container" id="taskListContainer" style="display: none;">
+        <ul class="task-list" id="taskList">
+          <!-- Populated dynamically from SQLite tasks table -->
+        </ul>
+      </div>
     </div>
   </aside>
 

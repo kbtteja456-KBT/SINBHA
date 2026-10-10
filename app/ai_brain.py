@@ -1,13 +1,14 @@
 import os
 import json
 import re
+import datetime
 import httpx
 from dotenv import load_dotenv
 
 # Load .env file safely
 load_dotenv()
 
-# System prompt defining SINBHA's warm, caring friend personality and safety guardrails
+# System prompt defining SINBHA's warm, caring friend personality, task proposing, and safety guardrails
 BASE_SYSTEM_PROMPT = """You are SINBHA, a warm, caring friend who also helps the user get things done.
 
 HOW YOU TALK:
@@ -31,6 +32,17 @@ HOW YOU CARE & REMEMBER:
 - Encourage real-life connections (friends, family) without lecturing.
 - Never try to make them depend on you or feel guilty for leaving.
 
+TASK PROPOSING GUIDELINES (STEP 5):
+- When your friend mentions an assignment, deadline, to-do, or task they need to do:
+  1. Always reply to their feelings FIRST with conversational warmth, empathy, and encouragement in your text reply (2 to 4 sentences).
+  2. ONLY if there is a concrete, specific actionable task (e.g., "finish history essay by Friday", "buy groceries tomorrow", "dentist appointment on Monday"), output a structured task proposal block at the very end of your message:
+     <<<TASK_PROPOSAL>>>
+     {"title": "Clear concise task title", "due_date": "Exact relative date mentioned (e.g. Friday, tomorrow) or null", "notes": "Optional short note or null"}
+     <<<END_TASK_PROPOSAL>>>
+- VENTING ALONE MUST NEVER CREATE A PROPOSAL:
+  If the user is just venting, tired, overwhelmed, anxious, or complaining without stating a specific actionable task (e.g. "I have so much work today", "College is exhausting", "I feel overwhelmed", "Work was crazy today"), DO NOT output any task proposal block! Just listen, empathize, and support them warmly.
+- If a task has an ambiguous or unclear deadline (e.g. "sometime", "soon", "later"), do not guess a date; ask them gently in your message when they'd like to get it done by, and set "due_date" to null.
+
 HONESTY AND SAFETY (CRITICAL):
 - Never claim to be human. If sincerely asked, say you are an AI who genuinely cares, in a warm and honest way.
 - CRISIS SAFETY: If the user mentions wanting to hurt themselves, feeling suicidal, or being in immediate danger, respond immediately with calm, unconditional care. Encourage them gently to connect with a trusted person or a local helpline (such as 988 or local emergency services), and stay with them in the conversation. Do not lecture, panic, or abandon them.
@@ -50,6 +62,93 @@ Return ONLY a valid JSON array of strings (e.g. ["User's favorite drink is match
 NO explanations, NO markdown backticks.
 """
 
+# ----------------- Date Conversion Helper (Requirement 4) -----------------
+
+def parse_relative_date(raw_date: str, base_date: datetime.date = None) -> tuple[str | None, bool]:
+    """
+    Converts relative dates ('Friday', 'tomorrow', 'next Monday', etc.) into real dates (YYYY-MM-DD (Day)).
+    Returns (formatted_date_string, is_ambiguous).
+    If no date was provided, returns (None, False).
+    If date is unclear/ambiguous, returns (None, True).
+    """
+    if not raw_date or str(raw_date).strip().lower() in ("none", "no deadline", "no due date", "null", ""):
+        return None, False
+
+    clean = str(raw_date).strip().lower()
+    if base_date is None:
+        base_date = datetime.date.today()
+
+    # Unclear / ambiguous keyword check
+    unclear_words = ["soon", "sometime", "later", "eventually", "someday", "next time", "upcoming"]
+    for w in unclear_words:
+        if w in clean and not any(k in clean for k in ["tomorrow", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]):
+            return None, True
+
+    # "today" / "tonight"
+    if clean in ("today", "tonight"):
+        return base_date.strftime("%Y-%m-%d (%A)"), False
+
+    # "tomorrow"
+    if "tomorrow" in clean:
+        if "day after" in clean:
+            target = base_date + datetime.timedelta(days=2)
+        else:
+            target = base_date + datetime.timedelta(days=1)
+        return target.strftime("%Y-%m-%d (%A)"), False
+
+    # "in X days"
+    m_days = re.search(r"in\s+(\d+)\s+days?", clean)
+    if m_days:
+        days = int(m_days.group(1))
+        target = base_date + datetime.timedelta(days=days)
+        return target.strftime("%Y-%m-%d (%A)"), False
+
+    # "in a week" / "next week"
+    if clean in ("in a week", "in 1 week", "next week"):
+        target = base_date + datetime.timedelta(days=7)
+        return target.strftime("%Y-%m-%d (%A)"), False
+
+    # Weekday names: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday
+    weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+    for idx, day_name in enumerate(weekdays):
+        if day_name in clean:
+            today_idx = base_date.weekday()  # 0=Monday, 6=Sunday
+            days_ahead = idx - today_idx
+            if days_ahead <= 0:
+                days_ahead += 7
+            if "next" in clean:
+                days_ahead += 7
+            target = base_date + datetime.timedelta(days=days_ahead)
+            return target.strftime("%Y-%m-%d (%A)"), False
+
+    # ISO date match YYYY-MM-DD
+    iso_match = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", clean)
+    if iso_match:
+        try:
+            target = datetime.date(int(iso_match.group(1)), int(iso_match.group(2)), int(iso_match.group(3)))
+            return target.strftime("%Y-%m-%d (%A)"), False
+        except ValueError:
+            return None, True
+
+    # Month + Day matching (e.g., "October 16", "Oct 16th", "16th Oct")
+    months = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]
+    short_months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+    for m_idx, (m_full, m_short) in enumerate(zip(months, short_months), start=1):
+        if m_full in clean or m_short in clean:
+            day_match = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\b", clean)
+            if day_match:
+                day_num = int(day_match.group(1))
+                year = base_date.year
+                try:
+                    target = datetime.date(year, m_idx, day_num)
+                    if target < base_date:
+                        target = datetime.date(year + 1, m_idx, day_num)
+                    return target.strftime("%Y-%m-%d (%A)"), False
+                except ValueError:
+                    return None, True
+
+    return None, True
+
 async def call_sinbha_brain(user_message: str, chat_history: list = None, remembered_facts: list = None) -> dict:
     """
     Sends message to OpenRouter with memory context (last 20 messages + explicit facts).
@@ -65,8 +164,10 @@ async def call_sinbha_brain(user_message: str, chat_history: list = None, rememb
             "error": "missing_api_key"
         }
 
-    # Build system prompt with remembered facts
-    system_content = BASE_SYSTEM_PROMPT
+    # Build system prompt with today's real date and remembered facts
+    today_str = datetime.date.today().strftime("%A, %B %d, %Y")
+    system_content = f"{BASE_SYSTEM_PROMPT}\n\nCURRENT DATE: Today is {today_str}."
+
     if remembered_facts and len(remembered_facts) > 0:
         facts_list_text = "\n".join([f"- {f['fact']}" for f in remembered_facts])
         system_content += f"\n\nSAVED FACTS ABOUT YOUR FRIEND (MEMORIES):\n{facts_list_text}\n(Bring these up naturally when helpful, and answer directly from them if your friend asks what you remember or know about them! Never recite as a robotic checklist.)"
@@ -93,7 +194,7 @@ async def call_sinbha_brain(user_message: str, chat_history: list = None, rememb
     payload = {
         "model": model_name,
         "messages": messages,
-        "max_tokens": 300,
+        "max_tokens": 400,
         "temperature": 0.75
     }
 
@@ -107,8 +208,25 @@ async def call_sinbha_brain(user_message: str, chat_history: list = None, rememb
 
         if response.status_code == 200:
             data = response.json()
-            reply_text = data["choices"][0]["message"]["content"].strip()
-            return {"success": True, "reply": reply_text}
+            raw_text = data["choices"][0]["message"]["content"].strip()
+            
+            # Check for structured task proposal block
+            raw_proposal = None
+            prop_match = re.search(r"<<<TASK_PROPOSAL>>>(.*?)<<<END_TASK_PROPOSAL>>>", raw_text, re.DOTALL)
+            if prop_match:
+                try:
+                    raw_proposal = json.loads(prop_match.group(1).strip())
+                except Exception:
+                    pass
+                clean_reply = re.sub(r"<<<TASK_PROPOSAL>>>.*?<<<END_TASK_PROPOSAL>>>", "", raw_text, flags=re.DOTALL).strip()
+            else:
+                clean_reply = raw_text
+
+            return {
+                "success": True,
+                "reply": clean_reply,
+                "raw_task_proposal": raw_proposal
+            }
         
         elif response.status_code == 401:
             return {

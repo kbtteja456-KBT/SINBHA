@@ -37,16 +37,21 @@ def init_db():
     );
     """)
 
-    # Tasks table (ready for Step 5 & 6)
+    # Tasks table (Step 5 & 6)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
         due_date TEXT,
+        notes TEXT,
         status TEXT DEFAULT 'pending',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
     """)
+    try:
+        cursor.execute("ALTER TABLE tasks ADD COLUMN notes TEXT")
+    except Exception:
+        pass
 
     # Audit log table
     cursor.execute("""
@@ -302,6 +307,175 @@ def get_audit_logs(limit: int = 50):
     rows = cursor.fetchall()
     conn.close()
     return [{"id": r["id"], "action": r["action"], "details": r["details"], "timestamp": r["timestamp"]} for r in rows]
+
+# ----------------- Task & Proposal Operations -----------------
+
+def create_task(title: str, due_date: str = None, notes: str = None, status: str = "pending") -> int:
+    """Inserts a confirmed task into the database and logs it."""
+    cleaned_title = title.strip()
+    if not cleaned_title:
+        return 0
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO tasks (title, due_date, notes, status, created_at) VALUES (?, ?, ?, ?, datetime('now', 'localtime'))",
+        (cleaned_title, due_date, notes, status)
+    )
+    task_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    
+    log_audit("TASK_CONFIRMED", f"Confirmed task #{task_id}: '{cleaned_title}' (Due: {due_date or 'None'})")
+    return task_id
+
+def get_all_tasks() -> list:
+    """Fetches all tasks from the database."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, title, due_date, notes, status, created_at FROM tasks ORDER BY id DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [{
+        "id": r["id"],
+        "title": r["title"],
+        "due_date": r["due_date"],
+        "notes": r["notes"],
+        "status": r["status"],
+        "created_at": r["created_at"]
+    } for r in rows]
+
+def get_task_by_id(task_id: int) -> dict | None:
+    """Fetches a single task by ID."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, title, due_date, notes, status, created_at FROM tasks WHERE id = ?", (task_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "due_date": row["due_date"],
+        "notes": row["notes"],
+        "status": row["status"],
+        "created_at": row["created_at"]
+    }
+
+def set_pending_proposal(title: str, due_date: str = None, notes: str = None) -> int:
+    """Sets a pending task proposal requiring user confirmation, and logs it."""
+    cleaned = title.strip()
+    details_json = json.dumps({
+        "title": cleaned,
+        "due_date": due_date,
+        "notes": notes
+    })
+    conn = get_connection()
+    cursor = conn.cursor()
+    # Remove previous pending proposals
+    cursor.execute("DELETE FROM pending_actions WHERE action_type = 'task_proposal'")
+    cursor.execute(
+        "INSERT INTO pending_actions (action_type, target_text, details, created_at) VALUES ('task_proposal', ?, ?, datetime('now', 'localtime'))",
+        (cleaned, details_json)
+    )
+    prop_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+
+    log_audit("TASK_PROPOSED", f"Proposed task: '{cleaned}' (Due: {due_date or 'None'}, Notes: {notes or 'None'})")
+    return prop_id
+
+def get_pending_proposal() -> dict | None:
+    """
+    Retrieves the current pending task proposal if one exists and has not expired.
+    Proposals expire after 30 minutes (1800 seconds).
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, action_type, target_text, details, created_at FROM pending_actions WHERE action_type = 'task_proposal' ORDER BY id DESC LIMIT 1"
+    )
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return None
+
+    # Check 30-minute expiry (1800 seconds)
+    try:
+        created_time = datetime.strptime(row["created_at"], "%Y-%m-%d %H:%M:%S")
+        elapsed = (datetime.now() - created_time).total_seconds()
+    except Exception:
+        elapsed = 0
+
+    if elapsed > 1800:
+        cursor.execute("DELETE FROM pending_actions WHERE id = ?", (row["id"],))
+        conn.commit()
+        conn.close()
+        log_audit("TASK_CANCELLED", f"Proposal '{row['target_text']}' expired after 30 minutes.")
+        return None
+
+    conn.close()
+    details = {}
+    if row["details"]:
+        try:
+            details = json.loads(row["details"])
+        except Exception:
+            pass
+
+    return {
+        "id": row["id"],
+        "title": details.get("title", row["target_text"]),
+        "due_date": details.get("due_date"),
+        "notes": details.get("notes"),
+        "created_at": row["created_at"]
+    }
+
+def cancel_pending_proposal(reason: str = "User cancelled") -> bool:
+    """Cancels any pending task proposal and logs it."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, target_text FROM pending_actions WHERE action_type = 'task_proposal' ORDER BY id DESC LIMIT 1"
+    )
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return False
+
+    title = row["target_text"]
+    cursor.execute("DELETE FROM pending_actions WHERE id = ?", (row["id"],))
+    conn.commit()
+    conn.close()
+
+    log_audit("TASK_CANCELLED", f"Cancelled task proposal: '{title}' (Reason: {reason})")
+    return True
+
+def confirm_pending_proposal() -> dict | None:
+    """Validates and confirms the pending task proposal, saving it to tasks table."""
+    prop = get_pending_proposal()
+    if not prop:
+        return None
+
+    task_id = create_task(
+        title=prop["title"],
+        due_date=prop.get("due_date"),
+        notes=prop.get("notes"),
+        status="pending"
+    )
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM pending_actions WHERE id = ?", (prop["id"],))
+    conn.commit()
+    conn.close()
+
+    return {
+        "id": task_id,
+        "title": prop["title"],
+        "due_date": prop.get("due_date"),
+        "notes": prop.get("notes"),
+        "status": "pending"
+    }
 
 # Initialize tables immediately on import
 init_db()
