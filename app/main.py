@@ -1,11 +1,23 @@
 import os
 import socket
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
+from dotenv import load_dotenv
+
+# Load environment variables (.env)
+load_dotenv()
+
+from app.ai_brain import call_sinbha_brain
 
 app = FastAPI(title="SINBHA - Personal AI Companion")
+
+# Emergency stop state tracker
+emergency_stop_triggered = False
+
+# Simple in-memory recent messages for current session (Step 4 adds full SQLite memory)
+recent_messages = []
 
 class ChatRequest(BaseModel):
     message: str
@@ -21,38 +33,55 @@ def get_local_ip():
     except Exception:
         return "127.0.0.1"
 
-# API Chat Endpoint (Step 2: Friendly placeholder; Step 3 connects OpenRouter)
+# API Chat Endpoint
 @app.post("/api/chat")
 async def chat_endpoint(payload: ChatRequest):
+    global emergency_stop_triggered
     user_msg = payload.message.strip()
-    if not user_msg:
-        return JSONResponse({"reply": "I'm listening whenever you want to talk 🌸", "proposal": None})
     
-    # Check for STOP command in message
-    if user_msg.upper() == "STOP":
+    if not user_msg:
         return JSONResponse({
-            "reply": "🛑 STOP command received. I've cleared any pending actions. I'm right here whenever you're ready.",
+            "reply": "I'm listening whenever you want to talk 🌸",
+            "proposal": None
+        })
+    
+    # RULE 3: STOP check comes FIRST - NEVER calls the AI if STOP is commanded or active
+    if user_msg.upper() == "STOP":
+        emergency_stop_triggered = True
+        return JSONResponse({
+            "reply": "🛑 STOP command received. All operations halted immediately. I'm right here whenever you want to chat normally again.",
             "proposal": None,
             "stopped": True
         })
 
-    # Friendly placeholder response for Step 2
-    friendly_replies = [
-        "Hey! I'm here with you. My full brain connects in Step 3, but our chat connection is working smoothly! 🌸",
-        "I hear you! How has your day been feeling so far?",
-        "Got your message! I'm ready to learn more about you as soon as we hook up my brain."
-    ]
-    import random
-    reply = random.choice(friendly_replies)
-    
+    # If emergency stop was previously triggered, resume normal friendly conversation
+    if emergency_stop_triggered:
+        emergency_stop_triggered = False
+
+    # Append user message to recent session
+    recent_messages.append({"role": "user", "content": user_msg})
+
+    # Call SINBHA's brain with OpenRouter
+    brain_result = await call_sinbha_brain(user_msg, chat_history=recent_messages[:-1])
+    ai_reply = brain_result.get("reply", "I'm right here with you 🌸")
+
+    # Append AI reply to session
+    recent_messages.append({"role": "assistant", "content": ai_reply})
+
+    # Keep in-memory list tidy
+    if len(recent_messages) > 30:
+        recent_messages.pop(0)
+
     return JSONResponse({
-        "reply": reply,
+        "reply": ai_reply,
         "proposal": None
     })
 
 # Emergency STOP endpoint (hard killswitch)
 @app.post("/api/stop")
 async def stop_endpoint():
+    global emergency_stop_triggered
+    emergency_stop_triggered = True
     return JSONResponse({
         "status": "stopped",
         "message": "🛑 Emergency STOP triggered. All processing halted immediately."
@@ -62,10 +91,12 @@ async def stop_endpoint():
 @app.get("/api/info")
 async def info_endpoint():
     port = int(os.environ.get("PORT", 8080))
+    model = os.getenv("OPENROUTER_MODEL", "google/gemini-2.0-flash-001")
     return {
         "companion": "SINBHA",
         "local_ip": get_local_ip(),
-        "port": port
+        "port": port,
+        "model": model
     }
 
 # Serve the static UI files
