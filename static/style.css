@@ -1,11 +1,12 @@
 /* ========================================================
    SINBHA - Warm Pink & White Theme
    Full Desktop Fit & Mobile-Optimized Responsive Design
+   Continuous Memory & Safety Guardrails
    ======================================================== */
 
 :root {
   --bg-page: #fff8fa;
-  --bg-header: rgba(255, 255, 255, 0.92);
+  --bg-header: rgba(255, 255, 255, 0.94);
   --bg-card: #ffffff;
   --bg-pink-subtle: #fff0f3;
   --bg-pink-soft: #ffe4ea;
@@ -61,7 +62,7 @@ html, body {
   line-height: 1.5;
 }
 
-/* Full Width App Container (Laptops: Full Edge-to-Edge; Mobile: Full Mobile Size) */
+/* Full Width App Container */
 .app-container {
   display: flex;
   flex-direction: column;
@@ -74,7 +75,7 @@ html, body {
   position: relative;
 }
 
-/* Header - Full Desktop Width */
+/* Header */
 .app-header {
   display: flex;
   align-items: center;
@@ -123,6 +124,11 @@ html, body {
   background-color: #4caf50;
   border: 2px solid #ffffff;
   border-radius: var(--radius-full);
+  transition: background-color 0.3s ease;
+}
+
+.status-dot.stopped {
+  background-color: #d93850;
 }
 
 .companion-details {
@@ -146,16 +152,16 @@ html, body {
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .header-btn {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 8px 16px;
+  gap: 6px;
+  padding: 8px 15px;
   border-radius: var(--radius-full);
-  font-size: 0.88rem;
+  font-size: 0.86rem;
   font-weight: 600;
   font-family: inherit;
   border: 1px solid transparent;
@@ -163,18 +169,18 @@ html, body {
   transition: all 0.2s ease;
 }
 
-.tasks-btn {
+.memory-btn, .tasks-btn {
   background-color: var(--bg-pink-subtle);
   color: var(--primary-pink);
   border-color: var(--border-pink);
 }
 
-.tasks-btn:hover {
+.memory-btn:hover, .tasks-btn:hover {
   background-color: var(--bg-pink-soft);
   transform: translateY(-1px);
 }
 
-.tasks-btn .badge {
+.header-btn .badge {
   background-color: var(--primary-pink);
   color: #ffffff;
   font-size: 0.72rem;
@@ -200,6 +206,44 @@ html, body {
   transform: scale(0.96);
 }
 
+/* Stop Active Banner */
+.stop-banner {
+  background-color: #ffebee;
+  border-bottom: 1px solid #ef9a9a;
+  padding: 8px 20px;
+  z-index: 9;
+  animation: messageAppear 0.2s ease;
+}
+
+.stop-banner-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 920px;
+  margin: 0 auto;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #c62828;
+}
+
+.resume-btn {
+  background-color: #ffffff;
+  color: var(--primary-pink);
+  border: 1px solid var(--border-pink);
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.resume-btn:hover {
+  background-color: var(--bg-pink-soft);
+  transform: translateY(-1px);
+}
+
 /* Chat Messages Scroll Container */
 .chat-container {
   flex: 1;
@@ -212,7 +256,6 @@ html, body {
   background-color: var(--bg-page);
 }
 
-/* Chat Content Column - Comfortably Centered on Desktop */
 .chat-messages {
   display: flex;
   flex-direction: column;
@@ -318,6 +361,10 @@ html, body {
   animation: messageAppear 0.2s ease;
 }
 
+.system-bubble-actions {
+  margin-top: 6px;
+}
+
 /* Bottom Input Area */
 .input-area {
   flex-shrink: 0;
@@ -410,7 +457,7 @@ html, body {
   letter-spacing: 0.2px;
 }
 
-/* Task Drawer */
+/* Side Drawers (Memory & Tasks) */
 .drawer-overlay {
   position: fixed;
   top: 0;
@@ -431,11 +478,11 @@ html, body {
   pointer-events: auto;
 }
 
-.task-drawer {
+.side-drawer {
   position: fixed;
   top: 0;
   right: 0;
-  width: 380px;
+  width: 420px;
   max-width: 90%;
   height: 100%;
   height: 100dvh;
@@ -448,7 +495,7 @@ html, body {
   flex-direction: column;
 }
 
-.task-drawer.open {
+.side-drawer.open {
   transform: translateX(0);
 }
 
@@ -493,6 +540,229 @@ html, body {
   padding: 22px 20px;
 }
 
+/* Memory Screen Specific Styling */
+.memory-info-card {
+  background-color: var(--bg-pink-subtle);
+  border: 1px solid var(--border-pink);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  margin-bottom: 18px;
+  font-size: 0.86rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.add-fact-box {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.add-fact-box input {
+  flex: 1;
+  border: 1.5px solid var(--border-pink);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  font-size: 0.88rem;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.add-fact-box input:focus {
+  border-color: var(--border-focus);
+}
+
+.add-fact-btn {
+  background: var(--primary-pink);
+  color: #ffffff;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 8px 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+}
+
+.add-fact-btn:hover {
+  background: var(--primary-pink-hover);
+}
+
+.facts-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--text-main);
+}
+
+.count-tag {
+  background-color: var(--bg-pink-soft);
+  color: var(--primary-pink);
+  font-size: 0.76rem;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+}
+
+.facts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+.fact-item {
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  border: 1px solid var(--border-pink);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.2s ease;
+}
+
+.fact-item:hover {
+  border-color: var(--primary-pink-light);
+}
+
+.fact-item-text {
+  font-size: 0.92rem;
+  color: var(--text-main);
+  line-height: 1.45;
+  margin-bottom: 8px;
+}
+
+.fact-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.fact-action-btn {
+  background: none;
+  border: none;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.fact-edit-btn {
+  color: var(--primary-pink);
+  background-color: var(--bg-pink-subtle);
+}
+
+.fact-edit-btn:hover {
+  background-color: var(--bg-pink-soft);
+}
+
+.fact-delete-btn {
+  color: #c62828;
+  background-color: #ffebee;
+}
+
+.fact-delete-btn:hover {
+  background-color: #ffcdd2;
+}
+
+/* Edit Mode inside Fact Item */
+.fact-edit-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.fact-edit-input {
+  width: 100%;
+  border: 1.5px solid var(--primary-pink);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 0.88rem;
+  font-family: inherit;
+  outline: none;
+}
+
+.fact-edit-controls {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.fact-save-btn {
+  background-color: var(--primary-pink);
+  color: #ffffff;
+  border: none;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.fact-cancel-btn {
+  background-color: #eeeeee;
+  color: var(--text-muted);
+  border: none;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.empty-facts {
+  text-align: center;
+  padding: 30px 10px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+/* Purge Data Section */
+.purge-section {
+  border-top: 1px dashed var(--border-pink);
+  padding-top: 20px;
+  margin-top: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.purge-btn {
+  background-color: #fff0f0;
+  color: #c62828;
+  border: 1.5px solid #ffcdd2;
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+
+.purge-btn:hover {
+  background-color: #ffebee;
+  border-color: #e57373;
+}
+
+.purge-note {
+  font-size: 0.75rem;
+  color: var(--text-light);
+  text-align: center;
+}
+
+/* Empty Task State */
 .empty-task-state {
   display: flex;
   flex-direction: column;
@@ -589,7 +859,7 @@ html, body {
   }
 
   .btn-text {
-    display: none; /* Icon-only buttons on phones to save space */
+    display: none;
   }
 
   .header-btn {
@@ -617,7 +887,7 @@ html, body {
     height: 36px;
   }
 
-  .task-drawer {
-    width: 88%;
+  .side-drawer {
+    width: 90%;
   }
 }

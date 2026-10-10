@@ -12,26 +12,35 @@
 </head>
 <body>
   <div class="app-container">
-    <!-- Top Header Bar -->
+    <!-- Top Header Bar (Full Desktop Width) -->
     <header class="app-header">
       <div class="header-left">
         <div class="avatar-container">
           <div class="avatar">🌸</div>
-          <span class="status-dot" title="Online"></span>
+          <span class="status-dot" id="statusDot" title="Online"></span>
         </div>
         <div class="companion-details">
           <h1 class="companion-name">SINBHA</h1>
-          <span class="companion-status">Here for you</span>
+          <span class="companion-status" id="companionStatus">Here for you</span>
         </div>
       </div>
 
       <div class="header-actions">
+        <!-- Memory Drawer Button -->
+        <button id="memoryBtn" class="header-btn memory-btn" title="View remembered facts">
+          <span class="btn-icon">🧠</span>
+          <span class="btn-text">Memory</span>
+          <span id="factsCountBadge" class="badge">0</span>
+        </button>
+
+        <!-- Tasks Drawer Button -->
         <button id="tasksBtn" class="header-btn tasks-btn" title="View your tasks">
           <span class="btn-icon">📋</span>
           <span class="btn-text">Tasks</span>
           <span id="taskCountBadge" class="badge">0</span>
         </button>
 
+        <!-- Emergency STOP Button -->
         <button id="stopBtn" class="header-btn stop-btn" title="Immediate Emergency Stop">
           <span class="btn-icon">🛑</span>
           <span class="btn-text">STOP</span>
@@ -39,17 +48,18 @@
       </div>
     </header>
 
+    <!-- Emergency Stopped Banner (Hidden unless stopped) -->
+    <div id="stopBanner" class="stop-banner" style="display: none;">
+      <div class="stop-banner-content">
+        <span>🛑 Emergency Stop is active. Processing is paused.</span>
+        <button id="bannerResumeBtn" class="resume-btn">🌸 Resume Chat</button>
+      </div>
+    </div>
+
     <!-- Chat Messages Scroll Area -->
     <main class="chat-container" id="chatContainer">
       <div class="chat-messages" id="chatMessages">
-        <div class="message-group ai-group">
-          <div class="message-avatar">🌸</div>
-          <div class="message-bubble ai-bubble">
-            <p>Hey there! I'm <strong>SINBHA</strong> 🌸</p>
-            <p>I'm your warm, supportive friend. Whenever you want to share how you're feeling or talk through something you need to get done, I'm right here.</p>
-            <span class="message-time" id="welcomeTime">Just now</span>
-          </div>
-        </div>
+        <!-- Messages will load dynamically from SQLite database -->
       </div>
       <div id="scrollAnchor"></div>
     </main>
@@ -73,31 +83,74 @@
           </button>
         </div>
         <div class="input-footer-note">
-          <span>Private & local on your home Wi-Fi</span>
+          <span>Private memory saved locally on your computer</span>
         </div>
       </div>
     </footer>
   </div>
 
-  <!-- Task Drawer (Slides out from right / bottom sheet on mobile) -->
+  <!-- Shared Drawer Overlay Backdrop -->
   <div class="drawer-overlay" id="drawerOverlay"></div>
-  <aside class="task-drawer" id="taskDrawer" aria-hidden="true">
+
+  <!-- MEMORY DRAWER (View, Edit, Delete Remembered Facts) -->
+  <aside class="side-drawer" id="memoryDrawer" aria-hidden="true">
     <div class="drawer-header">
       <div class="drawer-title-group">
-        <span class="drawer-icon">🌸</span>
+        <span class="drawer-icon">🧠</span>
+        <h2>SINBHA's Memory</h2>
+      </div>
+      <button id="closeMemoryBtn" class="close-drawer-btn" aria-label="Close memory drawer">&times;</button>
+    </div>
+    
+    <div class="drawer-content">
+      <div class="memory-info-card">
+        <p><strong>Private Local Facts:</strong> SINBHA only remembers things you explicitly share (preferences, routines, people). Never sensitive topics or guesses. You can edit or delete anything anytime.</p>
+      </div>
+
+      <!-- Add Fact Manually -->
+      <div class="add-fact-box">
+        <input type="text" id="manualFactInput" placeholder="Add a memory (e.g. My favorite drink is matcha)" maxlength="200" />
+        <button id="addFactBtn" class="add-fact-btn">Save Fact</button>
+      </div>
+
+      <!-- Facts List Container -->
+      <div class="facts-section-title">
+        <span>Remembered Facts</span>
+        <span id="factsCountLabel" class="count-tag">0</span>
+      </div>
+
+      <div id="factsList" class="facts-list">
+        <!-- Rendered dynamically -->
+      </div>
+
+      <!-- Purge All Data Section -->
+      <div class="purge-section">
+        <button id="purgeBtn" class="purge-btn">
+          🗑️ Delete All My Data (Reset Everything)
+        </button>
+        <span class="purge-note">Permanently clears all messages and memories from your PC.</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- TASKS DRAWER (Step 5 & 6) -->
+  <aside class="side-drawer" id="taskDrawer" aria-hidden="true">
+    <div class="drawer-header">
+      <div class="drawer-title-group">
+        <span class="drawer-icon">📋</span>
         <h2>My Tasks</h2>
       </div>
-      <button id="closeDrawerBtn" class="close-drawer-btn" aria-label="Close task drawer">&times;</button>
+      <button id="closeTaskBtn" class="close-drawer-btn" aria-label="Close task drawer">&times;</button>
     </div>
     
     <div class="drawer-content">
       <div class="empty-task-state">
         <div class="empty-icon-card">🌸</div>
         <h3>No tasks yet</h3>
-        <p>When you talk about assignments or to-dos with SINBHA, she'll suggest them here and wait for your <strong>Confirm</strong> before saving anything.</p>
+        <p>When you talk about assignments or to-dos with SINBHA, she'll suggest them with <strong>Confirm / Cancel</strong> buttons before saving anything.</p>
       </div>
       <ul class="task-list" id="taskList">
-        <!-- Confirmed tasks will appear here in Step 5 & 6 -->
+        <!-- Tasks will populate in Step 5 & 6 -->
       </ul>
     </div>
   </aside>
