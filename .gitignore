@@ -1,0 +1,18 @@
+# Secrets and private keys (NEVER commit these)
+.env
+*.env
+
+# Local database and conversation history
+sinbha.db
+*.db
+*.sqlite3
+
+# Python virtual environment and temporary files
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.DS_Store
+Thumbs.db
