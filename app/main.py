@@ -1,5 +1,6 @@
 import os
 import socket
+import re
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
@@ -10,7 +11,13 @@ from dotenv import load_dotenv
 # Load environment variables (.env)
 load_dotenv()
 
-from app.ai_brain import call_sinbha_brain, extract_explicit_facts
+from app.ai_brain import (
+    call_sinbha_brain,
+    extract_explicit_facts,
+    detect_fact_correction,
+    is_forget_intent,
+    find_target_fact_to_forget,
+)
 from app import database as db
 
 app = FastAPI(title="SINBHA - Personal AI Companion")
@@ -20,6 +27,9 @@ emergency_stop_triggered = False
 
 class ChatRequest(BaseModel):
     message: str
+
+class ActionConfirmRequest(BaseModel):
+    action: str  # "confirm" or "cancel"
 
 class FactCreateRequest(BaseModel):
     fact: str
@@ -76,32 +86,108 @@ async def chat_endpoint(payload: ChatRequest):
         emergency_stop_triggered = False
         db.log_audit("STOP_RESUMED", "Chat resumed by normal message.")
 
-    # 1. Save user message to SQLite database
+    # 1. Check for pending action confirmation (e.g. user was asked to confirm forgetting a fact)
+    pending = db.get_pending_action()
+    if pending and pending["action_type"] == "forget_fact":
+        lower_msg = user_msg.lower()
+        is_yes = bool(re.search(r"^(yes|yeah|yep|yup|sure|ok|okay|confirm|please|do it|forget it|delete it|ha|haan|yes please|definitely|go ahead)\b", lower_msg))
+        is_no = bool(re.search(r"^(no|nope|cancel|don't|keep it|nevermind|nah|stop|mat karo)\b", lower_msg))
+
+        if is_yes:
+            target_id = pending["target_id"]
+            db.save_message("user", user_msg)
+            db.delete_fact(target_id)  # Logs FACT_DELETED in audit_log
+            db.clear_pending_action()
+            reply = "I've forgotten that for you! It's wiped from my memory 🌸"
+            db.save_message("assistant", reply)
+            return JSONResponse({
+                "reply": reply,
+                "proposal": None,
+                "action_performed": "fact_deleted",
+                "deleted_fact_id": target_id
+            })
+        elif is_no:
+            db.save_message("user", user_msg)
+            db.clear_pending_action()
+            reply = "No problem at all! I'll keep remembering it 🌸"
+            db.save_message("assistant", reply)
+            return JSONResponse({
+                "reply": reply,
+                "proposal": None,
+                "action_performed": "cancelled"
+            })
+        else:
+            # User moved on to another topic -> clear pending action
+            db.clear_pending_action()
+
+    # 2. Check for forget request ("forget X", "forget that", "forget my name")
+    facts = db.get_all_facts()
+    if is_forget_intent(user_msg):
+        db.save_message("user", user_msg)
+        if not facts:
+            reply = "I don't have anything saved in my memory to forget right now! 🌸"
+            db.save_message("assistant", reply)
+            return JSONResponse({"reply": reply, "proposal": None})
+
+        target_fact = find_target_fact_to_forget(user_msg, facts)
+        db.set_pending_action("forget_fact", target_id=target_fact["id"], target_text=target_fact["fact"])
+        
+        reply = f"Are you sure you want me to forget that '{target_fact['fact']}'? Just reply \"yes\" or confirm to remove it 🌸"
+        db.save_message("assistant", reply)
+        return JSONResponse({
+            "reply": reply,
+            "proposal": {
+                "type": "confirm_forget",
+                "fact_id": target_fact["id"],
+                "fact_text": target_fact["fact"],
+                "prompt": f"Forget '{target_fact['fact']}'?"
+            }
+        })
+
+    # 3. Check for fact correction ("my name is Ravi, not Rahul")
+    target_id, updated_text, old_text = detect_fact_correction(user_msg, facts)
+    if target_id and updated_text:
+        db.save_message("user", user_msg)
+        db.update_fact(target_id, updated_text)  # Logs FACT_UPDATED in audit_log
+        
+        # Get updated facts & chat history for SINBHA's brain
+        updated_facts = db.get_all_facts()
+        recent_history = db.get_recent_messages(limit=20)
+        brain_result = await call_sinbha_brain(
+            user_message=user_msg,
+            chat_history=recent_history[:-1],
+            remembered_facts=updated_facts
+        )
+        ai_reply = brain_result.get("reply", f"Got it! I've updated my memory: {updated_text} 🌸")
+        db.save_message("assistant", ai_reply)
+        return JSONResponse({
+            "reply": ai_reply,
+            "proposal": None,
+            "updated_fact": {"id": target_id, "fact": updated_text}
+        })
+
+    # 4. Standard message flow (natural chat, questions about memory, new facts)
     db.save_message("user", user_msg)
     db.log_audit("CHAT_MESSAGE", f"User sent: '{user_msg[:80]}...'")
 
-    # 2. Retrieve last 20 messages & remembered facts
     recent_history = db.get_recent_messages(limit=20)
-    facts = db.get_all_facts()
+    current_facts = db.get_all_facts()
 
-    # 3. Call SINBHA's brain
     brain_result = await call_sinbha_brain(
         user_message=user_msg,
         chat_history=recent_history[:-1],
-        remembered_facts=facts
+        remembered_facts=current_facts
     )
     ai_reply = brain_result.get("reply", "I'm right here with you 🌸")
-
-    # 4. Save AI reply to SQLite database
     db.save_message("assistant", ai_reply)
 
-    # 5. Extract new explicit facts in the background (Requirement 5)
+    # 5. Extract new explicit facts in the background and update/add
     new_facts_saved = []
     try:
         extracted = await extract_explicit_facts(user_msg)
         for f in extracted:
-            new_id = db.add_fact(f)
-            if new_id:
+            res = db.update_or_add_fact(f)
+            if res.get("action") in ("added", "updated"):
                 new_facts_saved.append(f)
     except Exception as e:
         print(f"Fact extraction note: {e}")
@@ -111,6 +197,38 @@ async def chat_endpoint(payload: ChatRequest):
         "proposal": None,
         "new_facts": new_facts_saved
     })
+
+# Action confirmation endpoint (for clicking Confirm/Cancel buttons)
+@app.post("/api/confirm-action")
+async def confirm_action_endpoint(payload: ActionConfirmRequest):
+    """Handles action confirmation (such as confirming deletion of a fact)."""
+    action = payload.action.strip().lower()
+    pending = db.get_pending_action()
+    
+    if not pending:
+        return JSONResponse({"success": False, "reply": "No pending action found 🌸"})
+
+    if action == "confirm":
+        if pending["action_type"] == "forget_fact":
+            target_id = pending["target_id"]
+            db.delete_fact(target_id)  # Logs FACT_DELETED
+            db.clear_pending_action()
+            reply = "I've forgotten that for you! It's wiped from my memory 🌸"
+            db.save_message("assistant", reply)
+            return JSONResponse({
+                "success": True,
+                "reply": reply,
+                "action_performed": "fact_deleted",
+                "deleted_fact_id": target_id
+            })
+    else:
+        db.clear_pending_action()
+        reply = "No problem at all! I'll keep remembering it 🌸"
+        db.save_message("assistant", reply)
+        return JSONResponse({"success": True, "reply": reply, "action_performed": "cancelled"})
+
+    db.clear_pending_action()
+    return JSONResponse({"success": True, "reply": "Action completed 🌸"})
 
 # Emergency STOP endpoint (hard killswitch)
 @app.post("/api/stop")
@@ -134,7 +252,19 @@ async def resume_endpoint():
         "message": "🌸 Welcome back! Everything is quiet and ready."
     })
 
-# ----------------- Memory (Facts) Endpoints -----------------
+# ----------------- Memory & Dev Endpoints -----------------
+
+@app.get("/api/dev/facts")
+async def dev_facts_endpoint():
+    """Developer-only endpoint to inspect SQLite facts and audit logs when DEV_MODE=true."""
+    is_dev = os.getenv("DEV_MODE", "false").strip().lower() in ("true", "1", "yes")
+    if not is_dev:
+        raise HTTPException(status_code=403, detail="Developer mode is disabled. Set DEV_MODE=true in .env to enable.")
+    return {
+        "dev_mode": True,
+        "facts": db.get_all_facts(),
+        "audit_logs": db.get_audit_logs(limit=25)
+    }
 
 @app.get("/api/facts")
 async def get_facts_endpoint():
@@ -184,11 +314,13 @@ async def get_audit_endpoint():
 async def info_endpoint():
     port = int(os.environ.get("PORT", 8080))
     model = os.getenv("OPENROUTER_MODEL", "google/gemini-2.5-flash")
+    is_dev = os.getenv("DEV_MODE", "false").strip().lower() in ("true", "1", "yes")
     return {
         "companion": "SINBHA",
         "local_ip": get_local_ip(),
         "port": port,
         "model": model,
+        "dev_mode": is_dev,
         "emergency_stopped": emergency_stop_triggered
     }
 

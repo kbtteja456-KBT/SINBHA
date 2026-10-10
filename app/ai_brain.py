@@ -23,6 +23,10 @@ HOW YOU TALK:
 HOW YOU CARE & REMEMBER:
 - Remember what matters to them and bring it up naturally, only when it helps.
 - Never recite memories like a robotic checklist.
+- WHEN ASKED ABOUT MEMORIES OR THEMSELVES:
+  - If your friend asks what you remember about them, what you know about them, or asks specific personal questions (e.g. "what do you remember about me?", "what is my name?", "what do you know about me?", "what's my favorite drink?"):
+    Answer warmly, directly, and naturally in 1 to 3 short sentences from your saved memories, just like a caring friend would (e.g., "I remember your name is Ravi, and you love matcha tea! 🌸").
+  - If you have NO saved memories yet, answer warmly that you don't have any specific facts noted down yet and invite them to share whenever they like.
 - Celebrate small wins. Notice when they've been overworking and encourage a break.
 - Encourage real-life connections (friends, family) without lecturing.
 - Never try to make them depend on you or feel guilty for leaving.
@@ -65,7 +69,9 @@ async def call_sinbha_brain(user_message: str, chat_history: list = None, rememb
     system_content = BASE_SYSTEM_PROMPT
     if remembered_facts and len(remembered_facts) > 0:
         facts_list_text = "\n".join([f"- {f['fact']}" for f in remembered_facts])
-        system_content += f"\n\nTHINGS YOU REMEMBER ABOUT YOUR FRIEND:\n{facts_list_text}\n(Bring these up naturally only when relevant; never recite them as a list.)"
+        system_content += f"\n\nSAVED FACTS ABOUT YOUR FRIEND (MEMORIES):\n{facts_list_text}\n(Bring these up naturally when helpful, and answer directly from them if your friend asks what you remember or know about them! Never recite as a robotic checklist.)"
+    else:
+        system_content += "\n\nSAVED FACTS ABOUT YOUR FRIEND (MEMORIES):\nNone saved yet. If they ask what you remember, let them know your memory is a clean slate right now 🌸"
 
     messages = [{"role": "system", "content": system_content}]
 
@@ -210,3 +216,102 @@ async def extract_explicit_facts(user_message: str) -> list[str]:
         pass
 
     return []
+
+# ----------------- Chat Memory Operations & Helpers -----------------
+
+def detect_fact_correction(user_msg: str, current_facts: list):
+    """
+    Detects if the user is correcting an existing fact (e.g. 'my name is Ravi, not Rahul').
+    Returns (target_fact_id, updated_fact_text, old_fact_text) or (None, None, None).
+    """
+    if not current_facts:
+        return None, None, None
+
+    msg = user_msg.strip()
+
+    # Pattern: "my name is Ravi, not Rahul" or "it's Ravi, not Rahul" or "I am Ravi, not Rahul"
+    m = re.search(r"\b(?:my\s+name\s+is|i\s+am|it's|call\s+me)\s+([A-Za-z]+),?\s+not\s+([A-Za-z]+)\b", msg, re.IGNORECASE)
+    if m:
+        new_val, old_val = m.group(1).strip(), m.group(2).strip()
+        for f in current_facts:
+            f_lower = f["fact"].lower()
+            if old_val.lower() in f_lower or "name" in f_lower:
+                return f["id"], f"User's name is {new_val.capitalize()}", f["fact"]
+
+    # Pattern: "not Rahul, my name is Ravi" or "not Rahul, it's Ravi"
+    m = re.search(r"\bnot\s+([A-Za-z]+),?\s+(?:my\s+name\s+is|it's|i\s+am|it\s+is)?\s*([A-Za-z]+)\b", msg, re.IGNORECASE)
+    if m:
+        old_val, new_val = m.group(1).strip(), m.group(2).strip()
+        for f in current_facts:
+            f_lower = f["fact"].lower()
+            if old_val.lower() in f_lower or "name" in f_lower:
+                return f["id"], f"User's name is {new_val.capitalize()}", f["fact"]
+
+    # Pattern: "actually my [attribute] is [new], not [old]"
+    m = re.search(r"\b(?:actually\s+)?my\s+([A-Za-z\s]+?)\s+is\s+([A-Za-z0-9\s]+?),?\s+not\s+([A-Za-z0-9\s]+?)(?:\.|$)", msg, re.IGNORECASE)
+    if m:
+        attr, new_val, old_val = m.group(1).strip(), m.group(2).strip(), m.group(3).strip()
+        for f in current_facts:
+            f_lower = f["fact"].lower()
+            if attr.lower() in f_lower or old_val.lower() in f_lower:
+                return f["id"], f"User's {attr} is {new_val}", f["fact"]
+
+    # Pattern: "my name is [new]" when a name fact already exists with different name
+    m = re.search(r"\b(?:my\s+name\s+is|call\s+me)\s+([A-Za-z]+)\b", msg, re.IGNORECASE)
+    if m:
+        new_name = m.group(1).strip()
+        for f in current_facts:
+            if "name" in f["fact"].lower():
+                if new_name.lower() not in f["fact"].lower():
+                    return f["id"], f"User's name is {new_name.capitalize()}", f["fact"]
+
+    return None, None, None
+
+def is_forget_intent(user_msg: str) -> bool:
+    """Checks if message is asking to forget or delete a memory."""
+    patterns = r"\b(forget|delete\s+that\s+memory|erase\s+that\s+memory|remove\s+that\s+memory|wipe\s+that\s+memory|don't\s+remember\s+that)\b"
+    return bool(re.search(patterns, user_msg.strip(), re.IGNORECASE))
+
+def find_target_fact_to_forget(user_msg: str, current_facts: list) -> dict | None:
+    """
+    Finds which fact the user wants to forget.
+    If 'forget that' or generic, returns the most recent fact.
+    Otherwise searches for matching keywords in current_facts.
+    """
+    if not current_facts:
+        return None
+
+    clean = user_msg.strip().lower()
+
+    # Generic: "forget that", "forget this", "forget it", "forget what i said"
+    if re.search(r"^(?:please\s+)?forget\s+(?:that|it|this|what\s+i\s+said)(?:\s+please)?[\.!\?]*$", clean):
+        return current_facts[0]
+
+    # Specific topic extraction: e.g. "forget my name", "forget that I like matcha", "forget Luna"
+    query = re.sub(r"^(?:please\s+)?(?:forget|delete|erase|remove)\s+(?:that|about|my|the)?\s*", "", clean).strip()
+    query = re.sub(r"[\.!\?]+$", "", query).strip()
+
+    if not query:
+        return current_facts[0]
+
+    # Direct substring search
+    for f in current_facts:
+        if query in f["fact"].lower():
+            return f
+
+    # Token overlap search
+    tokens = [w for w in re.findall(r"\w+", query) if len(w) > 2 and w not in ("that", "about", "please", "user", "users")]
+    best_fact = None
+    best_score = 0
+    for f in current_facts:
+        f_lower = f["fact"].lower()
+        score = sum(1 for tok in tokens if tok in f_lower)
+        if score > best_score:
+            best_score = score
+            best_fact = f
+
+    if best_fact and best_score > 0:
+        return best_fact
+
+    # Fallback to most recent fact
+    return current_facts[0]

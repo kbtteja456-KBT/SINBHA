@@ -1,5 +1,5 @@
 // ========================================================
-// SINBHA - Client Script (Step 4: Continuous Memory)
+// SINBHA - Client Script (Conversational Memory & Dev Mode)
 // ========================================================
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -7,30 +7,43 @@ document.addEventListener("DOMContentLoaded", () => {
   const sendBtn = document.getElementById("sendBtn");
   const chatMessages = document.getElementById("chatMessages");
   const scrollAnchor = document.getElementById("scrollAnchor");
-  
+
   // Header controls
-  const memoryBtn = document.getElementById("memoryBtn");
   const tasksBtn = document.getElementById("tasksBtn");
   const stopBtn = document.getElementById("stopBtn");
   const stopBanner = document.getElementById("stopBanner");
   const bannerResumeBtn = document.getElementById("bannerResumeBtn");
   const statusDot = document.getElementById("statusDot");
-  const factsCountBadge = document.getElementById("factsCountBadge");
-  const factsCountLabel = document.getElementById("factsCountLabel");
 
-  // Drawers
-  const memoryDrawer = document.getElementById("memoryDrawer");
+  // Developer mode elements
+  const devMemoryBtn = document.getElementById("devMemoryBtn");
+  const devFactBadge = document.getElementById("devFactBadge");
+  const devFactsCountLabel = document.getElementById("devFactsCountLabel");
+  const devMemoryDrawer = document.getElementById("devMemoryDrawer");
+  const closeDevMemoryBtn = document.getElementById("closeDevMemoryBtn");
+  const devRefreshBtn = document.getElementById("devRefreshBtn");
+  const devFactsList = document.getElementById("devFactsList");
+  const devAuditLogList = document.getElementById("devAuditLogList");
+
+  // Tasks Drawer
   const taskDrawer = document.getElementById("taskDrawer");
-  const drawerOverlay = document.getElementById("drawerOverlay");
-  const closeMemoryBtn = document.getElementById("closeMemoryBtn");
   const closeTaskBtn = document.getElementById("closeTaskBtn");
+  const drawerOverlay = document.getElementById("drawerOverlay");
+
+  // Settings & Purge elements
+  const openSettingsBtn = document.getElementById("openSettingsBtn");
+  const settingsModal = document.getElementById("settingsModal");
+  const closeSettingsBtn = document.getElementById("closeSettingsBtn");
+  const openPurgeConfirmBtn = document.getElementById("openPurgeConfirmBtn");
+  const purgeConfirmModal = document.getElementById("purgeConfirmModal");
+  const cancelPurgeBtn = document.getElementById("cancelPurgeBtn");
+  const confirmPurgeBtn = document.getElementById("confirmPurgeBtn");
+
+  // Toast notification
   const toast = document.getElementById("toast");
 
-  // Memory Drawer elements
-  const manualFactInput = document.getElementById("manualFactInput");
-  const addFactBtn = document.getElementById("addFactBtn");
-  const factsList = document.getElementById("factsList");
-  const purgeBtn = document.getElementById("purgeBtn");
+  // Global state
+  let isDevMode = false;
 
   // Format time helper
   function formatTime(dateStr) {
@@ -50,6 +63,12 @@ document.addEventListener("DOMContentLoaded", () => {
     setTimeout(() => {
       toast.classList.remove("show");
     }, duration);
+  }
+
+  function escapeHtml(string) {
+    const div = document.createElement("div");
+    div.innerText = string;
+    return div.innerHTML;
   }
 
   // Enable/disable send button based on text
@@ -83,22 +102,90 @@ document.addEventListener("DOMContentLoaded", () => {
     scrollToBottom();
   }
 
-  // Add an AI bubble to chat
-  function appendAiMessage(text, timeStr = null) {
+  // Add an AI bubble to chat (with optional proposal action card)
+  function appendAiMessage(text, timeStr = null, proposal = null) {
     const group = document.createElement("div");
     group.className = "message-group ai-group";
+    
+    let proposalHtml = "";
+    if (proposal && proposal.type === "confirm_forget") {
+      proposalHtml = `
+        <div class="proposal-card" id="proposal-${proposal.fact_id}">
+          <div class="proposal-card-header">
+            <span>⚠️</span>
+            <span>${escapeHtml(proposal.prompt || "Confirm deletion")}</span>
+          </div>
+          <div class="proposal-card-fact">${escapeHtml(proposal.fact_text)}</div>
+          <div class="proposal-card-actions">
+            <button class="proposal-confirm-btn" data-action="confirm" data-id="${proposal.fact_id}">✓ Yes, forget it</button>
+            <button class="proposal-cancel-btn" data-action="cancel" data-id="${proposal.fact_id}">✕ Keep it</button>
+          </div>
+        </div>
+      `;
+    }
+
     group.innerHTML = `
       <div class="message-avatar">🌸</div>
       <div class="message-bubble ai-bubble">
         <p>${escapeHtml(text)}</p>
+        ${proposalHtml}
         <span class="message-time">${formatTime(timeStr)}</span>
       </div>
     `;
     chatMessages.appendChild(group);
+
+    // Attach event listeners to inline proposal action buttons
+    if (proposal && proposal.type === "confirm_forget") {
+      const card = group.querySelector(".proposal-card");
+      const confirmBtn = group.querySelector(".proposal-confirm-btn");
+      const cancelBtn = group.querySelector(".proposal-cancel-btn");
+
+      if (confirmBtn && cancelBtn) {
+        confirmBtn.addEventListener("click", async () => {
+          confirmBtn.disabled = true;
+          cancelBtn.disabled = true;
+          await handleActionConfirmation("confirm", card);
+        });
+
+        cancelBtn.addEventListener("click", async () => {
+          confirmBtn.disabled = true;
+          cancelBtn.disabled = true;
+          await handleActionConfirmation("cancel", card);
+        });
+      }
+    }
+
     scrollToBottom();
   }
 
-  // Add a system notice (e.g., STOP confirmation)
+  // Handle clicking Confirm / Cancel on proposal cards
+  async function handleActionConfirmation(action, cardElement) {
+    try {
+      const res = await fetch("/api/confirm-action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: action })
+      });
+      const data = await res.json();
+      
+      if (cardElement) {
+        cardElement.style.opacity = "0.6";
+        cardElement.innerHTML = `<small style="font-weight: 600; color: ${action === "confirm" ? "#dc2626" : "#4b5563"};">${action === "confirm" ? "✓ Confirmed & deleted" : "✕ Kept in memory"}</small>`;
+      }
+
+      if (data.reply) {
+        appendAiMessage(data.reply);
+      }
+
+      if (isDevMode) {
+        loadDevData();
+      }
+    } catch (e) {
+      console.error("Action confirmation failed", e);
+    }
+  }
+
+  // Add a system notice (e.g. STOP command)
   function appendSystemNotice(text) {
     const notice = document.createElement("div");
     notice.className = "system-bubble";
@@ -117,12 +204,6 @@ document.addEventListener("DOMContentLoaded", () => {
     scrollToBottom();
   }
 
-  function escapeHtml(string) {
-    const div = document.createElement("div");
-    div.innerText = string;
-    return div.innerHTML;
-  }
-
   // Update STOP state UI
   function setStopUiState(isStopped) {
     if (isStopped) {
@@ -136,7 +217,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Load chat messages on startup (Continuous Memory)
+  // Load chat history on startup
   async function loadChatHistory() {
     try {
       const res = await fetch("/api/messages");
@@ -147,8 +228,7 @@ document.addEventListener("DOMContentLoaded", () => {
       setStopUiState(data.emergency_stopped);
 
       if (!data.messages || data.messages.length === 0) {
-        // Welcome message if chat history is empty
-        appendAiMessage("Hey there! I'm SINBHA 🌸 I'm here to listen, support you, and help keep your days calm and organized. How are you feeling right now?");
+        appendAiMessage("Hey there! I'm SINBHA 🌸 I'm here to listen, support you, and keep your days calm and organized. How are you feeling right now?");
       } else {
         data.messages.forEach(msg => {
           if (msg.role === "user") {
@@ -164,168 +244,99 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Load Facts count and list
-  async function loadFacts() {
+  // Fetch App Info and Check DEV_MODE
+  async function checkAppInfo() {
     try {
-      const res = await fetch("/api/facts");
+      const res = await fetch("/api/info");
+      if (!res.ok) return;
+      const data = await res.json();
+      
+      isDevMode = Boolean(data.dev_mode);
+      if (isDevMode) {
+        // Show developer badge button and load dev data
+        devMemoryBtn.style.display = "inline-flex";
+        loadDevData();
+      } else {
+        devMemoryBtn.style.display = "none";
+        devMemoryDrawer.style.display = "none";
+      }
+    } catch (e) {
+      console.error("Info check error:", e);
+    }
+  }
+
+  // Developer Mode: Load facts and audit logs
+  async function loadDevData() {
+    if (!isDevMode) return;
+    try {
+      const res = await fetch("/api/dev/facts");
       if (!res.ok) return;
       const data = await res.json();
       const facts = data.facts || [];
+      const auditLogs = data.audit_logs || [];
 
       // Update badge counts
-      factsCountBadge.textContent = facts.length;
-      factsCountLabel.textContent = facts.length;
+      devFactBadge.textContent = facts.length;
+      devFactsCountLabel.textContent = facts.length;
 
-      // Render facts list
-      renderFactsList(facts);
+      // Render SQLite facts
+      renderDevFacts(facts);
+
+      // Render audit log
+      renderDevAuditLogs(auditLogs);
     } catch (e) {
-      console.error("Failed to load facts:", e);
+      console.error("Dev data load failed:", e);
     }
   }
 
-  function renderFactsList(facts) {
+  function renderDevFacts(facts) {
     if (!facts || facts.length === 0) {
-      factsList.innerHTML = `<div class="empty-facts">No facts remembered yet 🌸<br><small>When you share personal details like your name or favorites, SINBHA will note them here.</small></div>`;
+      devFactsList.innerHTML = `<div style="font-size: 0.82rem; color: #9ca3af; padding: 12px; text-align: center;">No SQLite facts stored yet.</div>`;
       return;
     }
 
-    factsList.innerHTML = "";
+    devFactsList.innerHTML = "";
     facts.forEach(f => {
       const item = document.createElement("div");
-      item.className = "fact-item";
-      item.id = `fact-${f.id}`;
+      item.className = "dev-fact-item";
       item.innerHTML = `
-        <div class="fact-view-mode">
-          <div class="fact-item-text">${escapeHtml(f.fact)}</div>
-          <div class="fact-actions">
-            <button class="fact-action-btn fact-edit-btn" data-id="${f.id}">✏️ Edit</button>
-            <button class="fact-action-btn fact-delete-btn" data-id="${f.id}">🗑️ Delete</button>
-          </div>
-        </div>
-        <div class="fact-edit-group" style="display: none;">
-          <input type="text" class="fact-edit-input" value="${escapeHtml(f.fact)}" maxlength="200" />
-          <div class="fact-edit-controls">
-            <button class="fact-save-btn" data-id="${f.id}">Save</button>
-            <button class="fact-cancel-btn" data-id="${f.id}">Cancel</button>
-          </div>
-        </div>
+        <span class="dev-fact-id">#${f.id}</span>
+        <span class="dev-fact-text">${escapeHtml(f.fact)}</span>
+        <button class="dev-fact-delete" data-id="${f.id}" title="Delete fact directly (Dev mode)">🗑️</button>
       `;
 
-      // Hook edit toggle
-      const editBtn = item.querySelector(".fact-edit-btn");
-      const viewMode = item.querySelector(".fact-view-mode");
-      const editMode = item.querySelector(".fact-edit-group");
-      const cancelBtn = item.querySelector(".fact-cancel-btn");
-      const saveBtn = item.querySelector(".fact-save-btn");
-      const editInput = item.querySelector(".fact-edit-input");
-
-      editBtn.addEventListener("click", () => {
-        viewMode.style.display = "none";
-        editMode.style.display = "flex";
-        editInput.focus();
-      });
-
-      cancelBtn.addEventListener("click", () => {
-        editMode.style.display = "none";
-        viewMode.style.display = "block";
-      });
-
-      saveBtn.addEventListener("click", async () => {
-        const updatedText = editInput.value.trim();
-        if (!updatedText) return;
-        await updateFact(f.id, updatedText);
-      });
-
-      // Hook delete
-      const delBtn = item.querySelector(".fact-delete-btn");
-      delBtn.addEventListener("click", async () => {
-        if (confirm(`Delete memory: "${f.fact}"?`)) {
-          await deleteFact(f.id);
+      item.querySelector(".dev-fact-delete").addEventListener("click", async () => {
+        if (confirm(`Dev Mode: Delete fact #${f.id}: "${f.fact}"?`)) {
+          await fetch(`/api/facts/${f.id}`, { method: "DELETE" });
+          loadDevData();
+          showToast(`Deleted fact #${f.id}`);
         }
       });
 
-      factsList.appendChild(item);
+      devFactsList.appendChild(item);
     });
   }
 
-  // Add Fact manually
-  async function addManualFact() {
-    const text = manualFactInput.value.trim();
-    if (!text) return;
-
-    try {
-      const res = await fetch("/api/facts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fact: text, category: "manual" })
-      });
-      if (res.ok) {
-        manualFactInput.value = "";
-        showToast("🌸 Fact remembered!");
-        loadFacts();
-      }
-    } catch (e) {
-      showToast("Could not save fact");
+  function renderDevAuditLogs(logs) {
+    if (!logs || logs.length === 0) {
+      devAuditLogList.innerHTML = `<div style="font-size: 0.8rem; color: #9ca3af;">No audit records.</div>`;
+      return;
     }
+
+    devAuditLogList.innerHTML = "";
+    logs.slice(0, 15).forEach(l => {
+      const item = document.createElement("div");
+      item.className = "dev-audit-item";
+      item.innerHTML = `
+        <div>
+          <span class="dev-audit-action ${l.action}">${escapeHtml(l.action)}</span>
+          <span class="dev-audit-details">${escapeHtml(l.details)}</span>
+        </div>
+        <span class="dev-audit-time">${escapeHtml(l.timestamp || "")}</span>
+      `;
+      devAuditLogList.appendChild(item);
+    });
   }
-
-  addFactBtn.addEventListener("click", addManualFact);
-  manualFactInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      addManualFact();
-    }
-  });
-
-  // Update fact
-  async function updateFact(id, newText) {
-    try {
-      const res = await fetch(`/api/facts/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fact: newText })
-      });
-      if (res.ok) {
-        showToast("🌸 Memory updated!");
-        loadFacts();
-      }
-    } catch (e) {
-      showToast("Failed to update memory");
-    }
-  }
-
-  // Delete fact
-  async function deleteFact(id) {
-    try {
-      const res = await fetch(`/api/facts/${id}`, { method: "DELETE" });
-      if (res.ok) {
-        showToast("Memory deleted");
-        loadFacts();
-      }
-    } catch (e) {
-      showToast("Failed to delete memory");
-    }
-  }
-
-  // Purge All Data (Reset Everything)
-  purgeBtn.addEventListener("click", async () => {
-    const confirmed = confirm(
-      "⚠️ Are you sure you want to delete ALL your data?\n\nThis will permanently wipe:\n- All chat message history\n- All remembered facts\n- All tasks\n\nThis cannot be undone."
-    );
-    if (!confirmed) return;
-
-    try {
-      const res = await fetch("/api/purge", { method: "POST" });
-      if (res.ok) {
-        showToast("🧹 All data wiped cleanly");
-        chatMessages.innerHTML = "";
-        appendAiMessage("All past conversations and memory have been wiped cleanly. We have a fresh, blank canvas together 🌸");
-        loadFacts();
-        closeDrawers();
-      }
-    } catch (e) {
-      showToast("Error wiping data");
-    }
-  });
 
   // Send message function
   async function sendMessage() {
@@ -344,7 +355,6 @@ document.addEventListener("DOMContentLoaded", () => {
       triggerEmergencyStop();
       return;
     } else {
-      // Normal message automatically resumes if stopped
       setStopUiState(false);
     }
 
@@ -360,16 +370,15 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const data = await response.json();
-      appendAiMessage(data.reply);
+      appendAiMessage(data.reply, null, data.proposal);
 
       if (data.stopped) {
         setStopUiState(true);
       }
 
-      // If new facts were saved, update facts list in background
-      if (data.new_facts && data.new_facts.length > 0) {
-        loadFacts();
-        showToast(`🌸 SINBHA remembered: ${data.new_facts[0]}`);
+      // If facts were added, updated, or deleted, reload dev data in the background
+      if (isDevMode && (data.new_facts?.length > 0 || data.updated_fact || data.action_performed)) {
+        loadDevData();
       }
     } catch (err) {
       appendAiMessage("I had a little hiccup connecting right now. Don't worry, please check if the server is still running on your computer 🌸");
@@ -407,15 +416,63 @@ document.addEventListener("DOMContentLoaded", () => {
 
   bannerResumeBtn.addEventListener("click", resumeChat);
 
-  // Drawer toggles
-  function openMemoryDrawer() {
-    closeDrawers();
-    memoryDrawer.classList.add("open");
-    drawerOverlay.classList.add("active");
-    memoryDrawer.setAttribute("aria-hidden", "false");
-    loadFacts();
-  }
+  // Settings & Purge handling
+  openSettingsBtn.addEventListener("click", () => {
+    settingsModal.style.display = "flex";
+  });
 
+  closeSettingsBtn.addEventListener("click", () => {
+    settingsModal.style.display = "none";
+  });
+
+  openPurgeConfirmBtn.addEventListener("click", () => {
+    purgeConfirmModal.style.display = "flex";
+  });
+
+  cancelPurgeBtn.addEventListener("click", () => {
+    purgeConfirmModal.style.display = "none";
+  });
+
+  // Confirm Purge All Data
+  confirmPurgeBtn.addEventListener("click", async () => {
+    try {
+      confirmPurgeBtn.disabled = true;
+      confirmPurgeBtn.textContent = "Clearing...";
+
+      const res = await fetch("/api/purge", { method: "POST" });
+      if (res.ok) {
+        purgeConfirmModal.style.display = "none";
+        settingsModal.style.display = "none";
+        chatMessages.innerHTML = "";
+        appendAiMessage("All past conversations and memory have been wiped cleanly. We have a fresh, blank canvas together 🌸");
+        showToast("🧹 All data wiped cleanly");
+
+        if (isDevMode) {
+          loadDevData();
+        }
+      }
+    } catch (e) {
+      showToast("Error wiping data");
+    } finally {
+      confirmPurgeBtn.disabled = false;
+      confirmPurgeBtn.textContent = "Yes, Delete Everything";
+    }
+  });
+
+  // Close modals when clicking outside card
+  settingsModal.addEventListener("click", (e) => {
+    if (e.target === settingsModal) {
+      settingsModal.style.display = "none";
+    }
+  });
+
+  purgeConfirmModal.addEventListener("click", (e) => {
+    if (e.target === purgeConfirmModal) {
+      purgeConfirmModal.style.display = "none";
+    }
+  });
+
+  // Drawer toggles
   function openTaskDrawer() {
     closeDrawers();
     taskDrawer.classList.add("open");
@@ -423,27 +480,52 @@ document.addEventListener("DOMContentLoaded", () => {
     taskDrawer.setAttribute("aria-hidden", "false");
   }
 
-  function closeDrawers() {
-    memoryDrawer.classList.remove("open");
-    taskDrawer.classList.remove("open");
-    drawerOverlay.classList.remove("active");
-    memoryDrawer.setAttribute("aria-hidden", "true");
-    taskDrawer.setAttribute("aria-hidden", "true");
+  function openDevDrawer() {
+    if (!isDevMode) return;
+    closeDrawers();
+    devMemoryDrawer.style.display = "block";
+    devMemoryDrawer.classList.add("open");
+    drawerOverlay.classList.add("active");
+    devMemoryDrawer.setAttribute("aria-hidden", "false");
+    loadDevData();
   }
 
-  memoryBtn.addEventListener("click", openMemoryDrawer);
+  function closeDrawers() {
+    taskDrawer.classList.remove("open");
+    taskDrawer.setAttribute("aria-hidden", "true");
+    
+    if (devMemoryDrawer) {
+      devMemoryDrawer.classList.remove("open");
+      devMemoryDrawer.setAttribute("aria-hidden", "true");
+    }
+    
+    drawerOverlay.classList.remove("active");
+  }
+
   tasksBtn.addEventListener("click", openTaskDrawer);
-  closeMemoryBtn.addEventListener("click", closeDrawers);
   closeTaskBtn.addEventListener("click", closeDrawers);
+
+  if (devMemoryBtn) {
+    devMemoryBtn.addEventListener("click", openDevDrawer);
+  }
+  if (closeDevMemoryBtn) {
+    closeDevMemoryBtn.addEventListener("click", closeDrawers);
+  }
+  if (devRefreshBtn) {
+    devRefreshBtn.addEventListener("click", loadDevData);
+  }
+
   drawerOverlay.addEventListener("click", closeDrawers);
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       closeDrawers();
+      settingsModal.style.display = "none";
+      purgeConfirmModal.style.display = "none";
     }
   });
 
-  // Initial loads
+  // Initialize
   loadChatHistory();
-  loadFacts();
+  checkAppInfo();
 });
