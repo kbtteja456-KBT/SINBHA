@@ -1,6 +1,7 @@
 import os
 import socket
 import re
+import datetime
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
@@ -18,6 +19,7 @@ from app.ai_brain import (
     is_forget_intent,
     find_target_fact_to_forget,
     parse_relative_date,
+    parse_relative_datetime,
     find_matching_tasks,
     detect_task_chat_intent,
 )
@@ -30,12 +32,32 @@ emergency_stop_triggered = False
 
 class ChatRequest(BaseModel):
     message: str
+    tz_offset_minutes: Optional[int] = None
 
 class ActionConfirmRequest(BaseModel):
     action: str  # "confirm" or "cancel"
 
 class TaskActionRequest(BaseModel):
     proposal_id: Optional[int] = None
+    reminders: Optional[list] = []
+
+class TaskConfirmWithRemindersRequest(BaseModel):
+    proposal_id: Optional[int] = None
+    reminders: Optional[list] = []
+
+class ReminderFiredRequest(BaseModel):
+    task_id: int
+    reminder_id: Optional[str] = None
+
+class ReminderSnoozeRequest(BaseModel):
+    task_id: int
+    minutes: int = 15
+
+class SettingsUpdateRequest(BaseModel):
+    persistence: str = "normal"
+    quiet_hours_enabled: str = "true"
+    quiet_hours_start: str = "22:00"
+    quiet_hours_end: str = "08:00"
 
 class TaskStatusUpdateRequest(BaseModel):
     status: str  # "pending" or "completed"
@@ -310,21 +332,53 @@ async def chat_endpoint(payload: ChatRequest):
 
         # Validate title (App-level validation)
         if len(title) >= 3 and title.lower() not in ("none", "task", "null"):
-            real_due, is_ambiguous = parse_relative_date(raw_due)
+            client_now = datetime.datetime.now()
+            if chat_req.tz_offset_minutes is not None:
+                utc_now = datetime.datetime.now(datetime.timezone.utc)
+                client_now = (utc_now - datetime.timedelta(minutes=chat_req.tz_offset_minutes)).replace(tzinfo=None)
+
+            dt_res = parse_relative_datetime(raw_due, base_dt=client_now)
             
-            if is_ambiguous:
-                # If date was ambiguous (e.g. "sometime", "soon", "later"), ask instead of guessing
+            if dt_res["is_ambiguous"]:
+                # If date/time was ambiguous (e.g. "sometime", "soon", "later"), ask instead of guessing
                 if "when" not in ai_reply.lower() and "due" not in ai_reply.lower():
                     ai_reply += "\n\nWhen would you like to get this done by? Let me know so I can keep track of it accurately for you 🌸"
                 real_due = None
+                due_time = None
+                due_datetime = None
+                display_due = None
+                suggested_rems = []
+            else:
+                real_due = dt_res["due_date"]
+                due_time = dt_res["due_time"]
+                due_datetime = dt_res["due_datetime"]
+                display_due = dt_res["display"]
+                suggested_rems = dt_res["suggested_reminders"]
+
+                # Requirement 1: If time is unclear (user provided a date like 'tomorrow' but no time), SINBHA asks
+                if not dt_res["time_specified"] and real_due:
+                    if "what time" not in ai_reply.lower() and "time" not in ai_reply.lower():
+                        ai_reply += "\n\nWhat time are you aiming to get it done by? (I can also set a reminder whenever you like) 🌸"
 
             # Save proposal requiring user confirmation (expires after 30 mins)
-            prop_id = db.set_pending_proposal(title=title, due_date=real_due, notes=notes)
+            prop_id = db.set_pending_proposal(
+                title=title,
+                due_date=real_due,
+                notes=notes,
+                due_time=due_time,
+                due_datetime=due_datetime,
+                suggested_reminders=suggested_rems
+            )
             task_proposal_obj = {
                 "type": "task_proposal",
                 "id": prop_id,
                 "title": title,
                 "due_date": real_due,
+                "due_time": due_time,
+                "due_datetime": due_datetime,
+                "display_due": display_due,
+                "time_specified": dt_res["time_specified"],
+                "suggested_reminders": suggested_rems,
                 "notes": notes
             }
 
@@ -347,7 +401,7 @@ async def chat_endpoint(payload: ChatRequest):
         "new_facts": new_facts_saved
     })
 
-# ----------------- Task Management Endpoints (Step 5 & 6) -----------------
+# ----------------- Task Management Endpoints (Step 5, 6 & 6B) -----------------
 
 @app.get("/api/tasks")
 async def get_tasks_endpoint():
@@ -386,9 +440,10 @@ async def delete_task_endpoint(task_id: int):
     }
 
 @app.post("/api/tasks/confirm")
-async def confirm_task_endpoint(payload: TaskActionRequest = None):
-    """Confirms the pending task proposal and saves it to tasks table."""
-    confirmed = db.confirm_pending_proposal()
+async def confirm_task_endpoint(payload: TaskConfirmWithRemindersRequest = None):
+    """Confirms the pending task proposal and saves it to tasks table with chosen reminders."""
+    reminders = payload.reminders if payload and payload.reminders is not None else []
+    confirmed = db.confirm_pending_proposal(chosen_reminders=reminders)
     if not confirmed:
         return JSONResponse({
             "success": False,
@@ -414,6 +469,69 @@ async def cancel_task_endpoint(payload: TaskActionRequest = None):
         "success": True,
         "reply": reply_msg
     })
+
+# ----------------- Reminder & Bird Flight Endpoints (Step 6B) -----------------
+
+@app.get("/api/reminders/check")
+async def check_reminders_endpoint(tz_offset_minutes: Optional[int] = None):
+    """Returns tasks that need attention right now (missed, explicit reminder, or repeat bird visits)."""
+    global emergency_stop_triggered
+    if emergency_stop_triggered:
+        return {"reminder_needed": False, "task": None, "needing_bird": [], "count": 0, "emergency_stopped": True}
+
+    now_dt = datetime.datetime.now()
+    if tz_offset_minutes is not None:
+        # Client provided its local timezone offset from UTC
+        utc_now = datetime.datetime.now(datetime.timezone.utc)
+        client_now = utc_now - datetime.timedelta(minutes=tz_offset_minutes)
+        now_dt = client_now.replace(tzinfo=None)
+
+    needing = db.check_due_reminders(now_dt)
+    if needing:
+        first = needing[0]
+        return {
+            "reminder_needed": True,
+            "task": first["task"],
+            "reminder_id": first.get("reminder_id"),
+            "is_explicit": first.get("is_explicit", False),
+            "needing_bird": needing,
+            "count": len(needing),
+            "emergency_stopped": False
+        }
+    return {
+        "reminder_needed": False,
+        "task": None,
+        "needing_bird": [],
+        "count": 0,
+        "emergency_stopped": False
+    }
+
+@app.post("/api/reminders/fired")
+async def reminder_fired_endpoint(payload: ReminderFiredRequest):
+    """Marks a reminder as fired and logs in audit log."""
+    ok = db.mark_reminder_fired(payload.task_id, payload.reminder_id)
+    return {"success": ok}
+
+@app.post("/api/reminders/snooze")
+async def reminder_snooze_endpoint(payload: ReminderSnoozeRequest):
+    """Snoozes a task's reminder for N minutes."""
+    ok = db.snooze_task(payload.task_id, payload.minutes)
+    return {"success": ok}
+
+@app.get("/api/settings")
+async def get_settings_endpoint():
+    """Returns current user settings."""
+    return {"settings": db.get_all_settings()}
+
+@app.post("/api/settings")
+async def update_settings_endpoint(payload: SettingsUpdateRequest):
+    """Updates user settings (persistence, quiet hours)."""
+    db.set_setting("persistence", payload.persistence)
+    db.set_setting("quiet_hours_enabled", payload.quiet_hours_enabled)
+    db.set_setting("quiet_hours_start", payload.quiet_hours_start)
+    db.set_setting("quiet_hours_end", payload.quiet_hours_end)
+    db.log_audit("SETTINGS_UPDATED", f"Persistence: {payload.persistence}, Quiet hours: {payload.quiet_hours_start}-{payload.quiet_hours_end}")
+    return {"success": True, "settings": db.get_all_settings()}
 
 # Action confirmation endpoint (for clicking Confirm/Cancel on chat cards: complete, delete, memory)
 @app.post("/api/confirm-action")
@@ -580,6 +698,12 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
+    import sys
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
     port = int(os.environ.get("PORT", 8080))
     local_ip = get_local_ip()
     print("=" * 60)

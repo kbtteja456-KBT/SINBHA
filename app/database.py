@@ -2,7 +2,7 @@ import sqlite3
 import os
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 DB_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "sinbha.db")
 
@@ -48,10 +48,35 @@ def init_db():
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
     """)
-    try:
-        cursor.execute("ALTER TABLE tasks ADD COLUMN notes TEXT")
-    except Exception:
-        pass
+
+    # Step 6B columns for tasks
+    for col_name, col_type in [
+        ("due_time", "TEXT"),
+        ("due_datetime", "TEXT"),
+        ("reminders", "TEXT"),
+        ("last_reminded_at", "TEXT"),
+        ("snoozed_until", "TEXT")
+    ]:
+        try:
+            cursor.execute(f"ALTER TABLE tasks ADD COLUMN {col_name} {col_type}")
+        except Exception:
+            pass
+
+    # Settings table (persistence, quiet hours)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+    """)
+    default_settings = {
+        "persistence": "normal",
+        "quiet_hours_enabled": "true",
+        "quiet_hours_start": "22:00",
+        "quiet_hours_end": "08:00"
+    }
+    for k, v in default_settings.items():
+        cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v))
 
     # Audit log table
     cursor.execute("""
@@ -310,69 +335,109 @@ def get_audit_logs(limit: int = 50):
 
 # ----------------- Task & Proposal Operations -----------------
 
-def create_task(title: str, due_date: str = None, notes: str = None, status: str = "pending") -> int:
+def create_task(
+    title: str,
+    due_date: str = None,
+    notes: str = None,
+    status: str = "pending",
+    due_time: str = None,
+    due_datetime: str = None,
+    reminders: list = None
+) -> int:
     """Inserts a confirmed task into the database and logs it."""
     cleaned_title = title.strip()
     if not cleaned_title:
         return 0
+
+    reminders_json = json.dumps(reminders) if reminders else None
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO tasks (title, due_date, notes, status, created_at) VALUES (?, ?, ?, ?, datetime('now', 'localtime'))",
-        (cleaned_title, due_date, notes, status)
+        """INSERT INTO tasks 
+        (title, due_date, due_time, due_datetime, reminders, notes, status, created_at) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))""",
+        (cleaned_title, due_date, due_time, due_datetime, reminders_json, notes, status)
     )
     task_id = cursor.lastrowid
     conn.commit()
     conn.close()
     
-    log_audit("TASK_CONFIRMED", f"Confirmed task #{task_id}: '{cleaned_title}' (Due: {due_date or 'None'})")
+    log_audit("TASK_CONFIRMED", f"Confirmed task #{task_id}: '{cleaned_title}' (Due: {due_datetime or due_date or 'None'})")
     return task_id
 
 def get_all_tasks() -> list:
-    """Fetches all tasks, sorted by urgency: overdue first, then upcoming by date, then no date, then completed."""
+    """Fetches all tasks, sorted by urgency: overdue first, then upcoming by date/time, then no date, then completed."""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, title, due_date, notes, status, created_at FROM tasks ORDER BY id DESC")
+    cursor.execute("""
+        SELECT id, title, due_date, due_time, due_datetime, reminders, notes, 
+               status, last_reminded_at, snoozed_until, created_at 
+        FROM tasks ORDER BY id DESC
+    """)
     rows = cursor.fetchall()
     conn.close()
 
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    now = datetime.now()
+    now_hm_str = now.strftime("%Y-%m-%d %H:%M")
+    today_str = now.strftime("%Y-%m-%d")
     tasks = []
 
     for r in rows:
         due = r["due_date"]
+        due_time = r["due_time"]
+        due_datetime = r["due_datetime"]
         status = r["status"]
         is_overdue = False
         due_date_iso = ""
 
-        if due:
+        if due_datetime:
+            if status == "pending" and due_datetime < now_hm_str:
+                is_overdue = True
+            m = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", due_datetime)
+            if m:
+                due_date_iso = m.group(1)
+        elif due:
             m = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", due)
             if m:
                 due_date_iso = m.group(1)
                 if status == "pending" and due_date_iso < today_str:
                     is_overdue = True
 
+        rems = []
+        if r["reminders"]:
+            try:
+                rems = json.loads(r["reminders"])
+            except Exception:
+                pass
+
         tasks.append({
             "id": r["id"],
             "title": r["title"],
             "due_date": due,
+            "due_time": due_time,
+            "due_datetime": due_datetime,
+            "reminders": rems,
             "due_date_iso": due_date_iso,
             "notes": r["notes"],
             "status": status,
             "is_overdue": is_overdue,
+            "last_reminded_at": r["last_reminded_at"],
+            "snoozed_until": r["snoozed_until"],
             "created_at": r["created_at"]
         })
 
     # Sort tasks:
-    # 0: Pending & Overdue (due_date_iso ASC)
-    # 1: Pending & with due_date (due_date_iso ASC)
+    # 0: Pending & Overdue (due_datetime or due_date_iso ASC)
+    # 1: Pending & with due_datetime or due_date (ASC)
     # 2: Pending & without due_date (id DESC)
     # 3: Completed (id DESC)
     def task_sort_key(t):
         if t["status"] == "completed":
             return (3, 999999 - t["id"])
         if t["is_overdue"]:
-            return (0, t["due_date_iso"] or "9999-99-99")
+            return (0, t["due_datetime"] or t["due_date_iso"] or "9999-99-99")
+        if t["due_datetime"]:
+            return (1, t["due_datetime"])
         if t["due_date_iso"]:
             return (1, t["due_date_iso"])
         return (2, 999999 - t["id"])
@@ -435,31 +500,57 @@ def get_task_by_id(task_id: int) -> dict | None:
     """Fetches a single task by ID."""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, title, due_date, notes, status, created_at FROM tasks WHERE id = ?", (task_id,))
+    cursor.execute("""
+        SELECT id, title, due_date, due_time, due_datetime, reminders, notes, 
+               status, last_reminded_at, snoozed_until, created_at 
+        FROM tasks WHERE id = ?
+    """, (task_id,))
     row = cursor.fetchone()
     conn.close()
     if not row:
         return None
+
+    rems = []
+    if row["reminders"]:
+        try:
+            rems = json.loads(row["reminders"])
+        except Exception:
+            pass
+
     return {
         "id": row["id"],
         "title": row["title"],
         "due_date": row["due_date"],
+        "due_time": row["due_time"],
+        "due_datetime": row["due_datetime"],
+        "reminders": rems,
         "notes": row["notes"],
         "status": row["status"],
+        "last_reminded_at": row["last_reminded_at"],
+        "snoozed_until": row["snoozed_until"],
         "created_at": row["created_at"]
     }
 
-def set_pending_proposal(title: str, due_date: str = None, notes: str = None) -> int:
+def set_pending_proposal(
+    title: str,
+    due_date: str = None,
+    notes: str = None,
+    due_time: str = None,
+    due_datetime: str = None,
+    suggested_reminders: list = None
+) -> int:
     """Sets a pending task proposal requiring user confirmation, and logs it."""
     cleaned = title.strip()
     details_json = json.dumps({
         "title": cleaned,
         "due_date": due_date,
+        "due_time": due_time,
+        "due_datetime": due_datetime,
+        "suggested_reminders": suggested_reminders or [],
         "notes": notes
     })
     conn = get_connection()
     cursor = conn.cursor()
-    # Remove previous pending proposals
     cursor.execute("DELETE FROM pending_actions WHERE action_type = 'task_proposal'")
     cursor.execute(
         "INSERT INTO pending_actions (action_type, target_text, details, created_at) VALUES ('task_proposal', ?, ?, datetime('now', 'localtime'))",
@@ -469,14 +560,11 @@ def set_pending_proposal(title: str, due_date: str = None, notes: str = None) ->
     conn.commit()
     conn.close()
 
-    log_audit("TASK_PROPOSED", f"Proposed task: '{cleaned}' (Due: {due_date or 'None'}, Notes: {notes or 'None'})")
+    log_audit("TASK_PROPOSED", f"Proposed task: '{cleaned}' (Due: {due_datetime or due_date or 'None'}, Notes: {notes or 'None'})")
     return prop_id
 
 def get_pending_proposal() -> dict | None:
-    """
-    Retrieves the current pending task proposal if one exists and has not expired.
-    Proposals expire after 30 minutes (1800 seconds).
-    """
+    """Retrieves current pending task proposal if not expired (>30m)."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -487,7 +575,6 @@ def get_pending_proposal() -> dict | None:
         conn.close()
         return None
 
-    # Check 30-minute expiry (1800 seconds)
     try:
         created_time = datetime.strptime(row["created_at"], "%Y-%m-%d %H:%M:%S")
         elapsed = (datetime.now() - created_time).total_seconds()
@@ -513,6 +600,9 @@ def get_pending_proposal() -> dict | None:
         "id": row["id"],
         "title": details.get("title", row["target_text"]),
         "due_date": details.get("due_date"),
+        "due_time": details.get("due_time"),
+        "due_datetime": details.get("due_datetime"),
+        "suggested_reminders": details.get("suggested_reminders", []),
         "notes": details.get("notes"),
         "created_at": row["created_at"]
     }
@@ -537,17 +627,21 @@ def cancel_pending_proposal(reason: str = "User cancelled") -> bool:
     log_audit("TASK_CANCELLED", f"Cancelled task proposal: '{title}' (Reason: {reason})")
     return True
 
-def confirm_pending_proposal() -> dict | None:
+def confirm_pending_proposal(chosen_reminders: list = None) -> dict | None:
     """Validates and confirms the pending task proposal, saving it to tasks table."""
     prop = get_pending_proposal()
     if not prop:
         return None
 
+    reminders = chosen_reminders if chosen_reminders is not None else prop.get("suggested_reminders", [])
     task_id = create_task(
         title=prop["title"],
         due_date=prop.get("due_date"),
         notes=prop.get("notes"),
-        status="pending"
+        status="pending",
+        due_time=prop.get("due_time"),
+        due_datetime=prop.get("due_datetime"),
+        reminders=reminders
     )
 
     conn = get_connection()
@@ -560,9 +654,217 @@ def confirm_pending_proposal() -> dict | None:
         "id": task_id,
         "title": prop["title"],
         "due_date": prop.get("due_date"),
+        "due_time": prop.get("due_time"),
+        "due_datetime": prop.get("due_datetime"),
+        "reminders": reminders,
         "notes": prop.get("notes"),
         "status": "pending"
     }
+
+# ----------------- Settings Operations -----------------
+
+def get_setting(key: str, default: str = None) -> str:
+    """Retrieves a setting value."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
+    row = cursor.fetchone()
+    conn.close()
+    return row["value"] if row else default
+
+def set_setting(key: str, value: str) -> None:
+    """Sets a setting value."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
+    conn.commit()
+    conn.close()
+
+def get_all_settings() -> dict:
+    """Retrieves all user settings with defaults."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT key, value FROM settings")
+    rows = cursor.fetchall()
+    conn.close()
+    res = {r["key"]: r["value"] for r in rows}
+    defaults = {
+        "persistence": "normal",
+        "quiet_hours_enabled": "true",
+        "quiet_hours_start": "22:00",
+        "quiet_hours_end": "08:00"
+    }
+    for k, v in defaults.items():
+        if k not in res:
+            res[k] = v
+    return res
+
+# ----------------- Reminders & Bird Flight Operations (Step 6B) -----------------
+
+def check_due_reminders(now_dt: datetime = None) -> list:
+    """
+    Checks for tasks requiring reminder / bird visit right now.
+    Rules:
+    1. Explicit reminders whose time <= now ALWAYS fire (ignoring quiet hours, requirements 3 & 4).
+    2. Overdue / Due today tasks without explicit reminder trigger bird repeat visits
+       based on persistence setting (gentle=1440m, normal=30m, persistent=15m),
+       unless in quiet hours or snoozed.
+    """
+    if now_dt is None:
+        now_dt = datetime.now()
+
+    now_hm = now_dt.strftime("%H:%M")
+    now_iso = now_dt.strftime("%Y-%m-%d %H:%M")
+    today_date_str = now_dt.strftime("%Y-%m-%d")
+
+    settings = get_all_settings()
+    quiet_enabled = settings.get("quiet_hours_enabled", "true").lower() == "true"
+    quiet_start = settings.get("quiet_hours_start", "22:00")
+    quiet_end = settings.get("quiet_hours_end", "08:00")
+    persistence = settings.get("persistence", "normal").lower()
+
+    # Calculate if currently in quiet hours
+    in_quiet = False
+    if quiet_enabled:
+        if quiet_start > quiet_end:  # Crosses midnight (e.g. 22:00 to 08:00)
+            in_quiet = (now_hm >= quiet_start or now_hm < quiet_end)
+        else:
+            in_quiet = (quiet_start <= now_hm < quiet_end)
+
+    # Persistence intervals in minutes
+    interval_minutes = 30
+    if persistence == "gentle":
+        interval_minutes = 1440  # Once a day
+    elif persistence == "persistent":
+        interval_minutes = 15
+
+    tasks = get_all_tasks()
+    needing_bird = []
+
+    for t in tasks:
+        if t["status"] != "pending":
+            continue
+
+        # Check if task is currently snoozed
+        if t.get("snoozed_until") and t["snoozed_until"] > now_iso:
+            continue
+
+        reminders = t.get("reminders") or []
+        explicit_fired_now = False
+
+        # 1. Check explicit scheduled reminders
+        for rem in reminders:
+            r_time = rem.get("time") or rem.get("trigger_at")
+            if r_time:
+                norm_time = str(r_time).replace("T", " ")[:16]
+                if not rem.get("fired") and norm_time <= now_iso:
+                    # Requirement 3 & 4: Explicit reminders always fire (even during quiet hours or if missed while app was closed)
+                    needing_bird.append({
+                        "task": t,
+                        "reason": "explicit_reminder",
+                        "reminder_id": rem.get("id"),
+                        "reminder_label": rem.get("label", "Task Reminder"),
+                        "is_explicit": True,
+                        "warm_message": f"A gentle reminder for you: '{t['title']}' is coming up 🌸 Take your time, you've got this."
+                    })
+                    explicit_fired_now = True
+                    break
+
+        if explicit_fired_now:
+            continue
+
+        # 2. Check general repeat visit (due today or overdue)
+        # Suppressed if currently in quiet hours!
+        if in_quiet:
+            continue
+
+        is_overdue = t.get("is_overdue", False)
+        is_due_today = (t.get("due_date_iso") == today_date_str) or (t.get("due_datetime") and t["due_datetime"].startswith(today_date_str))
+
+        if is_overdue or is_due_today:
+            last_rem = t.get("last_reminded_at")
+            should_visit = False
+            if not last_rem:
+                should_visit = True
+            else:
+                try:
+                    last_dt = datetime.strptime(last_rem, "%Y-%m-%d %H:%M:%S")
+                    if (now_dt - last_dt).total_seconds() >= (interval_minutes * 60):
+                        should_visit = True
+                except Exception:
+                    should_visit = True
+
+            if should_visit:
+                reason = "overdue" if is_overdue else "due_today"
+                warm_msg = (
+                    f"A gentle check-in: '{t['title']}' was due earlier. Whenever you're ready, I'm right here 🌸"
+                    if is_overdue
+                    else f"Friendly hello! '{t['title']}' is on your list for today. No rush, you've got this 🌸"
+                )
+                needing_bird.append({
+                    "task": t,
+                    "reason": reason,
+                    "reminder_id": None,
+                    "reminder_label": "Overdue Task" if is_overdue else "Due Today",
+                    "is_explicit": False,
+                    "warm_message": warm_msg
+                })
+
+    return needing_bird
+
+def mark_reminder_fired(task_id: int, reminder_id: str = None) -> bool:
+    """Updates last_reminded_at, marks specific reminder fired, and logs audit."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, title, reminders FROM tasks WHERE id = ?", (task_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return False
+
+    title = row["title"]
+    rems = []
+    if row["reminders"]:
+        try:
+            rems = json.loads(row["reminders"])
+        except Exception:
+            pass
+
+    for r in rems:
+        if reminder_id and r.get("id") == reminder_id:
+            r["fired"] = True
+        elif not reminder_id:
+            r["fired"] = True
+
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute(
+        "UPDATE tasks SET reminders = ?, last_reminded_at = ? WHERE id = ?",
+        (json.dumps(rems), now_str, task_id)
+    )
+    conn.commit()
+    conn.close()
+
+    log_audit("REMINDER_FIRED", f"Reminder fired for task #{task_id}: '{title}'")
+    return True
+
+def snooze_task(task_id: int, minutes: int) -> bool:
+    """Snoozes task reminders for N minutes and logs audit."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, title FROM tasks WHERE id = ?", (task_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return False
+
+    title = row["title"]
+    snooze_until = (datetime.now() + timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M")
+    cursor.execute("UPDATE tasks SET snoozed_until = ? WHERE id = ?", (snooze_until, task_id))
+    conn.commit()
+    conn.close()
+
+    log_audit("REMINDER_SNOOZED", f"Snoozed task #{task_id} ('{title}') for {minutes} minutes (until {snooze_until})")
+    return True
 
 def set_pending_task_action(action_type: str, task_id: int, task_title: str) -> int:
     """Sets a pending action to complete or delete a task, requiring user confirmation."""

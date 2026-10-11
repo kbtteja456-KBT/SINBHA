@@ -146,6 +146,50 @@
           <h3>Local Storage</h3>
           <p>SINBHA operates entirely on your computer. Chat messages, memories, and task records are kept private in your local SQLite database (<code>sinbha.db</code>).</p>
         </div>
+        <div class="settings-reminders-section">
+          <h3>🕊️ Bird Reminders & Quiet Hours</h3>
+          <p>Customize how your feathered companion delivers gentle check-ins.</p>
+
+          <div class="setting-field-group">
+            <label for="persistenceSelect" class="setting-label">
+              <strong>Reminder Persistence</strong>
+              <span class="setting-desc">How often the bird revisits pending or overdue tasks</span>
+            </label>
+            <select id="persistenceSelect" class="setting-select">
+              <option value="gentle">Gentle (Once a day)</option>
+              <option value="normal" selected>Normal (Every 30 minutes)</option>
+              <option value="persistent">Persistent (Every 15 minutes)</option>
+            </select>
+          </div>
+
+          <div class="setting-field-group">
+            <div class="setting-switch-row">
+              <label class="setting-switch">
+                <input type="checkbox" id="quietHoursToggle" checked>
+                <span class="setting-slider"></span>
+              </label>
+              <div class="setting-switch-info">
+                <strong>Enable Quiet Hours</strong>
+                <span class="setting-desc">Pauses repeat bird visits during resting time</span>
+              </div>
+            </div>
+
+            <div class="quiet-time-picker-row" id="quietTimePickerRow">
+              <div class="time-picker-item">
+                <label for="quietStartInput">From:</label>
+                <input type="time" id="quietStartInput" value="22:00" class="setting-time-input">
+              </div>
+              <div class="time-picker-item">
+                <label for="quietEndInput">Until:</label>
+                <input type="time" id="quietEndInput" value="08:00" class="setting-time-input">
+              </div>
+            </div>
+            <div class="setting-note">
+              ℹ️ Explicit reminders you specifically scheduled will always arrive at their exact time, even during quiet hours.
+            </div>
+          </div>
+        </div>
+
         <div class="settings-danger-section">
           <h3>Data Management</h3>
           <p>Need a fresh start? You can wipe all local companion data permanently.</p>
@@ -228,6 +272,51 @@
       </div>
     </div>
   </aside>
+
+  <!-- BIRD REMINDER OVERLAY (Step 6B) -->
+  <div id="birdReminderContainer" class="bird-reminder-container" style="display: none;" role="region" aria-label="Task Reminder Bird">
+    <div id="birdFlightWrapper" class="bird-flight-wrapper">
+      <div id="birdShadow" class="bird-shadow"></div>
+      <div id="birdActor" class="bird-actor" tabindex="0" role="button" aria-label="Task reminder bird. Tap for options.">
+        <img id="birdFrameWingsUp" class="bird-sprite bird-sprite-up" src="/static/bird/bird_wings_up.png" alt="Flying bird wings up" />
+        <img id="birdFrameWingsDown" class="bird-sprite bird-sprite-down" src="/static/bird/bird_wings_down.png" alt="Flying bird wings down" />
+        <img id="birdFrameLanded" class="bird-sprite bird-sprite-landed" src="/static/bird/bird_landed.png" alt="Landed bird perched on branch" />
+        
+        <!-- Note overlay drawn on top of the blank note in beak -->
+        <div id="birdNoteOverlay" class="bird-note-overlay">
+          <div id="birdNoteTitle" class="bird-note-title">Task Title</div>
+          <div id="birdNoteDue" class="bird-note-due">Due: 8:00 AM</div>
+          <div class="bird-note-tap">tap me 🌸</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- BIRD ACTION POPUP (When tapped) -->
+    <div id="birdActionPopup" class="bird-action-popup" style="display: none;">
+      <div class="bird-popup-header">
+        <span class="bird-popup-badge">🕊️ Gentle Reminder</span>
+        <button id="birdClosePopupBtn" class="bird-popup-close" aria-label="Close popup">&times;</button>
+      </div>
+      <div class="bird-popup-body">
+        <div id="birdPopupTaskTitle" class="bird-popup-task-title">Task Title</div>
+        <div id="birdPopupTaskDue" class="bird-popup-task-due">Due: Tomorrow at 8:00 AM</div>
+      </div>
+      <div class="bird-popup-actions">
+        <button id="birdDoneBtn" class="bird-action-btn bird-btn-done">✓ Mark Done</button>
+        
+        <div class="bird-snooze-wrapper">
+          <button id="birdSnoozeDropdownBtn" class="bird-action-btn bird-btn-snooze">⏰ Snooze ▾</button>
+          <div id="birdSnoozeMenu" class="bird-snooze-menu" style="display: none;">
+            <button class="bird-snooze-option" data-mins="15">15 minutes</button>
+            <button class="bird-snooze-option" data-mins="60">1 hour</button>
+            <button class="bird-snooze-option" data-mins="1440">Tomorrow</button>
+          </div>
+        </div>
+
+        <button id="birdChatBtn" class="bird-action-btn bird-btn-chat">💬 Open Chat</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Status Notification Toast -->
   <div id="toast" class="toast"></div>

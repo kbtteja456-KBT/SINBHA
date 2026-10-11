@@ -32,13 +32,14 @@ HOW YOU CARE & REMEMBER:
 - Encourage real-life connections (friends, family) without lecturing.
 - Never try to make them depend on you or feel guilty for leaving.
 
-TASK PROPOSING GUIDELINES (STEP 5):
+TASK PROPOSING & DUE TIME GUIDELINES (STEP 5 & 6B):
 - When your friend mentions an assignment, deadline, to-do, or task they need to do:
   1. Always reply to their feelings FIRST with conversational warmth, empathy, and encouragement in your text reply (2 to 4 sentences).
-  2. ONLY if there is a concrete, specific actionable task (e.g., "finish history essay by Friday", "buy groceries tomorrow", "dentist appointment on Monday"), output a structured task proposal block at the very end of your message:
+  2. ONLY if there is a concrete, specific actionable task (e.g., "finish history essay by Friday at 5pm", "physics lab report tomorrow at 8am", "dentist appointment on Monday at 10:30am"), output a structured task proposal block at the very end of your message:
      <<<TASK_PROPOSAL>>>
-     {"title": "Clear concise task title", "due_date": "Exact relative date mentioned (e.g. Friday, tomorrow) or null", "notes": "Optional short note or null"}
+     {"title": "Clear concise task title", "due_date": "Exact relative date and time mentioned (e.g. tomorrow at 8am, Friday at 5pm, tomorrow) or null", "notes": "Optional short note or null"}
      <<<END_TASK_PROPOSAL>>>
+  3. If the user mentions a deadline but DOES NOT specify a time (e.g. "I need to do my report tomorrow"), gently ask them in your message what time they would like to aim for (e.g. "What time are you aiming to get it done by? 🌸").
 - VENTING ALONE MUST NEVER CREATE A PROPOSAL:
   If the user is just venting, tired, overwhelmed, anxious, or complaining without stating a specific actionable task (e.g. "I have so much work today", "College is exhausting", "I feel overwhelmed", "Work was crazy today"), DO NOT output any task proposal block! Just listen, empathize, and support them warmly.
 - If a task has an ambiguous or unclear deadline (e.g. "sometime", "soon", "later"), do not guess a date; ask them gently in your message when they'd like to get it done by, and set "due_date" to null.
@@ -62,92 +63,314 @@ Return ONLY a valid JSON array of strings (e.g. ["User's favorite drink is match
 NO explanations, NO markdown backticks.
 """
 
-# ----------------- Date Conversion Helper (Requirement 4) -----------------
+# ----------------- Date & Time Conversion Helpers (Step 6B) -----------------
 
-def parse_relative_date(raw_date: str, base_date: datetime.date = None) -> tuple[str | None, bool]:
+def parse_relative_datetime(raw_str: str, base_dt: datetime.datetime = None) -> dict:
     """
-    Converts relative dates ('Friday', 'tomorrow', 'next Monday', etc.) into real dates (YYYY-MM-DD (Day)).
-    Returns (formatted_date_string, is_ambiguous).
-    If no date was provided, returns (None, False).
-    If date is unclear/ambiguous, returns (None, True).
+    Parses natural language date and time expressions into structured date, time, and ISO strings.
+    Examples:
+    - 'tomorrow at 8am' -> date: '2026-10-11', time: '08:00', datetime: '2026-10-11 08:00'
+    - 'Friday at 4:30pm' -> date: '2026-10-16', time: '16:30'
+    - 'in 2 hours' -> date & time offset from base_dt
+    - 'tomorrow' -> date: '2026-10-11', time: None, time_specified: False
     """
-    if not raw_date or str(raw_date).strip().lower() in ("none", "no deadline", "no due date", "null", ""):
-        return None, False
+    if not raw_str or str(raw_str).strip().lower() in ("none", "no deadline", "no due date", "null", ""):
+        return {
+            "due_date": None,
+            "due_time": None,
+            "due_datetime": None,
+            "display": None,
+            "time_specified": False,
+            "is_ambiguous": False,
+            "suggested_reminders": []
+        }
 
-    clean = str(raw_date).strip().lower()
-    if base_date is None:
-        base_date = datetime.date.today()
+    if base_dt is None:
+        base_dt = datetime.datetime.now()
 
-    # Unclear / ambiguous keyword check
-    unclear_words = ["soon", "sometime", "later", "eventually", "someday", "next time", "upcoming"]
-    for w in unclear_words:
-        if w in clean and not any(k in clean for k in ["tomorrow", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]):
-            return None, True
+    clean = str(raw_str).strip().lower()
 
-    # "today" / "tonight"
-    if clean in ("today", "tonight"):
-        return base_date.strftime("%Y-%m-%d (%A)"), False
+    # Ambiguity check
+    unclear_words = ["soon", "sometime", "later", "eventually", "someday", "next time", "around then"]
+    has_explicit_date_keyword = any(k in clean for k in ["tomorrow", "today", "tonight", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]) or bool(re.search(r"\b(at|am|pm|hour|minute)\b", clean))
+    is_ambiguous = any(w in clean for w in unclear_words) and not has_explicit_date_keyword
+    if is_ambiguous:
+        return {
+            "due_date": None,
+            "due_time": None,
+            "due_datetime": None,
+            "display": None,
+            "time_specified": False,
+            "is_ambiguous": True,
+            "suggested_reminders": []
+        }
 
-    # "tomorrow"
+    # Relative delta 'in X minutes/hours'
+    m_rel = re.search(r"in\s+(\d+)\s+(minute|min|hour|hr)s?", clean)
+    if m_rel:
+        val = int(m_rel.group(1))
+        unit = m_rel.group(2)
+        if "min" in unit:
+            target = base_dt + datetime.timedelta(minutes=val)
+        else:
+            target = base_dt + datetime.timedelta(hours=val)
+        target_dt_str = target.strftime("%Y-%m-%d %H:%M")
+        return {
+            "due_date": target.strftime("%Y-%m-%d"),
+            "due_time": target.strftime("%H:%M"),
+            "due_datetime": target_dt_str,
+            "display": target.strftime("%Y-%m-%d at %I:%M %p (%A)").replace(" 0", " "),
+            "time_specified": True,
+            "is_ambiguous": False,
+            "suggested_reminders": generate_suggested_reminders(target, base_dt)
+        }
+
+    # 1. Extract time
+    hour = None
+    minute = 0
+    time_specified = False
+
+    # 12-hour format: '8am', '8:30 am', '8 pm', '11:45pm'
+    m12 = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)\b", clean)
+    if m12:
+        h = int(m12.group(1))
+        m = int(m12.group(2)) if m12.group(2) else 0
+        ampm = m12.group(3).replace(".", "")
+        if ampm == "pm" and h < 12:
+            h += 12
+        elif ampm == "am" and h == 12:
+            h = 0
+        hour = h
+        minute = m
+        time_specified = True
+    else:
+        # 24-hour format: 'at 17:00', '14:30'
+        m24 = re.search(r"\b(?:at\s+)?([01]?\d|2[0-3]):([0-5]\d)\b", clean)
+        if m24:
+            hour = int(m24.group(1))
+            minute = int(m24.group(2))
+            time_specified = True
+        elif "noon" in clean:
+            hour, minute = 12, 0
+            time_specified = True
+        elif "midnight" in clean:
+            hour, minute = 0, 0
+            time_specified = True
+        elif "in the morning" in clean:
+            hour, minute = 9, 0
+            time_specified = True
+        elif "in the afternoon" in clean:
+            hour, minute = 14, 0
+            time_specified = True
+        elif "in the evening" in clean:
+            hour, minute = 18, 0
+            time_specified = True
+        elif "at night" in clean:
+            hour, minute = 21, 0
+            time_specified = True
+
+    # 2. Extract date
+    target_date = base_dt.date()
     if "tomorrow" in clean:
         if "day after" in clean:
-            target = base_date + datetime.timedelta(days=2)
+            target_date = base_dt.date() + datetime.timedelta(days=2)
         else:
-            target = base_date + datetime.timedelta(days=1)
-        return target.strftime("%Y-%m-%d (%A)"), False
-
-    # "in X days"
-    m_days = re.search(r"in\s+(\d+)\s+days?", clean)
-    if m_days:
-        days = int(m_days.group(1))
-        target = base_date + datetime.timedelta(days=days)
-        return target.strftime("%Y-%m-%d (%A)"), False
-
-    # "in a week" / "next week"
-    if clean in ("in a week", "in 1 week", "next week"):
-        target = base_date + datetime.timedelta(days=7)
-        return target.strftime("%Y-%m-%d (%A)"), False
-
-    # Weekday names: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday
-    weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-    for idx, day_name in enumerate(weekdays):
-        if day_name in clean:
-            today_idx = base_date.weekday()  # 0=Monday, 6=Sunday
-            days_ahead = idx - today_idx
-            if days_ahead <= 0:
-                days_ahead += 7
-            if "next" in clean:
-                days_ahead += 7
-            target = base_date + datetime.timedelta(days=days_ahead)
-            return target.strftime("%Y-%m-%d (%A)"), False
-
-    # ISO date match YYYY-MM-DD
-    iso_match = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", clean)
-    if iso_match:
-        try:
-            target = datetime.date(int(iso_match.group(1)), int(iso_match.group(2)), int(iso_match.group(3)))
-            return target.strftime("%Y-%m-%d (%A)"), False
-        except ValueError:
-            return None, True
-
-    # Month + Day matching (e.g., "October 16", "Oct 16th", "16th Oct")
-    months = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]
-    short_months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
-    for m_idx, (m_full, m_short) in enumerate(zip(months, short_months), start=1):
-        if m_full in clean or m_short in clean:
-            day_match = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\b", clean)
-            if day_match:
-                day_num = int(day_match.group(1))
-                year = base_date.year
+            target_date = base_dt.date() + datetime.timedelta(days=1)
+    elif "today" in clean or "tonight" in clean:
+        target_date = base_dt.date()
+    elif "in a week" in clean or "next week" in clean:
+        target_date = base_dt.date() + datetime.timedelta(days=7)
+    else:
+        # Weekdays
+        weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+        matched_weekday = False
+        for idx, day in enumerate(weekdays):
+            if day in clean:
+                matched_weekday = True
+                today_idx = base_dt.weekday()
+                ahead = idx - today_idx
+                if ahead <= 0:
+                    ahead += 7
+                if "next" in clean:
+                    ahead += 7
+                target_date = base_dt.date() + datetime.timedelta(days=ahead)
+                break
+        
+        if not matched_weekday:
+            # Check ISO format YYYY-MM-DD
+            m_iso = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", clean)
+            if m_iso:
                 try:
-                    target = datetime.date(year, m_idx, day_num)
-                    if target < base_date:
-                        target = datetime.date(year + 1, m_idx, day_num)
-                    return target.strftime("%Y-%m-%d (%A)"), False
+                    target_date = datetime.date(int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3)))
                 except ValueError:
-                    return None, True
+                    pass
+            else:
+                # Month names
+                months = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]
+                short_months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+                for m_idx, (m_full, m_short) in enumerate(zip(months, short_months), start=1):
+                    if m_full in clean or m_short in clean:
+                        day_match = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\b", clean)
+                        if day_match:
+                            try:
+                                target_date = datetime.date(base_dt.year, m_idx, int(day_match.group(1)))
+                                if target_date < base_dt.date():
+                                    target_date = datetime.date(base_dt.year + 1, m_idx, int(day_match.group(1)))
+                            except ValueError:
+                                pass
+                        break
 
-    return None, True
+    due_date_str = target_date.strftime("%Y-%m-%d")
+    due_time_str = f"{hour:02d}:{minute:02d}" if time_specified else None
+    
+    if time_specified:
+        target_dt = datetime.datetime(target_date.year, target_date.month, target_date.day, hour, minute)
+        due_datetime_str = target_dt.strftime("%Y-%m-%d %H:%M")
+        display_str = target_dt.strftime("%Y-%m-%d at %I:%M %p (%A)").replace(" 0", " ")
+        suggested = generate_suggested_reminders(target_dt, base_dt)
+    else:
+        due_datetime_str = None
+        display_str = target_date.strftime("%Y-%m-%d (%A)")
+        suggested = generate_date_only_reminders(target_date, base_dt)
+
+    return {
+        "due_date": due_date_str,
+        "due_time": due_time_str,
+        "due_datetime": due_datetime_str,
+        "display": display_str,
+        "time_specified": time_specified,
+        "is_ambiguous": False,
+        "suggested_reminders": suggested
+    }
+
+def generate_suggested_reminders(target_dt: datetime.datetime, now_dt: datetime.datetime) -> list:
+    """Generates suggested reminder choices based on due datetime."""
+    reminders = []
+    
+    # 1. 15 minutes before
+    r_15m = target_dt - datetime.timedelta(minutes=15)
+    if r_15m > now_dt:
+        reminders.append({
+            "id": "15m",
+            "time": r_15m.strftime("%Y-%m-%d %H:%M"),
+            "label": f"15 minutes before ({r_15m.strftime('%I:%M %p').lstrip('0')})",
+            "default": True,
+            "explicit": True
+        })
+
+    # 2. 1 hour before
+    r_1h = target_dt - datetime.timedelta(hours=1)
+    if r_1h > now_dt:
+        reminders.append({
+            "id": "1h",
+            "time": r_1h.strftime("%Y-%m-%d %H:%M"),
+            "label": f"1 hour before ({r_1h.strftime('%I:%M %p').lstrip('0')})",
+            "default": True,
+            "explicit": True
+        })
+
+    # 3. Evening before (8:00 PM) if task is tomorrow or later
+    if target_dt.date() > now_dt.date():
+        prev_day = target_dt.date() - datetime.timedelta(days=1)
+        r_eve = datetime.datetime(prev_day.year, prev_day.month, prev_day.day, 20, 0)
+        if r_eve > now_dt:
+            reminders.append({
+                "id": "eve",
+                "time": r_eve.strftime("%Y-%m-%d %H:%M"),
+                "label": "Evening before (8:00 PM)",
+                "default": False,
+                "explicit": True
+            })
+
+    # 4. Quick 10 minutes from now option
+    r_10m = now_dt + datetime.timedelta(minutes=10)
+    reminders.append({
+        "id": "10m_now",
+        "time": r_10m.strftime("%Y-%m-%d %H:%M"),
+        "label": f"In 10 minutes ({r_10m.strftime('%I:%M %p').lstrip('0')})",
+        "default": False,
+        "explicit": True
+    })
+
+    return reminders
+
+def generate_date_only_reminders(target_date: datetime.date, now_dt: datetime.datetime) -> list:
+    """Generates reminders when only date is known."""
+    reminders = []
+    if target_date > now_dt.date():
+        prev_day = target_date - datetime.timedelta(days=1)
+        r_eve = datetime.datetime(prev_day.year, prev_day.month, prev_day.day, 20, 0)
+        if r_eve > now_dt:
+            reminders.append({
+                "id": "eve",
+                "time": r_eve.strftime("%Y-%m-%d %H:%M"),
+                "label": "Evening before (8:00 PM)",
+                "default": True,
+                "explicit": True
+            })
+    r_morn = datetime.datetime(target_date.year, target_date.month, target_date.day, 9, 0)
+    if r_morn > now_dt:
+        reminders.append({
+            "id": "morn",
+            "time": r_morn.strftime("%Y-%m-%d %H:%M"),
+            "label": "Morning of at 9:00 AM",
+            "default": True,
+            "explicit": True
+        })
+    r_10m = now_dt + datetime.timedelta(minutes=10)
+    reminders.append({
+        "id": "10m_now",
+        "time": r_10m.strftime("%Y-%m-%d %H:%M"),
+        "label": f"In 10 minutes ({r_10m.strftime('%I:%M %p').lstrip('0')})",
+        "default": False,
+        "explicit": True
+    })
+    return reminders
+
+# Backwards compatibility helper for Step 5 tests
+def parse_relative_date(raw_date: str, base_date: datetime.date = None) -> tuple[str | None, bool]:
+    res = parse_relative_datetime(raw_date, base_dt=datetime.datetime.combine(base_date, datetime.time()) if base_date else None)
+    if res["is_ambiguous"]:
+        return None, True
+    if res["due_date"]:
+        return f"{res['due_date']} ({datetime.datetime.strptime(res['due_date'], '%Y-%m-%d').strftime('%A')})", False
+    return None, False
+
+def extract_fallback_task_proposal(user_message: str) -> dict | None:
+    """Fallback parser to guarantee task proposals when the user explicitly states an assignment/to-do."""
+    clean = user_message.strip()
+    m = re.search(r"\b(?:i\s+need\s+to|i\s+have\s+to|i've\s+got\s+to|i\s+must|remind\s+me\s+to|got\s+to)\s+([A-Za-z0-9\s,\-'\"]+)", clean, re.IGNORECASE)
+    if not m:
+        m = re.search(r"\b(?:submit|turn\s+in|finish|complete)\s+([A-Za-z0-9\s,\-'\"]+)", clean, re.IGNORECASE)
+        if not m:
+            return None
+
+    rest = m.group(1).strip()
+    m_date = re.search(r"\b(?:by|on|at|due|for)?\s*((?:tomorrow|today|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next\s+\w+)(?:\s+at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?)?|\d{1,2}(?::\d{2})?\s*(?:am|pm))\b", rest, re.IGNORECASE)
+
+    if m_date:
+        due_str = m_date.group(0).strip()
+        title_part = rest[:m_date.start()].strip()
+    else:
+        due_str = None
+        title_part = rest
+
+    title_part = re.sub(r"^(?:turn\s+in|submit|finish|complete|do|work\s+on|write|prepare)\s+", "", title_part, flags=re.IGNORECASE).strip()
+    title_part = re.sub(r"^(?:my|the|a|an)\s+", "", title_part, flags=re.IGNORECASE).strip()
+
+    if not title_part or len(title_part) < 3:
+        return None
+
+    venting_words = ["rest", "sleep", "breathe", "cry", "scream", "relax", "break"]
+    if any(title_part.lower() == v for v in venting_words):
+        return None
+
+    title = title_part.strip().capitalize()
+    return {
+        "title": title,
+        "due_date": due_str,
+        "notes": None
+    }
 
 async def call_sinbha_brain(user_message: str, chat_history: list = None, remembered_facts: list = None) -> dict:
     """
@@ -221,6 +444,10 @@ async def call_sinbha_brain(user_message: str, chat_history: list = None, rememb
                 clean_reply = re.sub(r"<<<TASK_PROPOSAL>>>.*?<<<END_TASK_PROPOSAL>>>", "", raw_text, flags=re.DOTALL).strip()
             else:
                 clean_reply = raw_text
+
+            # Robust fallback if LLM omitted proposal block on an explicit task
+            if not raw_proposal:
+                raw_proposal = extract_fallback_task_proposal(user_message)
 
             return {
                 "success": True,

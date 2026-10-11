@@ -54,11 +54,36 @@ document.addEventListener("DOMContentLoaded", () => {
   const cancelPurgeBtn = document.getElementById("cancelPurgeBtn");
   const confirmPurgeBtn = document.getElementById("confirmPurgeBtn");
 
+  // Bird Reminder & Settings elements (Step 6B)
+  const birdReminderContainer = document.getElementById("birdReminderContainer");
+  const birdFlightWrapper = document.getElementById("birdFlightWrapper");
+  const birdActor = document.getElementById("birdActor");
+  const birdNoteTitle = document.getElementById("birdNoteTitle");
+  const birdNoteDue = document.getElementById("birdNoteDue");
+  const birdActionPopup = document.getElementById("birdActionPopup");
+  const birdClosePopupBtn = document.getElementById("birdClosePopupBtn");
+  const birdPopupTaskTitle = document.getElementById("birdPopupTaskTitle");
+  const birdPopupTaskDue = document.getElementById("birdPopupTaskDue");
+  const birdDoneBtn = document.getElementById("birdDoneBtn");
+  const birdSnoozeDropdownBtn = document.getElementById("birdSnoozeDropdownBtn");
+  const birdSnoozeMenu = document.getElementById("birdSnoozeMenu");
+  const birdChatBtn = document.getElementById("birdChatBtn");
+
+  const persistenceSelect = document.getElementById("persistenceSelect");
+  const quietHoursToggle = document.getElementById("quietHoursToggle");
+  const quietTimePickerRow = document.getElementById("quietTimePickerRow");
+  const quietStartInput = document.getElementById("quietStartInput");
+  const quietEndInput = document.getElementById("quietEndInput");
+
   // Toast notification
   const toast = document.getElementById("toast");
 
   // Global state
   let isDevMode = false;
+  let activeReminderTask = null;
+  let activeReminderId = null;
+  let remindersPaused = false;
+  let birdFlightTimer = null;
 
   // Format time helper
   function formatTime(dateStr) {
@@ -125,7 +150,37 @@ document.addEventListener("DOMContentLoaded", () => {
     let proposalHtml = "";
     if (proposal) {
       if (proposal.type === "task_proposal") {
-        // Step 5: Task proposal card with Confirm / Cancel gate
+        // Step 5 & 6B: Task proposal card with suggested reminders & Confirm / Cancel gate
+        let remindersHtml = "";
+        if (proposal.due_date) {
+          const suggested = proposal.suggested_reminders || [];
+          remindersHtml = `
+            <div class="task-proposal-reminders">
+              <div class="task-reminders-title">
+                <span>🔔</span>
+                <span>Suggested Reminders:</span>
+              </div>
+              <div class="task-reminders-list">
+                ${suggested.map(r => `
+                  <label class="task-reminder-item">
+                    <input type="checkbox" class="task-rem-checkbox" data-id="${escapeHtml(r.id)}" data-label="${escapeHtml(r.label)}" data-time="${escapeHtml(r.time || r.trigger_at || '')}" ${r.default !== false ? 'checked' : ''}>
+                    <span>${escapeHtml(r.label)}</span>
+                  </label>
+                `).join('')}
+              </div>
+              <div class="task-reminder-custom-row">
+                <button type="button" class="task-quick-10m-chip" title="Remind in 10 minutes">+ 10 min</button>
+                <span style="color: #9ca3af; font-size: 0.76rem;">or custom time:</span>
+                <input type="time" class="task-custom-time-input" title="Set specific reminder time">
+              </div>
+            </div>
+          `;
+        }
+
+        const dueFormatted = proposal.due_date 
+          ? `<span class="task-proposal-due-badge">${escapeHtml(proposal.due_date)}${proposal.due_time ? ' at ' + escapeHtml(proposal.due_time) : ''}</span>`
+          : `<span style="color: #6b7280; font-size: 0.82rem;">No deadline</span>`;
+
         proposalHtml = `
           <div class="task-proposal-card" id="task-prop-${proposal.id}">
             <div class="task-proposal-header">
@@ -139,8 +194,9 @@ document.addEventListener("DOMContentLoaded", () => {
               </div>
               <div class="task-proposal-due-row">
                 <span>📅</span>
-                ${proposal.due_date ? `<span class="task-proposal-due-badge">${escapeHtml(proposal.due_date)}</span>` : `<span style="color: #6b7280; font-size: 0.82rem;">No deadline</span>`}
+                ${dueFormatted}
               </div>
+              ${remindersHtml}
               ${proposal.notes ? `<div class="task-proposal-notes-row">📝 ${escapeHtml(proposal.notes)}</div>` : ''}
             </div>
             <div class="task-proposal-actions">
@@ -211,11 +267,18 @@ document.addEventListener("DOMContentLoaded", () => {
     `;
     chatMessages.appendChild(group);
 
-    // Attach event listeners to task proposal buttons (Step 5)
+    // Attach event listeners to task proposal buttons (Step 5 & 6B)
     if (proposal && proposal.type === "task_proposal") {
       const card = group.querySelector(".task-proposal-card");
       const confirmBtn = group.querySelector(".task-confirm-btn");
       const cancelBtn = group.querySelector(".task-cancel-btn");
+      const quickChip = group.querySelector(".task-quick-10m-chip");
+
+      if (quickChip) {
+        quickChip.addEventListener("click", () => {
+          quickChip.classList.toggle("active");
+        });
+      }
 
       if (confirmBtn && cancelBtn) {
         confirmBtn.addEventListener("click", async () => {
@@ -277,13 +340,65 @@ document.addEventListener("DOMContentLoaded", () => {
     scrollToBottom();
   }
 
-  // Handle confirming a proposed task (Step 5)
+  // Handle confirming a proposed task (Step 5 & 6B with chosen reminders)
   async function handleTaskConfirm(proposalId, cardElement) {
     try {
+      const chosenReminders = [];
+      if (cardElement) {
+        cardElement.querySelectorAll(".task-rem-checkbox:checked").forEach(cb => {
+          chosenReminders.push({
+            id: cb.dataset.id || ("rem_" + Date.now() + "_" + Math.random().toString(36).substr(2, 4)),
+            label: cb.dataset.label || "Reminder",
+            time: cb.dataset.time || cb.dataset.trigger || "",
+            type: "relative"
+          });
+        });
+
+        const chip10m = cardElement.querySelector(".task-quick-10m-chip.active");
+        if (chip10m) {
+          const d10 = new Date(Date.now() + 10 * 60000);
+          const yyyy = d10.getFullYear();
+          const mm = String(d10.getMonth() + 1).padStart(2, '0');
+          const dd = String(d10.getDate()).padStart(2, '0');
+          const hh = String(d10.getHours()).padStart(2, '0');
+          const min = String(d10.getMinutes()).padStart(2, '0');
+          chosenReminders.push({
+            id: "rem_10m_" + Date.now(),
+            label: "10 minutes from now",
+            time: `${yyyy}-${mm}-${dd} ${hh}:${min}`,
+            type: "manual"
+          });
+        }
+
+        const customTimeInput = cardElement.querySelector(".task-custom-time-input");
+        if (customTimeInput && customTimeInput.value) {
+          const parts = customTimeInput.value.split(":");
+          const hh = parts[0].padStart(2, '0');
+          const min = parts[1].padStart(2, '0');
+          const targetDate = new Date();
+          targetDate.setHours(parseInt(hh, 10), parseInt(min, 10), 0, 0);
+          if (targetDate.getTime() <= Date.now()) {
+            targetDate.setDate(targetDate.getDate() + 1);
+          }
+          const yyyy = targetDate.getFullYear();
+          const mm = String(targetDate.getMonth() + 1).padStart(2, '0');
+          const dd = String(targetDate.getDate()).padStart(2, '0');
+          chosenReminders.push({
+            id: "rem_custom_" + Date.now(),
+            label: `At ${customTimeInput.value}`,
+            time: `${yyyy}-${mm}-${dd} ${hh}:${min}`,
+            type: "manual"
+          });
+        }
+      }
+
       const res = await fetch("/api/tasks/confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ proposal_id: proposalId })
+        body: JSON.stringify({
+          proposal_id: proposalId,
+          reminders: chosenReminders
+        })
       });
       const data = await res.json();
       
@@ -516,7 +631,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 ${t.is_overdue ? `<span class="task-overdue-badge">⚠️ Overdue</span>` : ""}
               </div>
               <div class="task-card-meta">
-                ${t.due_date ? `<span class="task-card-due ${t.is_overdue ? "overdue-text" : ""}">📅 Due: ${escapeHtml(t.due_date)}</span>` : `<span class="task-card-due no-date">📅 No due date</span>`}
+                ${t.due_date ? `<span class="task-card-due ${t.is_overdue ? "overdue-text" : ""}">📅 Due: ${escapeHtml(t.due_date)}${t.due_time ? ' at ' + escapeHtml(t.due_time) : ''}</span>` : `<span class="task-card-due no-date">📅 No due date</span>`}
+                ${(t.reminders && t.reminders.length > 0) ? `<span style="font-size: 0.72rem; color: #db2777; background: #fff0f3; padding: 1px 6px; border-radius: 4px; font-weight: 600;">🔔 ${t.reminders.length} reminder${t.reminders.length > 1 ? 's' : ''}</span>` : ''}
                 ${t.notes ? `<span class="task-card-notes">📝 ${escapeHtml(t.notes)}</span>` : ""}
               </div>
             </div>
@@ -572,7 +688,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 <span class="task-card-title">${escapeHtml(t.title)}</span>
               </div>
               <div class="task-card-meta">
-                ${t.due_date ? `<span class="task-card-due no-date">📅 ${escapeHtml(t.due_date)}</span>` : `<span class="task-card-due no-date">📅 No due date</span>`}
+                ${t.due_date ? `<span class="task-card-due no-date">📅 ${escapeHtml(t.due_date)}${t.due_time ? ' at ' + escapeHtml(t.due_time) : ''}</span>` : `<span class="task-card-due no-date">📅 No due date</span>`}
                 ${t.notes ? `<span class="task-card-notes">📝 ${escapeHtml(t.notes)}</span>` : ""}
               </div>
             </div>
@@ -748,7 +864,10 @@ document.addEventListener("DOMContentLoaded", () => {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text })
+        body: JSON.stringify({
+          message: text,
+          tz_offset_minutes: new Date().getTimezoneOffset()
+        })
       });
 
       if (!response.ok) {
@@ -783,11 +902,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
   sendBtn.addEventListener("click", sendMessage);
 
-  // Emergency STOP button functionality
+  // Emergency STOP button functionality (Requirement 6: Hides bird & pauses reminders)
   async function triggerEmergencyStop() {
     setStopUiState(true);
+    remindersPaused = true;
+    hideBird();
     showToast("🛑 Emergency STOP activated", 3500);
-    appendSystemNotice("🛑 Emergency STOP triggered. All processing halted.");
+    appendSystemNotice("🛑 Emergency STOP triggered. All processing and reminders paused.");
 
     // Requirement 6 & 7: cancel any pending proposal cards visibly on screen
     document.querySelectorAll(".task-proposal-actions, .task-action-actions, .proposal-card-actions").forEach(el => {
@@ -809,7 +930,10 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       await fetch("/api/resume", { method: "POST" });
       setStopUiState(false);
-      showToast("🌸 Welcome back! Chat resumed.");
+      remindersPaused = false;
+      showToast("🌸 Welcome back! Chat and reminders resumed.");
+      // Check for any pending reminders right after resuming
+      checkDueReminders();
     } catch (e) {
       console.error("Resume failed", e);
     }
@@ -979,8 +1103,270 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  // ========================================================
+  // SETTINGS & QUIET HOURS MANAGER (STEP 6B)
+  // ========================================================
+  async function loadSettings() {
+    try {
+      const res = await fetch("/api/settings");
+      if (!res.ok) return;
+      const data = await res.json();
+      const s = data.settings || {};
+
+      if (persistenceSelect && s.persistence) {
+        persistenceSelect.value = s.persistence;
+      }
+      if (quietHoursToggle && s.quiet_hours_enabled !== undefined) {
+        const isEnabled = (s.quiet_hours_enabled === "true" || s.quiet_hours_enabled === true);
+        quietHoursToggle.checked = isEnabled;
+        if (quietTimePickerRow) {
+          quietTimePickerRow.style.display = isEnabled ? "flex" : "none";
+        }
+      }
+      if (quietStartInput && s.quiet_hours_start) {
+        quietStartInput.value = s.quiet_hours_start;
+      }
+      if (quietEndInput && s.quiet_hours_end) {
+        quietEndInput.value = s.quiet_hours_end;
+      }
+    } catch (e) {
+      console.error("Load settings failed:", e);
+    }
+  }
+
+  async function saveSettings() {
+    try {
+      const payload = {
+        persistence: persistenceSelect ? persistenceSelect.value : "normal",
+        quiet_hours_enabled: quietHoursToggle ? (quietHoursToggle.checked ? "true" : "false") : "true",
+        quiet_hours_start: quietStartInput ? quietStartInput.value : "22:00",
+        quiet_hours_end: quietEndInput ? quietEndInput.value : "08:00"
+      };
+      await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+    } catch (e) {
+      console.error("Save settings failed:", e);
+    }
+  }
+
+  if (persistenceSelect) persistenceSelect.addEventListener("change", saveSettings);
+  if (quietHoursToggle) {
+    quietHoursToggle.addEventListener("change", () => {
+      if (quietTimePickerRow) {
+        quietTimePickerRow.style.display = quietHoursToggle.checked ? "flex" : "none";
+      }
+      saveSettings();
+    });
+  }
+  if (quietStartInput) quietStartInput.addEventListener("change", saveSettings);
+  if (quietEndInput) quietEndInput.addEventListener("change", saveSettings);
+
+  // ========================================================
+  // FLYING BIRD REMINDER CONTROLLER (STEP 6B)
+  // ========================================================
+  async function checkDueReminders() {
+    if (remindersPaused) return;
+    // If the bird is already active on screen, don't trigger another one simultaneously
+    if (birdReminderContainer && birdReminderContainer.style.display !== "none") return;
+
+    try {
+      // Send device timezone offset in minutes
+      const tzOffset = new Date().getTimezoneOffset();
+      const res = await fetch(`/api/reminders/check?tz_offset_minutes=${tzOffset}`);
+      if (!res.ok) return;
+      const data = await res.json();
+
+      if (data.reminder_needed && data.task) {
+        triggerBirdFlight(data.task, data.reminder_id, data.is_explicit);
+      }
+    } catch (e) {
+      console.error("Check due reminders error:", e);
+    }
+  }
+
+  function triggerBirdFlight(task, reminderId, isExplicit) {
+    if (remindersPaused) return;
+
+    activeReminderTask = task;
+    activeReminderId = reminderId;
+
+    // Set note text
+    if (birdNoteTitle) birdNoteTitle.textContent = task.title;
+    const dueTxt = task.due_time ? task.due_time : (task.due_date ? task.due_date : "Today");
+    if (birdNoteDue) birdNoteDue.textContent = `Due: ${dueTxt}`;
+
+    // Set action popup text
+    if (birdPopupTaskTitle) birdPopupTaskTitle.textContent = task.title;
+    if (birdPopupTaskDue) {
+      birdPopupTaskDue.textContent = task.due_date ? `Due: ${task.due_date}${task.due_time ? ' at ' + task.due_time : ''}` : "Pending";
+    }
+
+    // Reset popup display
+    if (birdActionPopup) birdActionPopup.style.display = "none";
+    if (birdSnoozeMenu) birdSnoozeMenu.style.display = "none";
+
+    // Show bird container
+    if (birdReminderContainer) birdReminderContainer.style.display = "block";
+
+    // Check prefers-reduced-motion
+    const prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    if (prefersReducedMotion) {
+      // Still landed bird in corner
+      if (birdFlightWrapper) {
+        birdFlightWrapper.classList.remove("is-flying");
+        birdFlightWrapper.classList.add("is-landed");
+      }
+    } else {
+      // 3D smooth curved flight
+      if (birdFlightWrapper) {
+        birdFlightWrapper.classList.remove("is-landed");
+        birdFlightWrapper.classList.add("is-flying");
+
+        if (birdFlightTimer) clearTimeout(birdFlightTimer);
+        birdFlightTimer = setTimeout(() => {
+          if (birdFlightWrapper && birdReminderContainer.style.display !== "none") {
+            birdFlightWrapper.classList.remove("is-flying");
+            birdFlightWrapper.classList.add("is-landed");
+          }
+        }, 4200);
+      }
+    }
+
+    // Requirement 5: SINBHA sends a short, warm, non-guilt message when bird appears
+    const warmGreetings = [
+      `🕊️ A little feathered friend just arrived with a gentle note for "${task.title}" 🌸 Whenever you're ready, no pressure at all.`,
+      `🕊️ Your little winged buddy is here with a soft reminder about "${task.title}". Take your time, you're doing great 🌸`,
+      `🕊️ A gentle check-in from your bird friend for "${task.title}" 🌸 Just keeping it softly in mind whenever it suits you.`
+    ];
+    const greeting = warmGreetings[Math.floor(Math.random() * warmGreetings.length)];
+    appendAiMessage(greeting);
+
+    // If it was an explicit reminder, mark it fired so it doesn't repeatedly trigger as exact reminder
+    if (reminderId) {
+      fetch("/api/reminders/fired", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task_id: task.id, reminder_id: reminderId })
+      }).catch(console.error);
+    }
+  }
+
+  function hideBird() {
+    if (birdFlightTimer) clearTimeout(birdFlightTimer);
+    if (birdReminderContainer) birdReminderContainer.style.display = "none";
+    if (birdActionPopup) birdActionPopup.style.display = "none";
+    if (birdSnoozeMenu) birdSnoozeMenu.style.display = "none";
+    if (birdFlightWrapper) {
+      birdFlightWrapper.classList.remove("is-flying", "is-landed");
+    }
+    activeReminderTask = null;
+    activeReminderId = null;
+  }
+
+  // Tap bird to show popup options (Requirement 2)
+  if (birdActor) {
+    birdActor.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (!birdActionPopup) return;
+      const isVisible = birdActionPopup.style.display === "block";
+      birdActionPopup.style.display = isVisible ? "none" : "block";
+    });
+  }
+
+  if (birdClosePopupBtn) {
+    birdClosePopupBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (birdActionPopup) birdActionPopup.style.display = "none";
+      if (birdSnoozeMenu) birdSnoozeMenu.style.display = "none";
+    });
+  }
+
+  // Done button: Marks task complete & celebrates
+  if (birdDoneBtn) {
+    birdDoneBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!activeReminderTask) return;
+      const task = activeReminderTask;
+
+      try {
+        await updateTaskStatus(task.id, "completed");
+        appendAiMessage(`Wonderful job completing "${task.title}"! 🎉 Every step forward is a victory.`);
+        showToast("🌸 Task completed!");
+        hideBird();
+      } catch (err) {
+        console.error("Mark done error:", err);
+      }
+    });
+  }
+
+  // Snooze dropdown toggle
+  if (birdSnoozeDropdownBtn) {
+    birdSnoozeDropdownBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (!birdSnoozeMenu) return;
+      const isVis = birdSnoozeMenu.style.display === "flex";
+      birdSnoozeMenu.style.display = isVis ? "none" : "flex";
+    });
+  }
+
+  // Snooze option clicks (15 min, 1 hour, tomorrow)
+  document.querySelectorAll(".bird-snooze-option").forEach(opt => {
+    opt.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!activeReminderTask) return;
+      const task = activeReminderTask;
+      const mins = parseInt(opt.dataset.mins, 10);
+      if (!mins) return;
+
+      try {
+        await fetch("/api/reminders/snooze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ task_id: task.id, minutes: mins })
+        });
+
+        const label = mins === 15 ? "15 minutes" : (mins === 60 ? "1 hour" : "tomorrow");
+        appendAiMessage(`I've snoozed "${task.title}" for ${label} 🌸 Take all the time you need, the bird will rest for now.`);
+        showToast(`⏰ Snoozed for ${label}`);
+        hideBird();
+      } catch (err) {
+        console.error("Snooze error:", err);
+      }
+    });
+  });
+
+  // Open Chat button
+  if (birdChatBtn) {
+    birdChatBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      hideBird();
+      if (messageInput) messageInput.focus();
+    });
+  }
+
+  // Hide bird popup if clicking anywhere else outside
+  document.addEventListener("click", (e) => {
+    if (birdActionPopup && birdActionPopup.style.display === "block") {
+      if (!birdActionPopup.contains(e.target) && !birdActor.contains(e.target)) {
+        birdActionPopup.style.display = "none";
+        if (birdSnoozeMenu) birdSnoozeMenu.style.display = "none";
+      }
+    }
+  });
+
   // Initialize
   loadChatHistory();
   loadTasks();
+  loadSettings();
   checkAppInfo();
+
+  // Check reminders immediately upon opening the app (Requirement 4: missed reminders)
+  checkDueReminders();
+
+  // Periodic reminder checker every 60 seconds (Requirement 1)
+  setInterval(checkDueReminders, 60000);
 });
