@@ -333,9 +333,9 @@ async def chat_endpoint(payload: ChatRequest):
         # Validate title (App-level validation)
         if len(title) >= 3 and title.lower() not in ("none", "task", "null"):
             client_now = datetime.datetime.now()
-            if chat_req.tz_offset_minutes is not None:
+            if payload.tz_offset_minutes is not None:
                 utc_now = datetime.datetime.now(datetime.timezone.utc)
-                client_now = (utc_now - datetime.timedelta(minutes=chat_req.tz_offset_minutes)).replace(tzinfo=None)
+                client_now = (utc_now - datetime.timedelta(minutes=payload.tz_offset_minutes)).replace(tzinfo=None)
 
             dt_res = parse_relative_datetime(raw_due, base_dt=client_now)
             

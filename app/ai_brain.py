@@ -33,11 +33,11 @@ HOW YOU CARE & REMEMBER:
 - Never try to make them depend on you or feel guilty for leaving.
 
 TASK PROPOSING & DUE TIME GUIDELINES (STEP 5 & 6B):
-- When your friend mentions an assignment, deadline, to-do, or task they need to do:
-  1. Always reply to their feelings FIRST with conversational warmth, empathy, and encouragement in your text reply (2 to 4 sentences).
-  2. ONLY if there is a concrete, specific actionable task (e.g., "finish history essay by Friday at 5pm", "physics lab report tomorrow at 8am", "dentist appointment on Monday at 10:30am"), output a structured task proposal block at the very end of your message:
+- When your friend mentions an assignment, deadline, to-do, or task they need to do, OR asks to be reminded (in English, Telugu, Hinglish, etc., e.g., "remind me tomorrow at 8am to take vitamins", "remind me in 2min to study", "nannu 3min lo remind cheyyi chadhuvukovali"):
+  1. Always reply with conversational warmth, empathy, and encouragement in your text reply (2 to 4 sentences in their language).
+  2. ALWAYS output a structured task proposal block at the very end of your message:
      <<<TASK_PROPOSAL>>>
-     {"title": "Clear concise task title", "due_date": "Exact relative date and time mentioned (e.g. tomorrow at 8am, Friday at 5pm, tomorrow) or null", "notes": "Optional short note or null"}
+     {"title": "Clear concise task title in English", "due_date": "Exact relative date and time mentioned (e.g. tomorrow at 8am, in 2 minutes, Friday at 5pm) or null", "notes": "Optional short note or null"}
      <<<END_TASK_PROPOSAL>>>
   3. If the user mentions a deadline but DOES NOT specify a time (e.g. "I need to do my report tomorrow"), gently ask them in your message what time they would like to aim for (e.g. "What time are you aiming to get it done by? 🌸").
 - VENTING ALONE MUST NEVER CREATE A PROPOSAL:
@@ -106,11 +106,11 @@ def parse_relative_datetime(raw_str: str, base_dt: datetime.datetime = None) -> 
         }
 
     # Relative delta 'in X minutes/hours'
-    m_rel = re.search(r"in\s+(\d+)\s+(minute|min|hour|hr)s?", clean)
+    m_rel = re.search(r"in\s+(\d+)\s*(minute|min|m|hour|hr|h)s?\b", clean)
     if m_rel:
         val = int(m_rel.group(1))
         unit = m_rel.group(2)
-        if "min" in unit:
+        if unit.startswith("m"):
             target = base_dt + datetime.timedelta(minutes=val)
         else:
             target = base_dt + datetime.timedelta(hours=val)
@@ -246,6 +246,16 @@ def parse_relative_datetime(raw_str: str, base_dt: datetime.datetime = None) -> 
 def generate_suggested_reminders(target_dt: datetime.datetime, now_dt: datetime.datetime) -> list:
     """Generates suggested reminder choices based on due datetime."""
     reminders = []
+
+    # Exact due time reminder
+    if target_dt > now_dt:
+        reminders.append({
+            "id": "exact_due",
+            "time": target_dt.strftime("%Y-%m-%d %H:%M"),
+            "label": f"At due time ({target_dt.strftime('%I:%M %p').lstrip('0')})",
+            "default": True,
+            "explicit": True
+        })
     
     # 1. 15 minutes before
     r_15m = target_dt - datetime.timedelta(minutes=15)
@@ -337,8 +347,46 @@ def parse_relative_date(raw_date: str, base_date: datetime.date = None) -> tuple
     return None, False
 
 def extract_fallback_task_proposal(user_message: str) -> dict | None:
-    """Fallback parser to guarantee task proposals when the user explicitly states an assignment/to-do."""
+    """Fallback parser to guarantee task proposals when the user explicitly states an assignment/to-do or asks to be reminded."""
     clean = user_message.strip()
+
+    # 1. "remind me <due_time> to <action>" (e.g. "remind me tomorrow at 8am to take vitamins", "remind me in 2min to study")
+    m_rem1 = re.search(r"\bremind\s+me\s+(.+?)\s+to\s+(.+)", clean, re.IGNORECASE)
+    if m_rem1:
+        due_part = m_rem1.group(1).strip()
+        title_part = m_rem1.group(2).strip()
+        if len(title_part) >= 3:
+            return {
+                "title": title_part.capitalize(),
+                "due_date": due_part,
+                "notes": None
+            }
+
+    # 2. "remind me in X min/hours" (e.g. "remind me in 2min", "remind me in 5 minutes to take break")
+    m_rem2 = re.search(r"\bremind\s+me\s+(?:in\s+)?(\d+\s*(?:min|mins|minute|minutes|hr|hrs|hour|hours))\b(?:\s+to\s+(.+))?", clean, re.IGNORECASE)
+    if m_rem2:
+        due_part = "in " + m_rem2.group(1).strip()
+        title_part = m_rem2.group(2).strip() if m_rem2.group(2) else "Reminder"
+        return {
+            "title": title_part.capitalize(),
+            "due_date": due_part,
+            "notes": None
+        }
+
+    # 3. Telugu transliterated reminders (e.g. "nannu oka 3min loo remind cheyyii nenu chadhuvu kovali")
+    m_tel = re.search(r"(\d+)\s*(?:min|nimish|nim)\w*\s*(?:loo?|lo)\s*remind\s*cheyy\w*(.*)", clean, re.IGNORECASE)
+    if m_tel:
+        due_part = f"in {m_tel.group(1)} minutes"
+        rest = m_tel.group(2).strip()
+        title_part = rest if len(rest) >= 3 else "Study / Task"
+        title_part = re.sub(r"^(?:nenu|naku|please)\s+", "", title_part, flags=re.IGNORECASE).strip()
+        return {
+            "title": title_part.capitalize() if title_part else "Study / Task",
+            "due_date": due_part,
+            "notes": None
+        }
+
+    # 4. Standard task intents: "i need to ...", "remind me to ..."
     m = re.search(r"\b(?:i\s+need\s+to|i\s+have\s+to|i've\s+got\s+to|i\s+must|remind\s+me\s+to|got\s+to)\s+([A-Za-z0-9\s,\-'\"]+)", clean, re.IGNORECASE)
     if not m:
         m = re.search(r"\b(?:submit|turn\s+in|finish|complete)\s+([A-Za-z0-9\s,\-'\"]+)", clean, re.IGNORECASE)
@@ -346,7 +394,7 @@ def extract_fallback_task_proposal(user_message: str) -> dict | None:
             return None
 
     rest = m.group(1).strip()
-    m_date = re.search(r"\b(?:by|on|at|due|for)?\s*((?:tomorrow|today|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next\s+\w+)(?:\s+at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?)?|\d{1,2}(?::\d{2})?\s*(?:am|pm))\b", rest, re.IGNORECASE)
+    m_date = re.search(r"\b(?:by|on|at|due|for|in)?\s*((?:tomorrow|today|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next\s+\w+)(?:\s+at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?)?|\d{1,2}(?::\d{2})?\s*(?:am|pm)|\d+\s*(?:mins?|minutes?|hrs?|hours?))\b", rest, re.IGNORECASE)
 
     if m_date:
         due_str = m_date.group(0).strip()
