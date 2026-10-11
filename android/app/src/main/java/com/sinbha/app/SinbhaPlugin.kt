@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
+import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
@@ -282,6 +283,96 @@ class SinbhaPlugin : Plugin() {
                 put("versionCode", pInfo.versionCode)
             }
         }
+        call.resolve(res)
+    }
+
+    /**
+     * Requirement 6: Diagnostics screen data provider.
+     * Collects permissions, scheduled alarms, device token status, last sync,
+     * and error buffer without exposing tokens, passwords, or personal data.
+     */
+    @PluginMethod
+    fun getDiagnostics(call: PluginCall) {
+        val ctx = context
+        val pm = ctx.getSystemService(Context.POWER_SERVICE) as PowerManager
+        val am = ctx.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+
+        val hasOverlay = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Settings.canDrawOverlays(ctx)
+        } else {
+            true
+        }
+        val hasNotifications = NotificationManagerCompat.from(ctx).areNotificationsEnabled()
+        val hasExactAlarm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            am.canScheduleExactAlarms()
+        } else {
+            true
+        }
+        val isBatteryIgnored = pm.isIgnoringBatteryOptimizations(ctx.packageName)
+
+        val pInfo = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
+        val vCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) pInfo.longVersionCode else pInfo.versionCode.toLong()
+
+        val tokenExists = !prefs.sessionToken.isNullOrEmpty()
+        val tokenStatusStr = if (tokenExists) {
+            "Active (Stored in Android Keystore, 30-day rolling renewal)"
+        } else {
+            "Not registered / Logged out"
+        }
+
+        // Parse scheduled alarms from cache (stripping any sensitive user fields)
+        val alarmsJs = JSArray()
+        try {
+            val cached = prefs.cachedRemindersJson
+            if (!cached.isNullOrEmpty()) {
+                val arr = org.json.JSONArray(cached)
+                for (i in 0 until arr.length()) {
+                    val obj = arr.getJSONObject(i)
+                    alarmsJs.put(JSObject().apply {
+                        put("taskId", obj.optInt("task_id", -1))
+                        put("taskTitle", obj.optString("task_title", "Untitled Task"))
+                        put("time", obj.optString("time", ""))
+                        put("label", obj.optString("label", "Reminder"))
+                    })
+                }
+            }
+        } catch (e: Exception) {}
+
+        // Parse recent errors
+        val errorsJs = JSArray()
+        try {
+            val errArr = org.json.JSONArray(prefs.recentErrorsJson)
+            for (i in 0 until errArr.length()) {
+                val eObj = errArr.getJSONObject(i)
+                errorsJs.put(JSObject().apply {
+                    put("time", eObj.optString("time", ""))
+                    put("message", eObj.optString("message", ""))
+                })
+            }
+        } catch (e: Exception) {}
+
+        val res = JSObject().apply {
+            put("versionName", pInfo.versionName)
+            put("versionCode", vCode)
+            put("tokenStatus", tokenStatusStr)
+            put("hasToken", tokenExists)
+            put("lastSyncTime", prefs.lastSyncTime ?: "Never synced yet")
+            put("permissions", JSObject().apply {
+                put("overlay", hasOverlay)
+                put("notifications", hasNotifications)
+                put("exactAlarm", hasExactAlarm)
+                put("batteryIgnored", isBatteryIgnored)
+            })
+            put("deviceInfo", JSObject().apply {
+                put("manufacturer", Build.MANUFACTURER)
+                put("brand", Build.BRAND)
+                put("model", Build.MODEL)
+                put("androidSdk", Build.VERSION.SDK_INT)
+            })
+            put("scheduledAlarms", alarmsJs)
+            put("recentErrors", errorsJs)
+        }
+
         call.resolve(res)
     }
 }

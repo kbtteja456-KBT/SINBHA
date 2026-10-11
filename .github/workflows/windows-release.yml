@@ -1,0 +1,100 @@
+name: Build and Release Windows Desktop App
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_notes:
+        description: 'Release notes or changelog'
+        required: false
+        default: 'Automated release build with desktop transparent bird overlay and cloud sync.'
+  push:
+    tags:
+      - 'windows-v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-release-windows:
+    name: Build Windows NSIS Installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4.2.0
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install NPM Dependencies
+        run: npm ci
+
+      - name: Run Pre-Build Secrets Verification
+        run: node scripts/check_secrets.js
+
+      - name: Build Windows Installer
+        run: npm run build:win
+
+      - name: Calculate SHA-256 Checksum
+        id: checksum
+        shell: pwsh
+        run: |
+          $installer = Get-Item dist/SINBHA-Setup*.exe
+          if (-not $installer) {
+            Write-Error "Installer executable not found in dist/"
+            exit 1
+          }
+          Rename-Item $installer.FullName "dist/SINBHA-Setup.exe" -Force
+          $hash = Get-FileHash "dist/SINBHA-Setup.exe" -Algorithm SHA256
+          "$($hash.Hash.ToLower())  SINBHA-Setup.exe" | Out-File -Encoding utf8 "dist/SINBHA-Setup.exe.sha256"
+          Get-Content "dist/SINBHA-Setup.exe.sha256"
+          "sha256=$($hash.Hash.ToLower())" >> $env:GITHUB_OUTPUT
+
+      - name: Determine Release Tag
+        id: release_meta
+        shell: pwsh
+        run: |
+          $pkgVersion = (Get-Content package.json | ConvertFrom-Json).version
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $tag = $env:GITHUB_REF_NAME
+          } else {
+            $tag = "windows-v$pkgVersion"
+          }
+          "tag_name=$tag" >> $env:GITHUB_OUTPUT
+          "release_title=SINBHA Windows Desktop $tag" >> $env:GITHUB_OUTPUT
+
+      - name: Upload Installer Artifact (Backup)
+        uses: actions/upload-artifact@v4.6.0
+        with:
+          name: SINBHA-Windows-Installer
+          path: |
+            dist/SINBHA-Setup.exe
+            dist/SINBHA-Setup.exe.sha256
+          retention-days: 14
+
+      - name: Publish Release to Public sinbha-releases Repo
+        uses: softprops/action-gh-release@v2.2.1
+        with:
+          repository: kbtteja456-KBT/sinbha-releases
+          token: ${{ secrets.RELEASES_GITHUB_TOKEN }}
+          tag_name: ${{ steps.release_meta.outputs.tag_name }}
+          name: ${{ steps.release_meta.outputs.release_title }}
+          body: |
+            ## 🕊️ SINBHA Windows Desktop Release
+            **Version:** ${{ steps.release_meta.outputs.tag_name }}
+            
+            ${{ inputs.release_notes || 'Official Windows companion with desktop transparent bird overlay and automated cloud reminder poller.' }}
+            
+            ### 📦 Download & Verification
+            - Download `SINBHA-Setup.exe` below and run the installer on Windows 10/11.
+            - **SHA-256 Checksum:** `${{ steps.checksum.outputs.sha256 }}`
+          files: |
+            dist/SINBHA-Setup.exe
+            dist/SINBHA-Setup.exe.sha256
+          draft: false
+          prerelease: false

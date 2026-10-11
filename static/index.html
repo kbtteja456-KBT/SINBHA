@@ -432,6 +432,18 @@
               🔄 Sync Exact Alarms
             </button>
           </div>
+
+          <!-- Requirement 6: Companion Diagnostics -->
+          <div class="android-diagnostics-section" style="margin-top: 18px; padding-top: 14px; border-top: 1px solid #fce7f3;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <h4 style="margin: 0; font-size: 0.95rem; color: #be185d; font-weight: 700;">🛠️ Companion Diagnostics</h4>
+              <button type="button" id="refreshDiagnosticsBtn" style="background: #fff; border: 1px solid #fbcfe8; border-radius: 6px; padding: 4px 10px; font-size: 0.78rem; color: #be185d; cursor: pointer; font-weight: 600;">🔄 Refresh</button>
+            </div>
+            <div id="diagnosticsDisplay" style="background: #fdf2f8; border: 1px solid #fbcfe8; border-radius: 8px; padding: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.78rem; color: #374151; max-height: 220px; overflow-y: auto; white-space: pre-wrap; line-height: 1.45;">Loading diagnostics...</div>
+            <button type="button" id="copyDiagnosticsBtn" class="confirm-btn-secondary" style="width: 100%; margin-top: 8px; justify-content: center; font-size: 0.85rem; font-weight: 600;">
+              📋 Copy Diagnostics (Safe / No Personal Data)
+            </button>
+          </div>
         </div>
 
         <div class="settings-danger-section">

@@ -15,8 +15,8 @@ android {
         applicationId "com.sinbha.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0.0"
+        versionCode 2
+        versionName "1.0.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
@@ -34,6 +34,11 @@ android {
                 storePassword signingProps.getProperty('RELEASE_STORE_PASSWORD')
                 keyAlias signingProps.getProperty('RELEASE_KEY_ALIAS')
                 keyPassword signingProps.getProperty('RELEASE_KEY_PASSWORD')
+            } else if (System.getenv("KEYSTORE_FILE")) {
+                storeFile file(System.getenv("KEYSTORE_FILE"))
+                storePassword System.getenv("KEYSTORE_PASSWORD")
+                keyAlias System.getenv("KEY_ALIAS")
+                keyPassword System.getenv("KEY_PASSWORD")
             }
         }
     }
@@ -47,19 +52,22 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-            if (signingProps.containsKey('RELEASE_STORE_FILE')) {
+            if (signingProps.containsKey('RELEASE_STORE_FILE') || System.getenv("KEYSTORE_FILE")) {
                 signingConfig signingConfigs.release
             }
         }
     }
 
+    def currentJavaVersion = JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_21) ? JavaVersion.VERSION_21 : JavaVersion.VERSION_17
+    def jvmTargetStr = currentJavaVersion == JavaVersion.VERSION_21 ? "21" : "17"
+
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_21
-        targetCompatibility JavaVersion.VERSION_21
+        sourceCompatibility currentJavaVersion
+        targetCompatibility currentJavaVersion
     }
 
     kotlinOptions {
-        jvmTarget = "21"
+        jvmTarget = jvmTargetStr
     }
 }
 

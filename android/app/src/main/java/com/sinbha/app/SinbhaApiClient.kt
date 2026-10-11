@@ -175,6 +175,7 @@ class SinbhaApiClient(private val context: Context) {
             val code = conn.responseCode
             if (code == 401) {
                 // Requirement 3: 401 on sync -> show high priority notification
+                prefs.recordError("Authentication paused / session expired (HTTP 401)")
                 showAuthPausedNotification()
                 conn.disconnect()
                 return@withContext null
@@ -183,6 +184,7 @@ class SinbhaApiClient(private val context: Context) {
             if (code in 200..299) {
                 // Reset alert flag upon successful sync
                 prefs.isAuthPausedAlertShown = false
+                prefs.lastSyncTime = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
                 val responseText = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
                 val root = JSONObject(responseText)
 
@@ -212,9 +214,11 @@ class SinbhaApiClient(private val context: Context) {
                 conn.disconnect()
                 return@withContext list
             }
+            prefs.recordError("Sync failed with HTTP $code")
             conn.disconnect()
             return@withContext null
         } catch (e: Exception) {
+            prefs.recordError("Sync network error: ${e.message}")
             e.printStackTrace()
             return@withContext null
         }

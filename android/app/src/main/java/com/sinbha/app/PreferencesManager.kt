@@ -41,7 +41,39 @@ class PreferencesManager(private val context: Context) {
         private const val KEY_REDUCE_MOTION = "reduce_motion"
         private const val KEY_CACHED_REMINDERS = "cached_reminders_json"
         private const val KEY_AUTH_PAUSED_ALERT_SHOWN = "auth_paused_alert_shown"
+        private const val KEY_LAST_SYNC_TIME = "last_sync_time"
+        private const val KEY_RECENT_ERRORS = "recent_errors_json"
         const val DEFAULT_BACKEND_URL = "https://sinbha-backend.onrender.com"
+    }
+
+    var lastSyncTime: String?
+        get() = prefs.getString(KEY_LAST_SYNC_TIME, null)
+        set(value) = prefs.edit().putString(KEY_LAST_SYNC_TIME, value).apply()
+
+    var recentErrorsJson: String
+        get() = prefs.getString(KEY_RECENT_ERRORS, "[]") ?: "[]"
+        set(value) = prefs.edit().putString(KEY_RECENT_ERRORS, value).apply()
+
+    fun recordError(message: String) {
+        try {
+            val arr = org.json.JSONArray(recentErrorsJson)
+            val item = org.json.JSONObject().apply {
+                put("time", java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date()))
+                // Scrub potential tokens/passwords
+                val sanitized = message
+                    .replace(Regex("Bearer\\s+[a-zA-Z0-9_.-]+", RegexOption.IGNORE_CASE), "Bearer [REDACTED]")
+                    .replace(Regex("snb_dev_[a-zA-Z0-9_.-]+", RegexOption.IGNORE_CASE), "[REDACTED_DEV_TOKEN]")
+                put("message", sanitized)
+            }
+            arr.put(item)
+            // Keep strictly last 20 errors
+            val trimmed = org.json.JSONArray()
+            val start = if (arr.length() > 20) arr.length() - 20 else 0
+            for (i in start until arr.length()) {
+                trimmed.put(arr.get(i))
+            }
+            recentErrorsJson = trimmed.toString()
+        } catch (e: Exception) {}
     }
 
     var sessionToken: String?

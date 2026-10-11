@@ -2275,10 +2275,109 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
 
+    // ========================================================
+    // COMPANION DIAGNOSTICS CONTROLLER (REQUIREMENT 6)
+    // ========================================================
+    let cachedDiagnosticsText = "";
+
+    async function loadCompanionDiagnostics() {
+      const display = document.getElementById("diagnosticsDisplay");
+      if (!display) return;
+      display.textContent = "Loading companion diagnostics...";
+
+      try {
+        let diag = null;
+        if (window.Capacitor && window.Capacitor.isNativePlatform() && window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative) {
+          diag = await window.Capacitor.Plugins.SinbhaNative.getDiagnostics();
+        }
+
+        const lines = [];
+        lines.push("=== SINBHA COMPANION DIAGNOSTICS ===");
+        lines.push(`Generated: ${new Date().toISOString()}`);
+        lines.push(`Platform: ${window.Capacitor?.isNativePlatform() ? "Android Native (Capacitor)" : "Web / Desktop"}`);
+
+        if (diag) {
+          lines.push(`App Version: v${diag.versionName} (versionCode: ${diag.versionCode})`);
+          if (diag.deviceInfo) {
+            lines.push(`Device: ${diag.deviceInfo.manufacturer} ${diag.deviceInfo.brand} ${diag.deviceInfo.model} (SDK ${diag.deviceInfo.androidSdk})`);
+          }
+          lines.push(`Device Token: ${diag.tokenStatus}`);
+          lines.push(`Last Sync Time: ${diag.lastSyncTime}`);
+          
+          lines.push("\n--- PERMISSIONS ---");
+          lines.push(`• Floating Bird Overlay: ${diag.permissions?.overlay ? "GRANTED" : "ACTION NEEDED"}`);
+          lines.push(`• Notifications: ${diag.permissions?.notifications ? "GRANTED" : "ACTION NEEDED"}`);
+          lines.push(`• Exact Alarms: ${diag.permissions?.exactAlarm ? "GRANTED" : "ACTION NEEDED"}`);
+          lines.push(`• Battery Optimization: ${diag.permissions?.batteryIgnored ? "UNRESTRICTED (Excluded)" : "OPTIMIZED (May throttle)"}`);
+
+          lines.push("\n--- SCHEDULED EXACT ALARMS ---");
+          if (diag.scheduledAlarms && diag.scheduledAlarms.length > 0) {
+            diag.scheduledAlarms.forEach((a, idx) => {
+              lines.push(`${idx + 1}. [${a.time}] ${a.taskTitle} (${a.label || 'Task'})`);
+            });
+          } else {
+            lines.push("None scheduled currently in local cache.");
+          }
+
+          lines.push("\n--- RECENT ERRORS (LAST 20) ---");
+          if (diag.recentErrors && diag.recentErrors.length > 0) {
+            diag.recentErrors.forEach((e, idx) => {
+              lines.push(`[${e.time}] ${e.message}`);
+            });
+          } else {
+            lines.push("No errors logged. All systems operating smoothly 🌸");
+          }
+        } else {
+          // Web / Desktop fallback
+          lines.push(`Client: Browser / Desktop Webview`);
+          lines.push(`Online: ${navigator.onLine ? "Yes" : "No"}`);
+          lines.push(`Timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`);
+          lines.push(`User Agent: ${navigator.userAgent}`);
+          lines.push(`Auth: ${currentUser ? "Logged in" : "Not logged in"}`);
+        }
+
+        cachedDiagnosticsText = lines.join("\n");
+        display.textContent = cachedDiagnosticsText;
+      } catch (err) {
+        display.textContent = "Error gathering diagnostics: " + err.message;
+        cachedDiagnosticsText = display.textContent;
+      }
+    }
+
+    const refreshDiagBtn = document.getElementById("refreshDiagnosticsBtn");
+    if (refreshDiagBtn) {
+      refreshDiagBtn.addEventListener("click", loadCompanionDiagnostics);
+    }
+
+    const copyDiagBtn = document.getElementById("copyDiagnosticsBtn");
+    if (copyDiagBtn) {
+      copyDiagBtn.addEventListener("click", async () => {
+        if (!cachedDiagnosticsText) {
+          await loadCompanionDiagnostics();
+        }
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(cachedDiagnosticsText);
+          } else {
+            const ta = document.createElement("textarea");
+            ta.value = cachedDiagnosticsText;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand("copy");
+            document.body.removeChild(ta);
+          }
+          showToast("📋 Diagnostics copied to clipboard (safe / no personal data)");
+        } catch (e) {
+          showToast("Could not copy diagnostics: " + e.message);
+        }
+      });
+    }
+
     // Check settings open hook
     if (openSettingsBtn) {
       openSettingsBtn.addEventListener("click", () => {
         checkNativeCompanionSettings();
+        loadCompanionDiagnostics();
       });
     }
 
