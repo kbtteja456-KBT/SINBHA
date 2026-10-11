@@ -67,7 +67,7 @@ class MainActivity : BridgeActivity() {
         handleTaskIntent(intent)
     }
 
-    override fun onNewIntent(intent: Intent?) {
+    override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleTaskIntent(intent)
     }

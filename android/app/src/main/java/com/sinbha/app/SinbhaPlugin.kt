@@ -94,7 +94,7 @@ class SinbhaPlugin : Plugin() {
      * Checks all Android runtime permissions and power management statuses.
      */
     @PluginMethod
-    fun checkPermissions(call: PluginCall) {
+    override fun checkPermissions(call: PluginCall) {
         val ctx = context
         val pm = ctx.getSystemService(Context.POWER_SERVICE) as PowerManager
         val am = ctx.getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -221,10 +221,10 @@ class SinbhaPlugin : Plugin() {
             ComponentName("com.oppo.safe", "com.oppo.safe.permission.startup.StartupAppListActivity")
         )
 
-        for (component in colorOsIntents) {
+        for (targetComp in colorOsIntents) {
             try {
                 val intent = Intent().apply {
-                    component = component
+                    component = targetComp
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK
                 }
                 ctx.startActivity(intent)

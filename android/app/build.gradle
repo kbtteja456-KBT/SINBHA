@@ -23,6 +23,10 @@ android {
         }
     }
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     signingConfigs {
         release {
             if (signingProps.containsKey('RELEASE_STORE_FILE')) {
@@ -31,6 +35,7 @@ android {
                 keyAlias signingProps.getProperty('RELEASE_KEY_ALIAS')
                 keyPassword signingProps.getProperty('RELEASE_KEY_PASSWORD')
             }
+        }
     }
 
     buildTypes {
@@ -49,12 +54,12 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
     }
 
     kotlinOptions {
-        jvmTarget = "17"
+        jvmTarget = "21"
     }
 }
 
