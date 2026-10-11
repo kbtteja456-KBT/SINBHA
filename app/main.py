@@ -12,6 +12,11 @@ from dotenv import load_dotenv
 # Load environment variables (.env)
 load_dotenv()
 
+import time
+from fastapi.middleware.cors import CORSMiddleware
+
+APP_START_TIME = time.time()
+
 from app.ai_brain import (
     call_sinbha_brain,
     extract_explicit_facts,
@@ -30,10 +35,21 @@ from app.security import (
     validate_production_config,
     check_endpoint_rate_limits,
     check_ai_usage_caps,
+    get_daily_global_ai_limit,
+    get_allowed_origins,
     SecurityHeadersAndCSRFMiddleware,
 )
 
 app = FastAPI(title="SINBHA - Personal AI Companion")
+
+# CORS middleware for trusted client origins
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=get_allowed_origins(),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Step 11: Security Headers, Request Size Limiter & CSRF Protection Middleware
 app.add_middleware(SecurityHeadersAndCSRFMiddleware)
@@ -956,6 +972,39 @@ async def info_endpoint(request: Request):
         "user": user,
         "emergency_stopped": is_stopped
     }
+
+@app.get("/api/health")
+async def health_check():
+    """
+    Requirement 2 & 7: Production health check and monitoring endpoint.
+    Used by Render zero-downtime deploys and 15-minute keep-alive cron jobs.
+    """
+    db_connected = False
+    try:
+        with db.get_db_session() as session:
+            session.execute(db.select(1))
+            db_connected = True
+    except Exception:
+        db_connected = False
+
+    global_ai_count = db.get_global_today_message_count()
+    global_ai_cap = get_daily_global_ai_limit()
+    ai_cap_reached = global_ai_count >= global_ai_cap
+
+    status_code = 200 if db_connected else 503
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "healthy" if db_connected else "unhealthy",
+            "environment": os.getenv("ENV", "development"),
+            "database": "connected" if db_connected else "disconnected",
+            "uptime_seconds": int(time.time() - APP_START_TIME),
+            "ai_cost_cap_reached": ai_cap_reached,
+            "ai_today_messages": global_ai_count,
+            "ai_daily_cap": global_ai_cap,
+            "version": "1.0.0"
+        }
+    )
 
 # Serve static UI files
 app.mount("/static", StaticFiles(directory="static"), name="static")

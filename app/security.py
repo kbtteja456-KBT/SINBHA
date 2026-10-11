@@ -181,6 +181,36 @@ def check_ai_usage_caps(user_today_count: int, global_today_count: int):
 
     return True, ""
 
+def get_allowed_origins() -> List[str]:
+    """
+    Returns trusted origins for CORS and CSRF verification.
+    Includes localhost, mobile app schemes (tauri/capacitor),
+    Render deployment URL if present, and ALLOWED_ORIGINS environment variable.
+    """
+    origins = [
+        "http://127.0.0.1",
+        "http://127.0.0.1:8000",
+        "http://localhost",
+        "http://localhost:8000",
+        "https://127.0.0.1",
+        "https://localhost",
+        # Mobile / Desktop wrappers (Android & Windows)
+        "tauri://localhost",
+        "capacitor://localhost",
+        "http://localhost:1420",
+    ]
+    render_url = os.getenv("RENDER_EXTERNAL_URL", "").strip()
+    if render_url:
+        origins.append(render_url.rstrip("/"))
+
+    custom = os.getenv("ALLOWED_ORIGINS", "").strip()
+    if custom:
+        for o in custom.split(","):
+            if o.strip():
+                origins.append(o.strip().rstrip("/"))
+
+    return list(dict.fromkeys(origins))
+
 # ----------------- 4. Security Headers & CSRF Middleware -----------------
 
 class SecurityHeadersAndCSRFMiddleware(BaseHTTPMiddleware):
@@ -202,16 +232,7 @@ class SecurityHeadersAndCSRFMiddleware(BaseHTTPMiddleware):
             origin = request.headers.get("origin") or request.headers.get("referer")
             custom_header = request.headers.get("x-requested-with") or request.headers.get("x-csrf-token")
 
-            # Localhost / local dev origin verification
-            allowed_origins = [
-                "http://127.0.0.1",
-                "http://localhost",
-                "https://127.0.0.1",
-                "https://localhost"
-            ]
-            custom_allowed = os.getenv("ALLOWED_ORIGINS", "")
-            if custom_allowed:
-                allowed_origins.extend([o.strip() for o in custom_allowed.split(",") if o.strip()])
+            allowed_origins = get_allowed_origins()
 
             # If an Origin is passed, make sure it belongs to an allowed origin
             if origin:

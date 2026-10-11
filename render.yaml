@@ -1,0 +1,29 @@
+# Render Blueprint for SINBHA Personal AI Companion
+# https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: sinbha-backend
+    runtime: python
+    region: singapore # Close to ap-southeast-1 Neon database for lowest latency
+    plan: free
+    buildCommand: "./build.sh"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2"
+    healthCheckPath: "/api/health"
+    envVars:
+      - key: ENV
+        value: production
+      - key: DEV_MODE
+        value: "false"
+      - key: OPENROUTER_MODEL
+        value: "google/gemini-2.5-flash"
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: DATA_ENCRYPTION_KEY
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
