@@ -665,17 +665,22 @@ def set_pending_proposal(
     due_date: str = None,
     due_time: str = None,
     notes: str = None,
-    suggested_reminders: list = None
+    suggested_reminders: list = None,
+    due_datetime: str = None,
+    **kwargs
 ):
     """Sets a pending task creation proposal."""
     payload = {
         "title": title,
         "due_date": due_date,
         "due_time": due_time,
+        "due_datetime": due_datetime,
         "notes": notes,
         "suggested_reminders": suggested_reminders or []
     }
     set_pending_action(user_id, "create_task", target_text=title, details=json.dumps(payload))
+    pa = get_pending_proposal(user_id)
+    return pa.get("proposal_id", -1) if pa else -1
 
 def get_pending_proposal(user_id: int) -> dict | None:
     """Retrieves a pending task proposal."""
