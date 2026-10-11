@@ -79,6 +79,19 @@ class SinbhaPlugin : Plugin() {
     }
 
     /**
+     * Retrieves current device session token from encrypted keystore.
+     */
+    @PluginMethod
+    fun getSessionToken(call: PluginCall) {
+        val token = prefs.sessionToken
+        val res = JSObject().apply {
+            put("token", token)
+            put("hasToken", !token.isNullOrEmpty())
+        }
+        call.resolve(res)
+    }
+
+    /**
      * Checks all Android runtime permissions and power management statuses.
      */
     @PluginMethod

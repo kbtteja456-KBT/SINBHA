@@ -5,7 +5,7 @@
 // waking-up recovery screen, and background reminder notifications.
 // ========================================================
 
-const { app, BrowserWindow, Tray, Menu, ipcMain, screen, session, shell, dialog } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, screen, session, shell, dialog, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const config = require('./config');
@@ -19,6 +19,7 @@ let isQuitting = false;
 let remindersPaused = false;
 let doNotDisturb = false;
 let isBirdShowingOnOverlay = false;
+let authNotificationShown = false;
 
 // Auto-updater (only active in packaged app or when configured)
 let autoUpdater = null;
@@ -235,6 +236,7 @@ async function checkDueRemindersLoop() {
     });
 
     if (res.ok) {
+      authNotificationShown = false;
       const json = await res.json();
       if (json.reminder_needed && json.task && !json.emergency_stopped) {
         isBirdShowingOnOverlay = true;
@@ -258,6 +260,26 @@ async function checkDueRemindersLoop() {
             },
             body: JSON.stringify({ task_id: json.task.id, reminder_id: json.reminder_id })
           }).catch(() => {});
+        }
+      }
+    } else if (res.status === 401) {
+      // Requirement 3: 401 notification on Windows
+      if (!authNotificationShown) {
+        authNotificationShown = true;
+        if (Notification.isSupported()) {
+          const authNotif = new Notification({
+            title: 'SINBHA Reminders',
+            body: 'SINBHA reminders are paused, please open the app and log in again.',
+            icon: path.join(__dirname, 'icon.png'),
+            urgency: 'critical'
+          });
+          authNotif.on('click', () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.show();
+              mainWindow.focus();
+            }
+          });
+          authNotif.show();
         }
       }
     }

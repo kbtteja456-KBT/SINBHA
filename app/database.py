@@ -411,7 +411,10 @@ def get_user_by_device_token(token: str) -> Optional[dict]:
             session.delete(dt)
             return None
 
-        dt.last_used_at = utc_now()
+        now = utc_now()
+        dt.last_used_at = now
+        # Rolling expiry (Requirement 2): Automatically roll expiry forward by 30 days during active use
+        dt.expires_at = now + timedelta(days=30)
 
         user = dt.user
         if not user:
@@ -425,6 +428,30 @@ def get_user_by_device_token(token: str) -> Optional[dict]:
             "timezone": user.timezone or "UTC",
             "token_scope": dt.scope,
             "is_device_token": True,
+            "device_name": dt.device_name,
+            "expires_at": dt.expires_at.isoformat()
+        }
+
+def renew_device_token(token: str, days: int = 30) -> Optional[dict]:
+    """Extends expiration of an active device token by the specified number of days (rolling expiry)."""
+    if not token or not token.startswith("snb_dev_"):
+        return None
+    with get_db_session() as session:
+        dt = session.scalar(select(DeviceToken).where(DeviceToken.device_token == token))
+        if not dt:
+            return None
+        exp = dt.expires_at
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if utc_now() > exp:
+            session.delete(dt)
+            return None
+        now = utc_now()
+        dt.last_used_at = now
+        dt.expires_at = now + timedelta(days=days)
+        return {
+            "device_token": dt.device_token,
+            "expires_at": dt.expires_at.isoformat(),
             "device_name": dt.device_name
         }
 

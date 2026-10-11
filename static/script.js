@@ -1827,8 +1827,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Logout Handler
   async function performLogout() {
+    let devToken = null;
+    if (window.Capacitor && window.Capacitor.isNativePlatform() && window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative) {
+      try {
+        const sRes = await window.Capacitor.Plugins.SinbhaNative.getSessionToken();
+        if (sRes && sRes.token) devToken = sRes.token;
+      } catch (e) {}
+    }
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
+      const headers = devToken ? { "X-Device-Token": devToken } : {};
+      await fetch("/api/auth/logout", { method: "POST", headers });
     } catch (e) {
       console.error(e);
     }
@@ -2041,8 +2049,20 @@ document.addEventListener("DOMContentLoaded", () => {
     async function syncSessionWithNativeApp() {
       if (window.Capacitor && window.Capacitor.isNativePlatform()) {
         try {
-          // Requirement 3: Request dedicated, scoped device token (separate from web login session)
-          const res = await fetch("/api/auth/device-token", { method: "POST" });
+          // Requirement 1 & 2: Pass existing token if available to renew (rolling expiry)
+          let existingToken = null;
+          if (window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative) {
+            try {
+              const cur = await window.Capacitor.Plugins.SinbhaNative.getSessionToken();
+              if (cur && cur.token) existingToken = cur.token;
+            } catch (e) {}
+          }
+
+          const res = await fetch("/api/auth/device-token", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ device_token: existingToken, device_name: "Android Phone" })
+          });
           if (res.ok) {
             const tData = await res.json();
             if (tData.device_token && window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative) {
@@ -2057,7 +2077,7 @@ document.addEventListener("DOMContentLoaded", () => {
                   end: quietEndInput ? quietEndInput.value : "08:00"
                 }
               });
-              console.log("Dedicated mobile device token stored in Android encrypted keystore.");
+              console.log("Dedicated mobile device token stored/renewed in Android encrypted keystore.");
             }
           }
         } catch (e) {

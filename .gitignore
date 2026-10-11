@@ -36,3 +36,5 @@ android/app/build/
 android/build/
 android/captures/
 .gradle/
+.idea/
+android/.idea/

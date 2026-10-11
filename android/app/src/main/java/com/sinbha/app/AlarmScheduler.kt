@@ -94,6 +94,12 @@ object AlarmScheduler {
         val prefs = PreferencesManager(context)
         val reminders = apiClient.fetchUpcomingReminders()
 
+        // Requirement 4: If sync fails (e.g. 401 or offline), do NOT clear cache!
+        // Reminders already scheduled on the phone must still fire after token stops working.
+        if (reminders == null) {
+            return
+        }
+
         val jsonArray = JSONArray()
         val now = System.currentTimeMillis()
 

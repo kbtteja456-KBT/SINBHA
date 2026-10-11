@@ -1,6 +1,13 @@
 package com.sinbha.app
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
+import android.graphics.Color
+import android.os.Build
+import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -31,6 +38,55 @@ class SinbhaApiClient(private val context: Context) {
 
     private val prefs = PreferencesManager(context)
 
+    companion object {
+        const val AUTH_NOTIFICATION_ID = 9998
+    }
+
+    private fun showAuthPausedNotification() {
+        try {
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(
+                    ReminderAlarmReceiver.REMINDER_CHANNEL_ID,
+                    "SINBHA Task Reminders",
+                    NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = "Task reminders and system alerts"
+                    enableVibration(true)
+                    enableLights(true)
+                    lightColor = Color.parseColor("#EC4899")
+                }
+                manager.createNotificationChannel(channel)
+            }
+
+            val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+            val pIntent = PendingIntent.getActivity(
+                context,
+                AUTH_NOTIFICATION_ID,
+                launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val notif = NotificationCompat.Builder(context, ReminderAlarmReceiver.REMINDER_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_sinbha)
+                .setContentTitle("SINBHA Reminders")
+                .setContentText("SINBHA reminders are paused, please open the app and log in again.")
+                .setStyle(NotificationCompat.BigTextStyle().bigText("SINBHA reminders are paused, please open the app and log in again."))
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setCategory(NotificationCompat.CATEGORY_ERROR)
+                .setColor(Color.parseColor("#EC4899"))
+                .setAutoCancel(true)
+                .setContentIntent(pIntent)
+                .build()
+
+            manager.notify(AUTH_NOTIFICATION_ID, notif)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     suspend fun markTaskDone(taskId: Int): Boolean = withContext(Dispatchers.IO) {
         val token = prefs.sessionToken ?: return@withContext false
         try {
@@ -49,6 +105,9 @@ class SinbhaApiClient(private val context: Context) {
             OutputStreamWriter(conn.outputStream).use { it.write(body) }
 
             val code = conn.responseCode
+            if (code == 401) {
+                showAuthPausedNotification()
+            }
             conn.disconnect()
             code in 200..299
         } catch (e: Exception) {
@@ -79,6 +138,9 @@ class SinbhaApiClient(private val context: Context) {
             OutputStreamWriter(conn.outputStream).use { it.write(body) }
 
             val code = conn.responseCode
+            if (code == 401) {
+                showAuthPausedNotification()
+            }
             conn.disconnect()
             code in 200..299
         } catch (e: Exception) {
@@ -87,8 +149,8 @@ class SinbhaApiClient(private val context: Context) {
         }
     }
 
-    suspend fun fetchUpcomingReminders(): List<ReminderItem> = withContext(Dispatchers.IO) {
-        val token = prefs.sessionToken ?: return@withContext emptyList()
+    suspend fun fetchUpcomingReminders(): List<ReminderItem>? = withContext(Dispatchers.IO) {
+        val token = prefs.sessionToken ?: return@withContext null
         val list = mutableListOf<ReminderItem>()
         try {
             val url = URL("${prefs.backendUrl}/api/reminders/upcoming")
@@ -100,7 +162,15 @@ class SinbhaApiClient(private val context: Context) {
                 readTimeout = 10000
             }
 
-            if (conn.responseCode in 200..299) {
+            val code = conn.responseCode
+            if (code == 401) {
+                // Requirement 3: 401 on sync -> show high priority notification
+                showAuthPausedNotification()
+                conn.disconnect()
+                return@withContext null
+            }
+
+            if (code in 200..299) {
                 val responseText = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
                 val root = JSONObject(responseText)
 
@@ -127,12 +197,15 @@ class SinbhaApiClient(private val context: Context) {
                         )
                     )
                 }
+                conn.disconnect()
+                return@withContext list
             }
             conn.disconnect()
+            return@withContext null
         } catch (e: Exception) {
             e.printStackTrace()
+            return@withContext null
         }
-        list
     }
 
     suspend fun checkAppVersion(): VersionInfo? = withContext(Dispatchers.IO) {

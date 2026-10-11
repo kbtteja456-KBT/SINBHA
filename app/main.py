@@ -296,17 +296,19 @@ async def logout_endpoint(request: Request, response: Response):
         elif not token:
             token = val
 
+    x_dev_token = request.headers.get("x-device-token")
+    if x_dev_token and not dev_token:
+        dev_token = x_dev_token.strip()
+
     if token:
-        user_sess = db.get_user_by_session(token)
-        if user_sess:
-            db.revoke_user_device_tokens(user_sess["id"])
         db.delete_session(token)
 
     if dev_token:
+        # Requirement 1: Revoke only this device's token, not other devices!
         db.revoke_device_token(dev_token)
 
     response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
-    return {"success": True, "message": "Logged out successfully 🌸 All sessions and device tokens revoked."}
+    return {"success": True, "message": "Logged out successfully 🌸"}
 
 @app.get("/api/auth/me")
 async def get_me_endpoint(request: Request):
@@ -913,13 +915,41 @@ async def get_upcoming_reminders_endpoint(user: dict = Depends(get_reminder_acti
 
 @app.post("/api/auth/device-token")
 @app.get("/api/auth/device-token")
-async def issue_device_token_endpoint(user: dict = Depends(get_current_user)):
+async def issue_device_token_endpoint(request: Request, user: dict = Depends(get_current_user)):
     """
-    Requirement 3: Issues a separate, dedicated device token for Android companion background actions.
-    Limited strictly to reminder actions (fetching upcoming reminders, marking task Done, snoozing).
-    Stored encrypted in Android Keystore, expires in 30 days, revoked on logout/password change.
+    Requirement 1 & 2: Issues or renews a dedicated device token for this device.
+    Per-device token: Each device holds its own token.
+    Rolling expiry: Automatically extended while the app is active.
     """
-    dev_data = db.create_device_token(user["id"], device_name="Android Companion", days_valid=30)
+    existing_token = None
+    device_name = "Android Companion"
+    try:
+        body = await request.json()
+        if isinstance(body, dict):
+            existing_token = body.get("device_token") or body.get("existing_token")
+            device_name = body.get("device_name", device_name)
+    except Exception:
+        pass
+
+    if not existing_token:
+        existing_token = request.headers.get("x-device-token")
+
+    # If an existing valid token is passed, renew it (rolling expiry)
+    if existing_token:
+        renewed = db.renew_device_token(existing_token, days=30)
+        if renewed:
+            return {
+                "success": True,
+                "device_token": renewed["device_token"],
+                "scope": "reminders_only",
+                "expires_at": renewed["expires_at"],
+                "user_id": user["id"],
+                "email": user["email"],
+                "emergency_stopped": user.get("emergency_stopped", False),
+                "renewed": True
+            }
+
+    dev_data = db.create_device_token(user["id"], device_name=device_name, days_valid=30)
     return {
         "success": True,
         "device_token": dev_data["device_token"],
@@ -927,12 +957,56 @@ async def issue_device_token_endpoint(user: dict = Depends(get_current_user)):
         "expires_at": dev_data["expires_at"],
         "user_id": user["id"],
         "email": user["email"],
-        "emergency_stopped": user.get("emergency_stopped", False)
+        "emergency_stopped": user.get("emergency_stopped", False),
+        "renewed": False
+    }
+
+@app.post("/api/auth/device-token/renew")
+async def renew_device_token_endpoint(request: Request):
+    """
+    Requirement 2: Dedicated endpoint to renew rolling expiry of a device token during active use.
+    """
+    dev_token = request.headers.get("x-device-token")
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer snb_dev_"):
+        dev_token = auth_header.replace("Bearer ", "").strip()
+    if not dev_token:
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                dev_token = body.get("device_token")
+        except Exception:
+            pass
+
+    if not dev_token:
+        raise HTTPException(status_code=400, detail="Device token required")
+
+    renewed = db.renew_device_token(dev_token, days=30)
+    if not renewed:
+        raise HTTPException(status_code=401, detail="Device token is invalid or expired")
+
+    return {
+        "success": True,
+        "device_token": renewed["device_token"],
+        "expires_at": renewed["expires_at"],
+        "message": "Device token renewed successfully"
     }
 
 @app.post("/api/auth/device-token/revoke")
-async def revoke_device_tokens_endpoint(user: dict = Depends(get_current_user)):
-    """Revokes all mobile companion device tokens for the user."""
+async def revoke_device_tokens_endpoint(request: Request, user: dict = Depends(get_current_user)):
+    """Revokes a specific device token, or all tokens for this user if no specific token given."""
+    dev_token = request.headers.get("x-device-token")
+    try:
+        body = await request.json()
+        if isinstance(body, dict):
+            dev_token = body.get("device_token", dev_token)
+    except Exception:
+        pass
+
+    if dev_token:
+        db.revoke_device_token(dev_token)
+        return {"success": True, "message": "Specific device token revoked."}
+
     db.revoke_user_device_tokens(user["id"])
     return {"success": True, "message": "All mobile companion device tokens revoked."}
 
