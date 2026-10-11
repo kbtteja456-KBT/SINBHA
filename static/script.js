@@ -74,6 +74,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const quietTimePickerRow = document.getElementById("quietTimePickerRow");
   const quietStartInput = document.getElementById("quietStartInput");
   const quietEndInput = document.getElementById("quietEndInput");
+  const dndToggle = document.getElementById("dndToggle");
+  const startWithWindowsToggle = document.getElementById("startWithWindowsToggle");
 
   // Toast notification
   const toast = document.getElementById("toast");
@@ -1129,6 +1131,17 @@ document.addEventListener("DOMContentLoaded", () => {
       if (quietEndInput && s.quiet_hours_end) {
         quietEndInput.value = s.quiet_hours_end;
       }
+
+      // Check electron desktop integration
+      if (window.electronAPI) {
+        try {
+          const appStatus = await window.electronAPI.getAppStatus();
+          if (dndToggle) dndToggle.checked = Boolean(appStatus.doNotDisturb);
+          if (startWithWindowsToggle) startWithWindowsToggle.checked = Boolean(appStatus.startWithWindows);
+        } catch (err) {
+          console.error("Get app status error:", err);
+        }
+      }
     } catch (e) {
       console.error("Load settings failed:", e);
     }
@@ -1163,6 +1176,24 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   if (quietStartInput) quietStartInput.addEventListener("change", saveSettings);
   if (quietEndInput) quietEndInput.addEventListener("change", saveSettings);
+
+  // Desktop toggles
+  if (dndToggle) {
+    dndToggle.addEventListener("change", async () => {
+      if (window.electronAPI) {
+        await window.electronAPI.setDnd(dndToggle.checked);
+        showToast(dndToggle.checked ? "🔕 Do Not Disturb enabled" : "🔔 Do Not Disturb disabled");
+      }
+    });
+  }
+  if (startWithWindowsToggle) {
+    startWithWindowsToggle.addEventListener("change", async () => {
+      if (window.electronAPI) {
+        await window.electronAPI.setStartWithWindows(startWithWindowsToggle.checked);
+        showToast(startWithWindowsToggle.checked ? "🚀 Start with Windows enabled" : "Start with Windows disabled");
+      }
+    });
+  }
 
   // ========================================================
   // FLYING BIRD REMINDER CONTROLLER (STEP 6B)

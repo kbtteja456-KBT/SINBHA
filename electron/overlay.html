@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SINBHA Bird Overlay</title>
+  <link rel="stylesheet" href="overlay.css">
+</head>
+<body class="overlay-body">
+  <div id="desktopBirdContainer" class="desktop-bird-container">
+    
+    <!-- Flying / Landed Bird Wrapper -->
+    <div id="overlayFlightWrapper" class="overlay-flight-wrapper">
+      <div id="overlayBirdShadow" class="overlay-bird-shadow"></div>
+      
+      <!-- Interactive Bird Actor -->
+      <div id="overlayBirdActor" class="overlay-bird-actor interactive-area" tabindex="0" role="button" aria-label="Task Reminder Bird. Click for options.">
+        <img id="frameWingsUp" class="bird-sprite bird-sprite-up" src="../static/bird/bird_wings_up.png" alt="Bird Wings Up">
+        <img id="frameWingsDown" class="bird-sprite bird-sprite-down" src="../static/bird/bird_wings_down.png" alt="Bird Wings Down">
+        <img id="frameLanded" class="bird-sprite bird-sprite-landed" src="../static/bird/bird_landed.png" alt="Perched Bird">
+        
+        <!-- Note overlay in beak -->
+        <div id="overlayNote" class="overlay-note">
+          <div id="overlayNoteTitle" class="overlay-note-title">Task Title</div>
+          <div id="overlayNoteDue" class="overlay-note-due">Due: 8:00 AM</div>
+          <div class="overlay-note-tap">tap me 🌸</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Interactive Action Popup -->
+    <div id="overlayActionPopup" class="overlay-action-popup interactive-area" style="display: none;">
+      <div class="popup-header">
+        <span class="popup-badge">🕊️ Gentle Reminder</span>
+        <button id="overlayClosePopupBtn" class="popup-close-btn" aria-label="Close reminder popup">&times;</button>
+      </div>
+      <div class="popup-body">
+        <div id="overlayPopupTitle" class="popup-task-title">Task Title</div>
+        <div id="overlayPopupDue" class="popup-task-due">Due: Tomorrow at 8:00 AM</div>
+      </div>
+      <div class="popup-actions">
+        <button id="overlayDoneBtn" class="popup-btn popup-btn-done">✓ Mark Done</button>
+        
+        <div class="snooze-wrapper">
+          <button id="overlaySnoozeToggleBtn" class="popup-btn popup-btn-snooze">⏰ Snooze ▾</button>
+          <div id="overlaySnoozeMenu" class="snooze-dropdown-menu" style="display: none;">
+            <button class="snooze-opt" data-mins="15">15 minutes</button>
+            <button class="snooze-opt" data-mins="60">1 hour</button>
+            <button class="snooze-opt" data-mins="1440">Tomorrow</button>
+          </div>
+        </div>
+
+        <button id="overlayChatBtn" class="popup-btn popup-btn-chat">💬 Open Chat</button>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="overlay.js"></script>
+</body>
+</html>

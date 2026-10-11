@@ -1,0 +1,437 @@
+/* ========================================================
+   SINBHA DESKTOP OVERLAY STYLES
+   Transparent, frameless, 3D bird reminder
+   ======================================================== */
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: transparent !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.overlay-body {
+  pointer-events: none;
+}
+
+.desktop-bird-container {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+}
+
+/* Make only interactive bird & popup capture mouse clicks */
+.interactive-area {
+  pointer-events: auto;
+}
+
+/* ========================================================
+   BIRD FLIGHT WRAPPER & 3D ANIMATION
+   ======================================================== */
+.overlay-flight-wrapper {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 270px;
+  height: 300px;
+  will-change: transform, opacity;
+  transform: translate3d(calc(100vw - 300px), calc(100vh - 350px), 0);
+  transition: transform 0.6s cubic-bezier(0.2, 0.9, 0.3, 1);
+  display: none;
+}
+
+.overlay-bird-actor {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+  filter: drop-shadow(0 16px 22px rgba(0, 0, 0, 0.22));
+  outline: none;
+  transition: transform 0.2s ease;
+}
+
+.overlay-bird-actor:hover {
+  transform: scale(1.05);
+}
+
+.bird-sprite {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* 3D Dynamic Floor Shadow */
+.overlay-bird-shadow {
+  position: absolute;
+  bottom: 8px;
+  left: 20%;
+  width: 55%;
+  height: 16px;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.32) 0%, rgba(0, 0, 0, 0) 70%);
+  border-radius: 50%;
+  pointer-events: none;
+  filter: blur(3px);
+  transform-origin: center;
+  animation: shadowPulse 0.22s infinite alternate;
+}
+
+@keyframes shadowPulse {
+  0% { transform: scale(0.92); opacity: 0.65; }
+  100% { transform: scale(1.08); opacity: 0.95; }
+}
+
+/* State: Flying */
+.overlay-flight-wrapper.is-flying {
+  display: block;
+  animation: desktopBirdFlight 4.5s cubic-bezier(0.25, 1, 0.4, 1) forwards;
+}
+
+.overlay-flight-wrapper.is-flying #frameWingsUp {
+  animation: wingFlapUp 0.22s infinite steps(1);
+}
+
+.overlay-flight-wrapper.is-flying #frameWingsDown {
+  animation: wingFlapDown 0.22s infinite steps(1);
+}
+
+.overlay-flight-wrapper.is-flying #frameLanded {
+  opacity: 0;
+  display: none;
+}
+
+@keyframes wingFlapUp {
+  0%, 49% { opacity: 1; visibility: visible; }
+  50%, 100% { opacity: 0; visibility: hidden; }
+}
+
+@keyframes wingFlapDown {
+  0%, 49% { opacity: 0; visibility: hidden; }
+  50%, 100% { opacity: 1; visibility: visible; }
+}
+
+/* Smooth Curved Trajectory across whatever app the user is running */
+@keyframes desktopBirdFlight {
+  0% {
+    transform: translate3d(-320px, 12vh, 0) scale(0.65) rotate(-9deg);
+    filter: drop-shadow(0 30px 24px rgba(0, 0, 0, 0.12));
+  }
+  25% {
+    transform: translate3d(28vw, 22vh, 0) scale(0.95) rotate(7deg);
+    filter: drop-shadow(0 22px 28px rgba(0, 0, 0, 0.2));
+  }
+  55% {
+    transform: translate3d(60vw, 36vh, 0) scale(1.1) rotate(-4deg);
+    filter: drop-shadow(0 32px 36px rgba(0, 0, 0, 0.26));
+  }
+  80% {
+    transform: translate3d(calc(100vw - 340px), calc(100vh - 400px), 0) scale(0.96) rotate(3deg);
+  }
+  100% {
+    transform: translate3d(calc(100vw - 300px), calc(100vh - 350px), 0) scale(0.9) rotate(0deg);
+  }
+}
+
+/* State: Landed in corner */
+.overlay-flight-wrapper.is-landed {
+  display: block;
+  transform: translate3d(calc(100vw - 300px), calc(100vh - 350px), 0);
+  animation: birdBreathing 3.6s ease-in-out infinite alternate;
+}
+
+.overlay-flight-wrapper.is-landed #frameWingsUp,
+.overlay-flight-wrapper.is-landed #frameWingsDown {
+  opacity: 0;
+  display: none;
+}
+
+.overlay-flight-wrapper.is-landed #frameLanded {
+  opacity: 1;
+  display: block;
+}
+
+@keyframes birdBreathing {
+  0% {
+    transform: translate3d(calc(100vw - 300px), calc(100vh - 350px), 0) translateY(0);
+  }
+  100% {
+    transform: translate3d(calc(100vw - 300px), calc(100vh - 350px), 0) translateY(-6px);
+  }
+}
+
+/* ========================================================
+   OVERLAID TASK NOTE (TEXT DRAWN ON PARCHMENT)
+   ======================================================== */
+.overlay-note {
+  position: absolute;
+  top: 14%;
+  right: 6%;
+  width: 38%;
+  height: 33%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 4px;
+  box-sizing: border-box;
+  text-align: center;
+  transform: rotate(3deg);
+  pointer-events: none;
+}
+
+.overlay-note-title {
+  font-size: 0.76rem;
+  font-weight: 800;
+  color: #3f2a1d;
+  line-height: 1.15;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.6);
+  word-break: break-word;
+}
+
+.overlay-note-due {
+  font-size: 0.64rem;
+  font-weight: 700;
+  color: #854d0e;
+  margin-top: 2px;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.overlay-note-tap {
+  font-size: 0.58rem;
+  color: #b45309;
+  margin-top: 2px;
+  font-style: italic;
+  font-weight: 600;
+  opacity: 0.9;
+}
+
+/* ========================================================
+   ACTION POPUP (TAP BIRD MENU)
+   ======================================================== */
+.overlay-action-popup {
+  position: fixed;
+  bottom: 90px;
+  right: 320px;
+  width: 310px;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 18px;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.25), 0 3px 12px rgba(242, 95, 133, 0.18);
+  border: 1.5px solid #fbcfe8;
+  padding: 16px;
+  z-index: 10000;
+  animation: popupSlideIn 0.24s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes popupSlideIn {
+  0% { opacity: 0; transform: translateY(14px) scale(0.95); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.popup-badge {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #db2777;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.popup-close-btn {
+  background: none;
+  border: none;
+  font-size: 1.4rem;
+  line-height: 1;
+  color: #9ca3af;
+  cursor: pointer;
+  padding: 0 4px;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+}
+
+.popup-close-btn:hover {
+  color: #1f2937;
+  background: #f3f4f6;
+}
+
+.popup-body {
+  margin-bottom: 14px;
+}
+
+.popup-task-title {
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: #1f2937;
+  line-height: 1.35;
+  margin-bottom: 4px;
+}
+
+.popup-task-due {
+  font-size: 0.78rem;
+  color: #6b7280;
+}
+
+.popup-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.popup-btn {
+  flex: 1;
+  border: none;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.popup-btn-done {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(16, 185, 129, 0.35);
+}
+
+.popup-btn-done:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+.snooze-wrapper {
+  position: relative;
+  flex: 1;
+}
+
+.popup-btn-snooze {
+  width: 100%;
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fde68a;
+}
+
+.popup-btn-snooze:hover {
+  background: #fde68a;
+}
+
+.snooze-dropdown-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  width: 130px;
+  background: #ffffff;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  border: 1px solid #f3f4f6;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  z-index: 10001;
+  animation: menuFade 0.15s ease;
+}
+
+@keyframes menuFade {
+  0% { opacity: 0; transform: translateY(6px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+.snooze-opt {
+  background: none;
+  border: none;
+  padding: 7px 10px;
+  font-size: 0.76rem;
+  font-weight: 500;
+  color: #374151;
+  text-align: left;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.snooze-opt:hover {
+  background: #fff0f3;
+  color: #db2777;
+}
+
+.popup-btn-chat {
+  background: #f3f4f6;
+  color: #4b5563;
+  border: 1px solid #d1d5db;
+}
+
+.popup-btn-chat:hover {
+  background: #e5e7eb;
+}
+
+/* ========================================================
+   REDUCE MOTION ACCESSIBILITY (REQUIREMENT 7)
+   ======================================================== */
+@media (prefers-reduced-motion: reduce) {
+  .overlay-flight-wrapper {
+    animation: none !important;
+    transition: none !important;
+    transform: translate3d(calc(100vw - 300px), calc(100vh - 350px), 0) !important;
+  }
+
+  .overlay-flight-wrapper.is-flying {
+    animation: none !important;
+  }
+
+  .overlay-flight-wrapper #frameWingsUp,
+  .overlay-flight-wrapper #frameWingsDown {
+    display: none !important;
+    opacity: 0 !important;
+  }
+
+  .overlay-flight-wrapper #frameLanded {
+    display: block !important;
+    opacity: 1 !important;
+  }
+
+  .overlay-flight-wrapper.is-landed {
+    animation: none !important;
+  }
+
+  .overlay-bird-shadow {
+    animation: none !important;
+  }
+
+  .overlay-action-popup {
+    animation: none !important;
+  }
+}

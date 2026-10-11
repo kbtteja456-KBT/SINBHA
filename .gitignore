@@ -16,3 +16,8 @@ __pycache__/
 *$py.class
 .DS_Store
 Thumbs.db
+
+# Node.js
+node_modules/
+dist/
+

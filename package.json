@@ -1,0 +1,13 @@
+{
+  "name": "sinbha-desktop",
+  "version": "1.0.0",
+  "description": "SINBHA - Personal Habit & Task Companion with Desktop Bird Overlay",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^44.7.0"
+  }
+}
