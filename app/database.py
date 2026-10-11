@@ -31,6 +31,7 @@ from app.models import (
     Fact,
     AuditLog,
     PendingAction,
+    DeviceToken,
     utc_now,
 )
 from app.crypto import encrypt_text, decrypt_text
@@ -366,10 +367,84 @@ def delete_all_user_sessions(user_id: int):
     with get_db_session() as session:
         session.execute(delete(UserSession).where(UserSession.user_id == user_id))
 
+# ----------------- Device Tokens (Mobile Companion) -----------------
+
+def create_device_token(user_id: int, device_name: str = "Android Companion", days_valid: int = 30) -> dict:
+    """
+    Creates a dedicated, scoped device token for Android background reminder actions.
+    Separated from web sessions, limited strictly to reminder actions.
+    """
+    token = f"snb_dev_{secrets.token_urlsafe(40)}"
+    expires_at = utc_now() + timedelta(days=days_valid)
+    with get_db_session() as session:
+        dev_entry = DeviceToken(
+            device_token=token,
+            user_id=user_id,
+            device_name=device_name,
+            scope="reminders_only",
+            expires_at=expires_at
+        )
+        session.add(dev_entry)
+    return {
+        "device_token": token,
+        "expires_at": expires_at.isoformat(),
+        "scope": "reminders_only",
+        "device_name": device_name
+    }
+
+def get_user_by_device_token(token: str) -> Optional[dict]:
+    """
+    Resolves active user from a device token.
+    Enforces expiration, updates last_used_at, and returns user dict with token_scope.
+    """
+    if not token or not token.startswith("snb_dev_"):
+        return None
+    with get_db_session() as session:
+        dt = session.scalar(select(DeviceToken).where(DeviceToken.device_token == token))
+        if not dt:
+            return None
+
+        exp = dt.expires_at
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if utc_now() > exp:
+            session.delete(dt)
+            return None
+
+        dt.last_used_at = utc_now()
+
+        user = dt.user
+        if not user:
+            return None
+
+        return {
+            "id": user.id,
+            "email": user.email,
+            "is_admin": bool(user.is_admin),
+            "emergency_stopped": bool(user.emergency_stopped),
+            "timezone": user.timezone or "UTC",
+            "token_scope": dt.scope,
+            "is_device_token": True,
+            "device_name": dt.device_name
+        }
+
+def revoke_device_token(token: str):
+    """Revokes a specific device token."""
+    if not token:
+        return
+    with get_db_session() as session:
+        session.execute(delete(DeviceToken).where(DeviceToken.device_token == token))
+
+def revoke_user_device_tokens(user_id: int):
+    """Revokes all device tokens for a user (called on password change, logout, or account delete)."""
+    with get_db_session() as session:
+        session.execute(delete(DeviceToken).where(DeviceToken.user_id == user_id))
+
 def change_user_password(user_id: int, old_password: str, new_password: str) -> None:
     """
     Requirement 9: Invalidate sessions on password change.
     Verifies old password, hashes new password with argon2, and logs safe audit entry.
+    Also revokes all mobile companion device tokens for safety.
     """
     if len(new_password) < 8:
         raise ValueError("New password must be at least 8 characters long.")
@@ -383,12 +458,14 @@ def change_user_password(user_id: int, old_password: str, new_password: str) -> 
         user.password_hash = hash_password(new_password)
         # Invalidate all active sessions across all devices
         session.execute(delete(UserSession).where(UserSession.user_id == user_id))
-        log_audit(user_id, "PASSWORD_CHANGED", "Password successfully updated; all sessions invalidated.", session=session)
+        # Revoke all device tokens
+        session.execute(delete(DeviceToken).where(DeviceToken.user_id == user_id))
+        log_audit(user_id, "PASSWORD_CHANGED", "Password successfully updated; all sessions and device tokens invalidated.", session=session)
 
 def delete_user_account(user_id: int):
     """
     Requirement 7 & 8: 'Delete my account and all my data'.
-    Permanently erases all records for that user, including sessions,
+    Permanently erases all records for that user, including sessions, device tokens,
     settings, messages, tasks, facts, pending actions, and audit entries.
     """
     with get_db_session() as session:
@@ -398,6 +475,7 @@ def delete_user_account(user_id: int):
             session.execute(delete(LoginAttempt).where(LoginAttempt.identifier == clean_email))
 
         session.execute(delete(UserSession).where(UserSession.user_id == user_id))
+        session.execute(delete(DeviceToken).where(DeviceToken.user_id == user_id))
         session.execute(delete(UserSetting).where(UserSetting.user_id == user_id))
         session.execute(delete(Message).where(Message.user_id == user_id))
         session.execute(delete(Task).where(Task.user_id == user_id))

@@ -48,6 +48,7 @@ class User(Base):
     tasks = relationship("Task", back_populates="user", cascade="all, delete-orphan")
     facts = relationship("Fact", back_populates="user", cascade="all, delete-orphan")
     pending_actions = relationship("PendingAction", back_populates="user", cascade="all, delete-orphan")
+    device_tokens = relationship("DeviceToken", back_populates="user", cascade="all, delete-orphan")
 
 class Session(Base):
     __tablename__ = "sessions"
@@ -59,6 +60,25 @@ class Session(Base):
     created_at = Column(DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False)
 
     user = relationship("User", back_populates="sessions")
+
+class DeviceToken(Base):
+    """
+    Dedicated token for mobile companion background actions.
+    Separated from web sessions, limited strictly to reminder actions
+    (fetching upcoming reminders, marking task done, snoozing).
+    """
+    __tablename__ = "device_tokens"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    device_token = Column(String(128), unique=True, nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    device_name = Column(String(128), default="Android Companion", nullable=False)
+    scope = Column(String(64), default="reminders_only", nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False)
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+
+    user = relationship("User", back_populates="device_tokens")
 
 class LoginAttempt(Base):
     __tablename__ = "login_attempts"

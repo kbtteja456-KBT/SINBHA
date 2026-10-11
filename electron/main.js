@@ -375,8 +375,18 @@ async function checkMinimumSupportedVersion() {
     const res = await fetch(`${config.BACKEND_URL}/api/app/version-check`, { cache: 'no-store' });
     if (!res.ok) return;
     const data = await res.json();
+
+    // Requirement 4: Safety guard against accidental lockout
+    if (data.min_version_desktop && data.latest_version_desktop) {
+      if (isOlderVersion(data.latest_version_desktop, data.min_version_desktop)) {
+        console.warn(`⚠️ [SAFETY LOCKOUT PREVENTED] min_version_desktop (${data.min_version_desktop}) exceeds latest_version_desktop (${data.latest_version_desktop}). Ignoring to prevent accidental user lockout.`);
+        return;
+      }
+    }
+
     const currentVersion = app.getVersion();
     if (data.min_version_desktop && isOlderVersion(currentVersion, data.min_version_desktop)) {
+      const downloadLink = data.download_url_desktop || 'https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest';
       const choice = await dialog.showMessageBox({
         type: 'warning',
         title: 'Update Required 🌸',
@@ -386,8 +396,8 @@ async function checkMinimumSupportedVersion() {
         defaultId: 0,
         cancelId: 1
       });
-      if (choice.response === 0 && data.download_url_desktop) {
-        shell.openExternal(data.download_url_desktop);
+      if (choice.response === 0) {
+        shell.openExternal(downloadLink);
       }
       app.exit(0);
     }

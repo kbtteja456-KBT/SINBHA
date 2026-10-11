@@ -27,6 +27,10 @@ dist/
 *.keystore
 *.jks
 signing.properties
+android/sinbha-release.keystore
+android/signing.properties
+android/*.keystore
+android/*.jks
 android/.gradle/
 android/app/build/
 android/build/

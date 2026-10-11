@@ -42,7 +42,7 @@
     "publish": {
       "provider": "github",
       "owner": "kbtteja456-KBT",
-      "repo": "SINBHA",
+      "repo": "sinbha-releases",
       "releaseType": "release"
     }
   },

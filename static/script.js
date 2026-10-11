@@ -1832,6 +1832,14 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch (e) {
       console.error(e);
     }
+    // Also wipe native Android keystore session
+    if (window.Capacitor && window.Capacitor.isNativePlatform() && window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative) {
+      try {
+        await window.Capacitor.Plugins.SinbhaNative.clearSession();
+      } catch (ce) {
+        console.warn("Failed to clear native session:", ce);
+      }
+    }
     showToast("Logged out 🌸");
     showAuthScreen();
   }
@@ -1898,6 +1906,9 @@ document.addEventListener("DOMContentLoaded", () => {
         if (res.ok) {
           if (deleteAccountConfirmModal) deleteAccountConfirmModal.style.display = "none";
           if (settingsModal) settingsModal.style.display = "none";
+          if (window.Capacitor && window.Capacitor.isNativePlatform() && window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative) {
+            try { await window.Capacitor.Plugins.SinbhaNative.clearSession(); } catch (ce) {}
+          }
           showToast("🌸 Account and all data deleted permanently");
           currentUser = null;
           showAuthScreen();
@@ -2030,12 +2041,13 @@ document.addEventListener("DOMContentLoaded", () => {
     async function syncSessionWithNativeApp() {
       if (window.Capacitor && window.Capacitor.isNativePlatform()) {
         try {
-          const res = await fetch("/api/auth/token");
+          // Requirement 3: Request dedicated, scoped device token (separate from web login session)
+          const res = await fetch("/api/auth/device-token", { method: "POST" });
           if (res.ok) {
             const tData = await res.json();
-            if (tData.token && window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative) {
+            if (tData.device_token && window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative) {
               await window.Capacitor.Plugins.SinbhaNative.syncSession({
-                token: tData.token,
+                token: tData.device_token,
                 userId: tData.user_id,
                 email: tData.email,
                 emergency_stopped: tData.emergency_stopped,
@@ -2045,11 +2057,11 @@ document.addEventListener("DOMContentLoaded", () => {
                   end: quietEndInput ? quietEndInput.value : "08:00"
                 }
               });
-              console.log("Device session synchronized to Android keystore.");
+              console.log("Dedicated mobile device token stored in Android encrypted keystore.");
             }
           }
         } catch (e) {
-          console.warn("Native session sync failed:", e);
+          console.warn("Native device token sync failed:", e);
         }
       }
     }
@@ -2152,6 +2164,14 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!res.ok) return;
         const data = await res.json();
 
+        // Requirement 4: Safety guard against accidental lockout
+        if (data.min_version_android && data.latest_version_android) {
+          if (isOlderVersion(data.latest_version_android, data.min_version_android)) {
+            console.warn("⚠️ [SAFETY LOCKOUT PREVENTED] min_version_android cannot exceed latest_version_android. Ignoring check.");
+            return;
+          }
+        }
+
         if (window.Capacitor && window.Capacitor.isNativePlatform()) {
           if (window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative) {
             const vInfo = await window.Capacitor.Plugins.SinbhaNative.getAppVersion();
@@ -2166,8 +2186,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (gateDesc) {
                   gateDesc.innerHTML = `SINBHA v${minRequired} is required to continue.<br>Your installed app (v${current}) is outdated. Please update now.`;
                 }
-                if (gateLink && data.download_url_android) {
-                  gateLink.href = data.download_url_android;
+                if (gateLink) {
+                  gateLink.href = data.download_url_android || "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest";
                 }
               }
             }

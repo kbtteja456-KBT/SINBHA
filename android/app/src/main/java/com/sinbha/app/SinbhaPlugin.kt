@@ -68,6 +68,17 @@ class SinbhaPlugin : Plugin() {
     }
 
     /**
+     * Clears device session token and credentials from encrypted keystore on logout.
+     */
+    @PluginMethod
+    fun clearSession(call: PluginCall) {
+        prefs.sessionToken = null
+        prefs.userEmail = null
+        prefs.userId = -1
+        call.resolve(JSObject().put("success", true).put("message", "Session cleared from encrypted keystore."))
+    }
+
+    /**
      * Checks all Android runtime permissions and power management statuses.
      */
     @PluginMethod

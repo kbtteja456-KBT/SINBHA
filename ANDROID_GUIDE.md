@@ -145,12 +145,16 @@ The signed APK will be at:
    - They tap **Settings**, toggle **Allow from this source**, and go back.
    - Tap **Install**.
 
-### Receiving Updates
-1. When you release a new version, push the new `SINBHA.apk` to your GitHub Releases page:
-   `https://github.com/kbtteja456-KBT/SINBHA/releases/latest`
-2. Update the version number in `app/main.py` (`/api/app/version-check`).
-3. Older versions of the app on your friends' phones will display the **"Update Required to Continue"** dialog with a direct button linking to the latest download!
-4. They simply tap **Download Update**, install the new APK, and all their logged-in data and settings remain completely intact without needing to uninstall!
+### Receiving Updates via Your Public `sinbha-releases` Repository
+1. When you release a new version of SINBHA, create a release in your **public** repository:
+   `https://github.com/kbtteja456-KBT/sinbha-releases`
+2. Attach your compiled `SINBHA.apk` (and `SINBHA-Setup.exe` for Windows) as release assets and publish the release.
+3. Update `MIN_APP_VERSION_ANDROID` and `LATEST_APP_VERSION_ANDROID` in your environment (or `app/main.py`).
+4. **How the in-app update prompt finds it**:
+   - The app periodically calls `/api/app/version-check` on your hosted backend.
+   - If the installed app is below the minimum required version, the app displays the **"Update Required to Continue"** dialog with a button pointing directly to `https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest`.
+   - **Accidental Lockout Protection**: If a configuration typo sets `MIN_APP_VERSION` higher than `LATEST_APP_VERSION`, both the backend server and client apps automatically detect the discrepancy, ignore the invalid minimum version, log a warning, and prevent all users from being accidentally locked out!
+5. Your friends tap **Download Update**, install the new APK, and all their logged-in data and settings remain completely intact without needing to uninstall!
 
 ### Publishing on Google Play Later: Pros & Cons
 | Pros of Google Play | Cons of Google Play |

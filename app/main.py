@@ -172,11 +172,41 @@ async def get_current_user_optional(request: Request) -> Optional[dict]:
             token = auth_header[7:].strip()
     if not token:
         return None
+    # Requirement 3: Device tokens cannot access full user session endpoints
+    if token.startswith("snb_dev_"):
+        raise HTTPException(
+            status_code=403,
+            detail="Device token scope is restricted strictly to reminder actions (fetch reminders, Done, Snooze). Full user session required."
+        )
     return db.get_user_by_session(token)
 
 async def get_current_user(request: Request) -> dict:
     """Dependency that enforces authenticated user. Rejects with 401 if not logged in."""
     user = await get_current_user_optional(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required. Please log in.")
+    return user
+
+async def get_reminder_action_user(request: Request) -> dict:
+    """
+    Requirement 3: Dedicated dependency for mobile companion reminder actions.
+    Accepts full web session tokens OR scoped mobile device tokens (snb_dev_...).
+    """
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    if not token:
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header[7:].strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Authentication required. Please provide a valid session or device token.")
+
+    if token.startswith("snb_dev_"):
+        user = db.get_user_by_device_token(token)
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid or expired device token. Please log into the app again.")
+        return user
+
+    user = db.get_user_by_session(token)
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required. Please log in.")
     return user
@@ -252,12 +282,31 @@ async def login_endpoint(payload: LoginRequest, request: Request, response: Resp
 
 @app.post("/api/auth/logout")
 async def logout_endpoint(request: Request, response: Response):
-    """Logs out user by destroying session token."""
+    """
+    Requirement 3: Logs out user by destroying session token.
+    Also revokes associated mobile companion device tokens.
+    """
     token = request.cookies.get(SESSION_COOKIE_NAME)
+    auth_header = request.headers.get("Authorization")
+    dev_token = None
+    if auth_header and auth_header.startswith("Bearer "):
+        val = auth_header[7:].strip()
+        if val.startswith("snb_dev_"):
+            dev_token = val
+        elif not token:
+            token = val
+
     if token:
+        user_sess = db.get_user_by_session(token)
+        if user_sess:
+            db.revoke_user_device_tokens(user_sess["id"])
         db.delete_session(token)
+
+    if dev_token:
+        db.revoke_device_token(dev_token)
+
     response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
-    return {"success": True, "message": "Logged out successfully 🌸"}
+    return {"success": True, "message": "Logged out successfully 🌸 All sessions and device tokens revoked."}
 
 @app.get("/api/auth/me")
 async def get_me_endpoint(request: Request):
@@ -684,17 +733,26 @@ async def get_tasks_endpoint(user: dict = Depends(get_current_user)):
     return {"tasks": tasks, "pending_count": pending_count}
 
 @app.patch("/api/tasks/{task_id}")
-async def update_task_status_endpoint(task_id: int, payload: TaskStatusUpdateRequest, user: dict = Depends(get_current_user)):
-    """Updates task status for the logged-in user."""
+async def update_task_status_endpoint(task_id: int, payload: TaskStatusUpdateRequest, user: dict = Depends(get_reminder_action_user)):
+    """
+    Updates task status for the logged-in user.
+    Requirement 3: Device tokens are restricted strictly to status: completed (Done).
+    """
     user_id = user["id"]
     new_status = payload.status.strip().lower()
     if new_status not in ("pending", "completed"):
         raise HTTPException(status_code=400, detail="Status must be 'pending' or 'completed'")
-    
+
+    if user.get("is_device_token") and new_status != "completed":
+        raise HTTPException(
+            status_code=403,
+            detail="Device token permissions are restricted strictly to marking tasks as completed (Done)."
+        )
+
     ok = db.update_task_status(user_id, task_id, new_status)
     if not ok:
         raise HTTPException(status_code=404, detail="Task not found")
-    
+
     return {
         "success": True,
         "task": db.get_task_by_id(user_id, task_id),
@@ -750,7 +808,7 @@ async def cancel_task_endpoint(user: dict = Depends(get_current_user)):
 # ----------------- Reminder & Bird Flight Endpoints (Per-User) -----------------
 
 @app.get("/api/reminders/check")
-async def check_reminders_endpoint(tz_offset_minutes: Optional[int] = None, user: dict = Depends(get_current_user)):
+async def check_reminders_endpoint(tz_offset_minutes: Optional[int] = None, user: dict = Depends(get_reminder_action_user)):
     """Returns tasks that need attention right now for the logged-in user."""
     user_id = user["id"]
     if db.get_emergency_stopped(user_id):
@@ -783,19 +841,19 @@ async def check_reminders_endpoint(tz_offset_minutes: Optional[int] = None, user
     }
 
 @app.post("/api/reminders/fired")
-async def reminder_fired_endpoint(payload: ReminderFiredRequest, user: dict = Depends(get_current_user)):
+async def reminder_fired_endpoint(payload: ReminderFiredRequest, user: dict = Depends(get_reminder_action_user)):
     """Marks a reminder as fired for the logged-in user."""
     ok = db.mark_reminder_fired(user["id"], payload.task_id, payload.reminder_id)
     return {"success": ok}
 
 @app.post("/api/reminders/snooze")
-async def reminder_snooze_endpoint(payload: ReminderSnoozeRequest, user: dict = Depends(get_current_user)):
+async def reminder_snooze_endpoint(payload: ReminderSnoozeRequest, user: dict = Depends(get_reminder_action_user)):
     """Snoozes a task's reminder for the logged-in user."""
     ok = db.snooze_task(user["id"], payload.task_id, payload.minutes)
     return {"success": ok}
 
 @app.get("/api/reminders/upcoming")
-async def get_upcoming_reminders_endpoint(user: dict = Depends(get_current_user)):
+async def get_upcoming_reminders_endpoint(user: dict = Depends(get_reminder_action_user)):
     """Returns upcoming pending reminders for native Android exact alarm scheduling."""
     user_id = user["id"]
     emergency_stopped = db.get_emergency_stopped(user_id)
@@ -851,31 +909,76 @@ async def get_upcoming_reminders_endpoint(user: dict = Depends(get_current_user)
         "settings": settings
     }
 
-@app.get("/api/auth/token")
-async def get_auth_token_endpoint(request: Request, user: dict = Depends(get_current_user)):
-    """Returns current active session token for native app keystore synchronization."""
-    token = request.cookies.get(SESSION_COOKIE_NAME)
-    if not token:
-        auth_header = request.headers.get("Authorization")
-        if auth_header and auth_header.startswith("Bearer "):
-            token = auth_header[7:].strip()
+# ----------------- Mobile Device Token Management (Requirement 3) -----------------
+
+@app.post("/api/auth/device-token")
+@app.get("/api/auth/device-token")
+async def issue_device_token_endpoint(user: dict = Depends(get_current_user)):
+    """
+    Requirement 3: Issues a separate, dedicated device token for Android companion background actions.
+    Limited strictly to reminder actions (fetching upcoming reminders, marking task Done, snoozing).
+    Stored encrypted in Android Keystore, expires in 30 days, revoked on logout/password change.
+    """
+    dev_data = db.create_device_token(user["id"], device_name="Android Companion", days_valid=30)
     return {
-        "token": token,
+        "success": True,
+        "device_token": dev_data["device_token"],
+        "scope": dev_data["scope"],
+        "expires_at": dev_data["expires_at"],
         "user_id": user["id"],
         "email": user["email"],
         "emergency_stopped": user.get("emergency_stopped", False)
     }
 
+@app.post("/api/auth/device-token/revoke")
+async def revoke_device_tokens_endpoint(user: dict = Depends(get_current_user)):
+    """Revokes all mobile companion device tokens for the user."""
+    db.revoke_user_device_tokens(user["id"])
+    return {"success": True, "message": "All mobile companion device tokens revoked."}
+
+# ----------------- App Version Gate & Lockout Guard (Requirement 1 & 4) -----------------
+
+def is_semver_higher(v1: str, v2: str) -> bool:
+    """Helper to compare semantic version numbers."""
+    try:
+        parts1 = [int(x) for x in re.sub(r"[^\d.]", "", str(v1)).split(".") if x]
+        parts2 = [int(x) for x in re.sub(r"[^\d.]", "", str(v2)).split(".") if x]
+        max_len = max(len(parts1), len(parts2))
+        parts1.extend([0] * (max_len - len(parts1)))
+        parts2.extend([0] * (max_len - len(parts2)))
+        return parts1 > parts2
+    except Exception:
+        return False
+
 @app.get("/api/app/version-check")
 async def app_version_check_endpoint():
-    """Requirement 5: Minimum supported version check for Android and Windows apps."""
+    """
+    Requirement 1: Links point to public sinbha-releases repository.
+    Requirement 4: Accidental lockout prevention. If minimum version is higher
+    than the latest published version, ignores it, clamps to latest, and logs a warning.
+    """
+    min_android = os.getenv("MIN_APP_VERSION_ANDROID", "1.0.0")
+    latest_android = os.getenv("LATEST_APP_VERSION_ANDROID", "1.0.0")
+    min_desktop = os.getenv("MIN_APP_VERSION_DESKTOP", "1.0.0")
+    latest_desktop = os.getenv("LATEST_APP_VERSION_DESKTOP", "1.0.1")
+
+    # Safety clamp: min_version must never exceed latest_version
+    if is_semver_higher(min_android, latest_android):
+        print(f"⚠️ [WARNING] Config error prevented: MIN_APP_VERSION_ANDROID ({min_android}) was higher than LATEST_APP_VERSION_ANDROID ({latest_android}). Clamping to latest to prevent accidental user lockout.")
+        min_android = latest_android
+
+    if is_semver_higher(min_desktop, latest_desktop):
+        print(f"⚠️ [WARNING] Config error prevented: MIN_APP_VERSION_DESKTOP ({min_desktop}) was higher than LATEST_APP_VERSION_DESKTOP ({latest_desktop}). Clamping to latest to prevent accidental user lockout.")
+        min_desktop = latest_desktop
+
     return {
-        "min_version_android": os.getenv("MIN_APP_VERSION_ANDROID", "1.0.0"),
-        "latest_version_android": os.getenv("LATEST_APP_VERSION_ANDROID", "1.0.0"),
-        "min_version_desktop": os.getenv("MIN_APP_VERSION_DESKTOP", "1.0.0"),
-        "latest_version_desktop": os.getenv("LATEST_APP_VERSION_DESKTOP", "1.0.1"),
-        "download_url_android": "https://github.com/kbtteja456-KBT/SINBHA/releases/latest",
-        "download_url_desktop": "https://github.com/kbtteja456-KBT/SINBHA/releases/latest",
+        "min_version_android": min_android,
+        "latest_version_android": latest_android,
+        "min_version_desktop": min_desktop,
+        "latest_version_desktop": latest_desktop,
+        "download_url_android": "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest",
+        "download_url_desktop": "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest",
+        "releases_repo": "https://github.com/kbtteja456-KBT/sinbha-releases",
         "message": "A newer version of SINBHA is available. Please update to continue enjoying your companion."
     }
 
