@@ -1915,22 +1915,121 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Escape key closes terms / privacy / delete modals
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") {
-      if (termsModal) termsModal.style.display = "none";
-      if (privacyModal) privacyModal.style.display = "none";
-      if (deleteAccountConfirmModal) deleteAccountConfirmModal.style.display = "none";
+    // CSRF Protection & Headers: Auto-attach X-Requested-With to all AJAX requests
+    const originalFetch = window.fetch;
+    window.fetch = function(url, options = {}) {
+      options.headers = options.headers || {};
+      if (options.headers instanceof Headers) {
+        if (!options.headers.has('X-Requested-With')) {
+          options.headers.append('X-Requested-With', 'XMLHttpRequest');
+        }
+      } else {
+        options.headers['X-Requested-With'] = options.headers['X-Requested-With'] || 'XMLHttpRequest';
+      }
+      return originalFetch(url, options);
+    };
+
+    // Download My Data (Requirement 7)
+    const downloadDataBtn = document.getElementById("downloadDataBtn");
+    if (downloadDataBtn) {
+      downloadDataBtn.addEventListener("click", async () => {
+        try {
+          downloadDataBtn.disabled = true;
+          downloadDataBtn.textContent = "Downloading...";
+          const res = await fetch("/api/account/export");
+          if (res.ok) {
+            const blob = await res.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `sinbha_export_${new Date().toISOString().slice(0, 10)}.json`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+            showToast("📥 Personal data archive downloaded!");
+          } else {
+            showToast("Failed to download data archive");
+          }
+        } catch (e) {
+          showToast("Error downloading data archive");
+        } finally {
+          downloadDataBtn.disabled = false;
+          downloadDataBtn.textContent = "📥 Download My Data (JSON Export)";
+        }
+      });
     }
+
+    // Change Password Handlers (Requirement 9)
+    const openChangePasswordBtn = document.getElementById("openChangePasswordBtn");
+    const changePasswordModal = document.getElementById("changePasswordModal");
+    const closeChangePasswordBtn = document.getElementById("closeChangePasswordBtn");
+    const cancelChangePasswordBtn = document.getElementById("cancelChangePasswordBtn");
+    const changePasswordForm = document.getElementById("changePasswordForm");
+    const currentPasswordInput = document.getElementById("currentPasswordInput");
+    const newPasswordInput = document.getElementById("newPasswordInput");
+
+    if (openChangePasswordBtn) {
+      openChangePasswordBtn.addEventListener("click", () => {
+        if (changePasswordModal) {
+          changePasswordModal.style.display = "flex";
+          if (currentPasswordInput) currentPasswordInput.value = "";
+          if (newPasswordInput) newPasswordInput.value = "";
+        }
+      });
+    }
+    if (closeChangePasswordBtn) {
+      closeChangePasswordBtn.addEventListener("click", () => {
+        if (changePasswordModal) changePasswordModal.style.display = "none";
+      });
+    }
+    if (cancelChangePasswordBtn) {
+      cancelChangePasswordBtn.addEventListener("click", () => {
+        if (changePasswordModal) changePasswordModal.style.display = "none";
+      });
+    }
+    if (changePasswordForm) {
+      changePasswordForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const oldPass = currentPasswordInput ? currentPasswordInput.value : "";
+        const newPass = newPasswordInput ? newPasswordInput.value : "";
+        if (!oldPass || !newPass) return;
+        try {
+          const res = await fetch("/api/account/change-password", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ old_password: oldPass, new_password: newPass })
+          });
+          const data = await res.json();
+          if (res.ok) {
+            showToast("🔑 Password updated successfully!");
+            if (changePasswordModal) changePasswordModal.style.display = "none";
+          } else {
+            showToast(data.detail || "Failed to update password");
+          }
+        } catch (err) {
+          showToast("Error updating password");
+        }
+      });
+    }
+
+    // Escape key closes terms / privacy / delete / password modals
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        if (termsModal) termsModal.style.display = "none";
+        if (privacyModal) privacyModal.style.display = "none";
+        if (deleteAccountConfirmModal) deleteAccountConfirmModal.style.display = "none";
+        if (changePasswordModal) changePasswordModal.style.display = "none";
+      }
+    });
+
+    // Startup: Verify Authentication status first
+    checkAuthStatus();
+
+    // Periodic reminder checker every 60 seconds (only fires if logged in)
+    setInterval(() => {
+      if (currentUser) {
+        checkDueReminders();
+      }
+    }, 60000);
   });
-
-  // Startup: Verify Authentication status first
-  checkAuthStatus();
-
-  // Periodic reminder checker every 60 seconds (only fires if logged in)
-  setInterval(() => {
-    if (currentUser) {
-      checkDueReminders();
-    }
-  }, 60000);
-});

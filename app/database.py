@@ -33,6 +33,7 @@ from app.models import (
     PendingAction,
     utc_now,
 )
+from app.crypto import encrypt_text, decrypt_text
 
 ph = PasswordHasher()
 
@@ -53,17 +54,31 @@ def get_database_url() -> str:
     """
     Reads DATABASE_URL from environment or fallback to SQLite.
     Normalizes PostgreSQL URLs to use modern psycopg (psycopg3).
+    Requirement 11: Enforces SSL on PostgreSQL connections.
     """
     url = os.getenv("DATABASE_URL", "").strip()
+    is_production = os.getenv("ENV", "development").lower() == "production"
+
     if not url:
+        if is_production:
+            raise RuntimeError("CRITICAL: DATABASE_URL is missing in production environment!")
         db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "sinbha.db")
         return f"sqlite:///{db_path}"
+
+    if is_production and url.startswith("sqlite"):
+        raise RuntimeError("CRITICAL: SQLite is forbidden in production. PostgreSQL with SSL is required!")
 
     # Normalize url prefixes for SQLAlchemy 2.0
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql+psycopg://", 1)
     elif url.startswith("postgresql://") and not url.startswith("postgresql+"):
         url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+
+    # Requirement 11: Enforce SSL for PostgreSQL connections
+    if "postgresql" in url and "sslmode=" not in url:
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}sslmode=require"
+
     return url
 
 DATABASE_URL = get_database_url()
@@ -346,13 +361,42 @@ def delete_session(token: str):
     with get_db_session() as session:
         session.execute(delete(UserSession).where(UserSession.session_token == token))
 
+def delete_all_user_sessions(user_id: int):
+    """Invalidates all sessions for this user (used on password change)."""
+    with get_db_session() as session:
+        session.execute(delete(UserSession).where(UserSession.user_id == user_id))
+
+def change_user_password(user_id: int, old_password: str, new_password: str) -> None:
+    """
+    Requirement 9: Invalidate sessions on password change.
+    Verifies old password, hashes new password with argon2, and logs safe audit entry.
+    """
+    if len(new_password) < 8:
+        raise ValueError("New password must be at least 8 characters long.")
+    with get_db_session() as session:
+        user = session.scalar(select(User).where(User.id == user_id))
+        if not user:
+            raise ValueError("User not found.")
+        if not verify_password(user.password_hash, old_password):
+            raise ValueError("Current password is incorrect.")
+
+        user.password_hash = hash_password(new_password)
+        # Invalidate all active sessions across all devices
+        session.execute(delete(UserSession).where(UserSession.user_id == user_id))
+        log_audit(user_id, "PASSWORD_CHANGED", "Password successfully updated; all sessions invalidated.", session=session)
+
 def delete_user_account(user_id: int):
     """
-    Requirement 8: 'Delete my account and all my data'.
-    Permanently erases all records for that user.
+    Requirement 7 & 8: 'Delete my account and all my data'.
+    Permanently erases all records for that user, including sessions,
+    settings, messages, tasks, facts, pending actions, and audit entries.
     """
     with get_db_session() as session:
-        # Delete related tables in order
+        user = session.scalar(select(User).where(User.id == user_id))
+        if user:
+            clean_email = user.email
+            session.execute(delete(LoginAttempt).where(LoginAttempt.identifier == clean_email))
+
         session.execute(delete(UserSession).where(UserSession.user_id == user_id))
         session.execute(delete(UserSetting).where(UserSetting.user_id == user_id))
         session.execute(delete(Message).where(Message.user_id == user_id))
@@ -362,16 +406,77 @@ def delete_user_account(user_id: int):
         session.execute(delete(AuditLog).where(AuditLog.user_id == user_id))
         session.execute(delete(User).where(User.id == user_id))
 
-# ----------------- Chat Messages Operations (Per-User) -----------------
+def export_user_data(user_id: int) -> dict:
+    """
+    Requirement 7: 'Download my data' (JSON export of the user's own
+    messages, facts, tasks, and settings). Decrypts messages and facts.
+    """
+    with get_db_session() as session:
+        user = session.scalar(select(User).where(User.id == user_id))
+        if not user:
+            raise ValueError("User not found.")
+
+        settings = get_all_settings(user_id)
+        messages = get_all_messages(user_id)
+        facts = get_all_facts(user_id)
+        tasks = get_all_tasks(user_id)
+
+        log_audit(user_id, "DATA_EXPORTED", "User requested full personal data archive download.", session=session)
+
+        return {
+            "app": "SINBHA",
+            "export_version": "1.0",
+            "exported_at": utc_now().isoformat(),
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "timezone": user.timezone,
+                "is_admin": bool(user.is_admin),
+                "created_at": user.created_at.isoformat() if user.created_at else None,
+            },
+            "settings": settings,
+            "messages": messages,
+            "facts": facts,
+            "tasks": tasks
+        }
+
+def get_user_today_message_count(user_id: int) -> int:
+    """Returns number of chat messages sent by this user today in UTC."""
+    today_start = utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
+    with get_db_session() as session:
+        return session.scalar(
+            select(func.count(Message.id)).where(
+                Message.user_id == user_id,
+                Message.role == "user",
+                Message.timestamp >= today_start
+            )
+        ) or 0
+
+def get_global_today_message_count() -> int:
+    """Returns total chat messages sent by all users today in UTC (cost cap kill switch)."""
+    today_start = utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
+    with get_db_session() as session:
+        return session.scalar(
+            select(func.count(Message.id)).where(
+                Message.role == "user",
+                Message.timestamp >= today_start
+            )
+        ) or 0
+
+# ----------------- Chat Messages Operations (Per-User, Encrypted at Rest) -----------------
 
 def save_message(user_id: int, role: str, content: str):
-    """Saves a conversation message for the user."""
+    """
+    Saves a conversation message for the user.
+    Requirement 8: Sensitive message content is encrypted at rest using Fernet.
+    """
+    encrypted_content = encrypt_text(content)
     with get_db_session() as session:
-        msg = Message(user_id=user_id, role=role, content=content, timestamp=utc_now())
+        msg = Message(user_id=user_id, role=role, content=encrypted_content, timestamp=utc_now())
         session.add(msg)
 
 def get_recent_messages(user_id: int, limit: int = 20):
-    """Retrieves the recent conversation messages for prompt context."""
+    """Retrieves recent conversation messages with decrypted content."""
     with get_db_session() as session:
         query = (
             select(Message)
@@ -385,14 +490,14 @@ def get_recent_messages(user_id: int, limit: int = 20):
             {
                 "id": m.id,
                 "role": m.role,
-                "content": m.content,
+                "content": decrypt_text(m.content),
                 "timestamp": m.timestamp.isoformat() if m.timestamp else ""
             }
             for m in reversed(msgs)
         ]
 
 def get_all_messages(user_id: int):
-    """Returns all chat messages for this user in chronological order."""
+    """Returns all chat messages for this user with decrypted content."""
     with get_db_session() as session:
         query = (
             select(Message)
@@ -404,23 +509,23 @@ def get_all_messages(user_id: int):
             {
                 "id": m.id,
                 "role": m.role,
-                "content": m.content,
+                "content": decrypt_text(m.content),
                 "timestamp": m.timestamp.isoformat() if m.timestamp else ""
             }
             for m in msgs
         ]
 
-# ----------------- Facts & Memory Operations (Per-User) -----------------
+# ----------------- Facts & Memory Operations (Per-User, Encrypted at Rest) -----------------
 
 def get_all_facts(user_id: int):
-    """Returns all persistent facts for this user."""
+    """Returns all persistent facts for this user with decrypted text."""
     with get_db_session() as session:
         query = select(Fact).where(Fact.user_id == user_id).order_by(Fact.id.desc())
         facts = session.scalars(query).all()
         return [
             {
                 "id": f.id,
-                "fact": f.fact,
+                "fact": decrypt_text(f.fact),
                 "category": f.category,
                 "created_at": f.created_at.isoformat() if f.created_at else ""
             }
@@ -428,26 +533,27 @@ def get_all_facts(user_id: int):
         ]
 
 def add_fact(user_id: int, fact_text: str, category: str = "general") -> int:
-    """Adds a new fact to the user's continuous memory."""
+    """Adds a new fact to continuous memory, encrypted at rest."""
     clean = fact_text.strip()
     if not clean:
         return -1
     with get_db_session() as session:
-        # Check duplicate
-        existing = session.scalar(
-            select(Fact).where(Fact.user_id == user_id, Fact.fact == clean)
-        )
-        if existing:
-            return existing.id
+        # Check duplicate against decrypted user facts
+        user_facts = session.scalars(select(Fact).where(Fact.user_id == user_id)).all()
+        for uf in user_facts:
+            if decrypt_text(uf.fact).strip().lower() == clean.lower():
+                return uf.id
 
-        fact = Fact(user_id=user_id, fact=clean, category=category, created_at=utc_now())
+        encrypted = encrypt_text(clean)
+        fact = Fact(user_id=user_id, fact=encrypted, category=category, created_at=utc_now())
         session.add(fact)
         session.flush()
-        log_audit(user_id, "FACT_SAVED", f"Learned fact: '{clean}'", session=session)
+        # Requirement 6: Never log raw fact text in audit log
+        log_audit(user_id, "FACT_SAVED", f"Recorded new memory fact #{fact.id}", session=session)
         return fact.id
 
 def update_fact(user_id: int, fact_id: int, new_text: str) -> bool:
-    """Updates an existing fact."""
+    """Updates an existing fact with encrypted text."""
     clean = new_text.strip()
     if not clean:
         return False
@@ -457,9 +563,8 @@ def update_fact(user_id: int, fact_id: int, new_text: str) -> bool:
         )
         if not fact:
             return False
-        old_val = fact.fact
-        fact.fact = clean
-        log_audit(user_id, "FACT_UPDATED", f"Updated fact #{fact_id} from '{old_val}' to '{clean}'", session=session)
+        fact.fact = encrypt_text(clean)
+        log_audit(user_id, "FACT_UPDATED", f"Modified memory fact #{fact_id}", session=session)
         return True
 
 def delete_fact(user_id: int, fact_id: int) -> bool:
@@ -470,24 +575,24 @@ def delete_fact(user_id: int, fact_id: int) -> bool:
         )
         if not fact:
             return False
-        val = fact.fact
         session.delete(fact)
-        log_audit(user_id, "FACT_DELETED", f"Forgot fact #{fact_id}: '{val}'", session=session)
+        log_audit(user_id, "FACT_DELETED", f"Deleted memory fact #{fact_id}", session=session)
         return True
 
 def update_or_add_fact(user_id: int, fact_text: str, category: str = "general") -> dict:
-    """Intelligently updates an existing related fact or inserts a new one."""
+    """Intelligently updates an existing related fact or inserts a new encrypted one."""
     clean = fact_text.strip()
     if not clean:
         return {"action": "none"}
 
     with get_db_session() as session:
+        user_facts = session.scalars(select(Fact).where(Fact.user_id == user_id)).all()
+
         # Exact match
-        exact = session.scalar(
-            select(Fact).where(Fact.user_id == user_id, Fact.fact == clean)
-        )
-        if exact:
-            return {"action": "none", "fact_id": exact.id, "fact": clean}
+        for uf in user_facts:
+            decrypted = decrypt_text(uf.fact)
+            if decrypted.strip().lower() == clean.lower():
+                return {"action": "none", "fact_id": uf.id, "fact": decrypted}
 
         # Check for key phrases like "name is", "lives in"
         attr_patterns = [
@@ -496,25 +601,25 @@ def update_or_add_fact(user_id: int, fact_text: str, category: str = "general") 
             (r"\bworks?\s+at\s+([A-Za-z\s]+)", "works at"),
             (r"\bpet\s+is\s+([A-Za-z\s]+)", "pet is"),
         ]
+        import re
         for pat, key in attr_patterns:
-            import re
             m = re.search(pat, clean, re.IGNORECASE)
             if m:
-                existing = session.scalar(
-                    select(Fact).where(Fact.user_id == user_id, Fact.fact.ilike(f"%{key}%"))
-                )
-                if existing:
-                    old_text = existing.fact
-                    existing.fact = clean
-                    log_audit(user_id, "FACT_UPDATED", f"Updated attribute from '{old_text}' to '{clean}'", session=session)
-                    return {"action": "updated", "fact_id": existing.id, "fact": clean, "old_fact": old_text}
+                for uf in user_facts:
+                    decrypted = decrypt_text(uf.fact)
+                    if key in decrypted.lower():
+                        old_text = decrypted
+                        uf.fact = encrypt_text(clean)
+                        log_audit(user_id, "FACT_UPDATED", f"Updated attribute #{uf.id}", session=session)
+                        return {"action": "updated", "fact_id": uf.id, "fact": clean, "old_fact": old_text}
 
         # Add as new
-        fact = Fact(user_id=user_id, fact=clean, category=category, created_at=utc_now())
+        fact = Fact(user_id=user_id, fact=encrypt_text(clean), category=category, created_at=utc_now())
         session.add(fact)
         session.flush()
-        log_audit(user_id, "FACT_SAVED", f"Learned fact: '{clean}'", session=session)
+        log_audit(user_id, "FACT_SAVED", f"Recorded new memory fact #{fact.id}", session=session)
         return {"action": "added", "fact_id": fact.id, "fact": clean}
+
 
 # ----------------- Pending Actions & Proposals (Per-User) -----------------
 

@@ -24,12 +24,35 @@ from app.ai_brain import (
     detect_task_chat_intent,
 )
 from app import database as db
+from app.security import (
+    is_production,
+    is_dev_mode_allowed,
+    validate_production_config,
+    check_endpoint_rate_limits,
+    check_ai_usage_caps,
+    SecurityHeadersAndCSRFMiddleware,
+)
 
 app = FastAPI(title="SINBHA - Personal AI Companion")
+
+# Step 11: Security Headers, Request Size Limiter & CSRF Protection Middleware
+app.add_middleware(SecurityHeadersAndCSRFMiddleware)
+
+@app.on_event("startup")
+def on_app_startup():
+    """
+    Requirement 1: Config safety: refuses to start in production if required secrets are missing.
+    """
+    validate_production_config()
+    db.init_db()
 
 SESSION_COOKIE_NAME = "sinbha_session"
 
 # ----------------- Request Models -----------------
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
 
 class SignupRequest(BaseModel):
     email: str
@@ -112,8 +135,8 @@ def get_local_ip():
         return "127.0.0.1"
 
 def is_dev_mode_active() -> bool:
-    """Checks if DEV_MODE is enabled in environment."""
-    return os.getenv("DEV_MODE", "false").strip().lower() in ("true", "1", "yes")
+    """Checks if DEV_MODE is enabled and allowed (always False in production)."""
+    return is_dev_mode_allowed()
 
 # ----------------- Authentication & Session Dependency (Step 9) -----------------
 
@@ -142,15 +165,16 @@ async def get_current_user(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="Authentication required. Please log in.")
     return user
 
-# ----------------- Auth Endpoints (Step 9) -----------------
+# ----------------- Auth Endpoints (Step 9 & 11) -----------------
 
 @app.post("/api/auth/signup")
-async def signup_endpoint(payload: SignupRequest, response: Response):
+async def signup_endpoint(payload: SignupRequest, request: Request, response: Response):
     """
     Requirement 1 & 7: User registration with email + password (min 8 chars, argon2 hash),
     checkboxes for 18+ and Terms/Privacy agreement.
-    Requirement 5: Migrates existing unassigned data to the first created account.
+    Requirement 4: Rate limited.
     """
+    check_endpoint_rate_limits(request)
     try:
         user = db.create_user(
             email=payload.email,
@@ -165,6 +189,7 @@ async def signup_endpoint(payload: SignupRequest, response: Response):
             value=token,
             httponly=True,
             samesite="lax",
+            secure=is_production(),
             max_age=14 * 86400,
             path="/"
         )
@@ -182,8 +207,9 @@ async def signup_endpoint(payload: SignupRequest, response: Response):
 async def login_endpoint(payload: LoginRequest, request: Request, response: Response):
     """
     Requirement 1 & 2: User login with argon2 password verification,
-    secure sessions (httpOnly, SameSite), and rate limiting (lockout on 5 failures).
+    secure sessions (httpOnly, SameSite, Secure in production), and rate limiting.
     """
+    check_endpoint_rate_limits(request)
     client_ip = get_client_ip(request)
     try:
         user = db.authenticate_user(payload.email, payload.password, client_ip=client_ip)
@@ -193,6 +219,7 @@ async def login_endpoint(payload: LoginRequest, request: Request, response: Resp
             value=token,
             httponly=True,
             samesite="lax",
+            secure=is_production(),
             max_age=14 * 86400,
             path="/"
         )
@@ -227,16 +254,65 @@ async def get_me_endpoint(request: Request):
         "user": user
     }
 
+@app.post("/api/account/change-password")
+async def change_password_endpoint(payload: ChangePasswordRequest, request: Request, response: Response, user: dict = Depends(get_current_user)):
+    """
+    Requirement 9: Invalidate sessions on password change and update credentials.
+    """
+    check_endpoint_rate_limits(request, user_id=user["id"])
+    try:
+        db.change_user_password(user["id"], payload.old_password, payload.new_password)
+        new_token = db.create_session(user["id"])
+        response.set_cookie(
+            key=SESSION_COOKIE_NAME,
+            value=new_token,
+            httponly=True,
+            samesite="lax",
+            secure=is_production(),
+            max_age=14 * 86400,
+            path="/"
+        )
+        return {"success": True, "message": "Password changed successfully! All other sessions have been logged out."}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/account/export")
+async def export_account_endpoint(request: Request, user: dict = Depends(get_current_user)):
+    """
+    Requirement 7: 'Download my data' (JSON export of the user's own data).
+    """
+    check_endpoint_rate_limits(request, user_id=user["id"])
+    data = db.export_user_data(user["id"])
+    return JSONResponse(
+        content=data,
+        headers={"Content-Disposition": f"attachment; filename=sinbha_export_user_{user['id']}.json"}
+    )
+
+@app.delete("/api/account")
 @app.post("/api/account/delete")
 async def delete_account_endpoint(response: Response, user: dict = Depends(get_current_user)):
     """
-    Requirement 8: 'Delete my account and all my data' with permanent removal.
+    Requirement 7 & 8: 'Delete my account and all my data' with permanent removal.
     """
     user_id = user["id"]
-    db.log_audit(user_id, "ACCOUNT_DELETED", f"User permanently deleted account '{user['email']}'")
+    db.log_audit(user_id, "ACCOUNT_DELETED", "User permanently erased account and all personal data.")
     db.delete_user_account(user_id)
     response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
     return {"success": True, "status": "ok", "message": "Your account and all associated data have been permanently erased."}
+
+@app.get("/api/legal")
+async def legal_endpoint():
+    """
+    Requirement 14: Legal disclosures and terms summary.
+    """
+    return {
+        "notice": "Marked for Legal Review",
+        "companion_nature": "SINBHA is an automated AI personal assistant, not a licensed therapist, healthcare provider, or emergency crisis service.",
+        "age_requirement": 18,
+        "ai_processing": "User messages are processed by external AI model providers (e.g. OpenRouter/Google) to interpret tasks and generate replies.",
+        "data_storage": "Data is stored with field-level encryption at rest in PostgreSQL.",
+        "data_rights": "Users can download full data exports at /api/account/export and delete all data at /api/account/delete."
+    }
 
 # ----------------- Chat & Message Endpoints (Per-User) -----------------
 
@@ -249,15 +325,38 @@ async def get_messages_endpoint(user: dict = Depends(get_current_user)):
     return {"messages": msgs, "emergency_stopped": stopped}
 
 @app.post("/api/chat")
-async def chat_endpoint(payload: ChatRequest, user: dict = Depends(get_current_user)):
+async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Depends(get_current_user)):
     user_id = user["id"]
     user_msg = payload.message.strip()
-    
+
+    # Requirement 5: Input limit (maximum 2,000 characters)
+    if len(user_msg) > 2000:
+        raise HTTPException(
+            status_code=400,
+            detail="Message is too long. Please keep your message under 2,000 characters. 🌸"
+        )
+
+    # Requirement 4: Rate limit check
+    check_endpoint_rate_limits(request, user_id=user_id)
+
     if not user_msg:
         return JSONResponse({
             "reply": "I'm listening whenever you want to talk 🌸",
             "proposal": None
         })
+
+    # Requirement 4: Per-user daily AI message limit and global cost cap kill switch
+    user_today = db.get_user_today_message_count(user_id)
+    global_today = db.get_global_today_message_count()
+    allowed, friendly_notice = check_ai_usage_caps(user_today, global_today)
+    if not allowed:
+        db.save_message(user_id, "user", user_msg)
+        db.save_message(user_id, "assistant", friendly_notice)
+        return JSONResponse({
+            "reply": friendly_notice,
+            "proposal": None
+        })
+
     
     # RULE 3 & 7: STOP check comes FIRST (Per-User)
     if user_msg.upper() == "STOP":
