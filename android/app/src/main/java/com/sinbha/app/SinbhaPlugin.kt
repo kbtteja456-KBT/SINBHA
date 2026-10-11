@@ -43,6 +43,7 @@ class SinbhaPlugin : Plugin() {
         prefs.userEmail = call.getString("email")
         prefs.userId = call.getInt("userId", -1) ?: -1
         prefs.isEmergencyStopped = call.getBoolean("emergency_stopped", false) ?: false
+        prefs.isAuthPausedAlertShown = false
 
         val qObj = call.getObject("quiet_hours")
         if (qObj != null) {
@@ -72,9 +73,7 @@ class SinbhaPlugin : Plugin() {
      */
     @PluginMethod
     fun clearSession(call: PluginCall) {
-        prefs.sessionToken = null
-        prefs.userEmail = null
-        prefs.userId = -1
+        prefs.clearSession()
         call.resolve(JSObject().put("success", true).put("message", "Session cleared from encrypted keystore."))
     }
 

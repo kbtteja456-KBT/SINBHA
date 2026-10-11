@@ -60,6 +60,13 @@ function createMainWindow() {
   // Load the hosted cloud backend
   mainWindow.loadURL(config.BACKEND_URL);
 
+  // Requirement 1: Reset notification flag as soon as the user logs in again
+  session.defaultSession.cookies.on('changed', (_event, cookie, cause, removed) => {
+    if (cookie.name === 'sinbha_session' && !removed) {
+      authNotificationShown = false;
+    }
+  });
+
   // Requirement 3: If server is sleeping or connection fails, show waking screen
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
     console.log(`Failed to load ${config.BACKEND_URL} (${errorCode}: ${errorDescription}). Showing waking recovery screen.`);

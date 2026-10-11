@@ -40,6 +40,7 @@ class PreferencesManager(private val context: Context) {
         private const val KEY_QUIET_HOURS_END = "quiet_hours_end"
         private const val KEY_REDUCE_MOTION = "reduce_motion"
         private const val KEY_CACHED_REMINDERS = "cached_reminders_json"
+        private const val KEY_AUTH_PAUSED_ALERT_SHOWN = "auth_paused_alert_shown"
         const val DEFAULT_BACKEND_URL = "https://sinbha-backend.onrender.com"
     }
 
@@ -83,12 +84,17 @@ class PreferencesManager(private val context: Context) {
         get() = prefs.getString(KEY_CACHED_REMINDERS, null)
         set(value) = prefs.edit().putString(KEY_CACHED_REMINDERS, value).apply()
 
+    var isAuthPausedAlertShown: Boolean
+        get() = prefs.getBoolean(KEY_AUTH_PAUSED_ALERT_SHOWN, false)
+        set(value) = prefs.edit().putBoolean(KEY_AUTH_PAUSED_ALERT_SHOWN, value).apply()
+
     fun clearSession() {
         prefs.edit()
             .remove(KEY_SESSION_TOKEN)
             .remove(KEY_USER_EMAIL)
             .remove(KEY_USER_ID)
             .remove(KEY_CACHED_REMINDERS)
+            .putBoolean(KEY_AUTH_PAUSED_ALERT_SHOWN, false)
             .apply()
     }
 }

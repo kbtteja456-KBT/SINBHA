@@ -43,6 +43,12 @@ class SinbhaApiClient(private val context: Context) {
     }
 
     private fun showAuthPausedNotification() {
+        // Requirement 1: Appear only once per failure period; do not repeat on every poll
+        if (prefs.isAuthPausedAlertShown) {
+            return
+        }
+        prefs.isAuthPausedAlertShown = true
+
         try {
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -107,6 +113,8 @@ class SinbhaApiClient(private val context: Context) {
             val code = conn.responseCode
             if (code == 401) {
                 showAuthPausedNotification()
+            } else if (code in 200..299) {
+                prefs.isAuthPausedAlertShown = false
             }
             conn.disconnect()
             code in 200..299
@@ -140,6 +148,8 @@ class SinbhaApiClient(private val context: Context) {
             val code = conn.responseCode
             if (code == 401) {
                 showAuthPausedNotification()
+            } else if (code in 200..299) {
+                prefs.isAuthPausedAlertShown = false
             }
             conn.disconnect()
             code in 200..299
@@ -171,6 +181,8 @@ class SinbhaApiClient(private val context: Context) {
             }
 
             if (code in 200..299) {
+                // Reset alert flag upon successful sync
+                prefs.isAuthPausedAlertShown = false
                 val responseText = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
                 val root = JSONObject(responseText)
 

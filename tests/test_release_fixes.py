@@ -208,5 +208,82 @@ class TestReleaseFixesAndReliability(unittest.TestCase):
         self.assertIn("Take vitamins", local_alarm_payload["task_title"])
         # Confirms alarm payload is completely self-contained and fires offline!
 
+    def test_07_device_token_absolute_maximum_lifetime_180_days(self):
+        """
+        Requirement 2: Absolute maximum lifetime of 180 days from creation,
+        even with rolling renewal. Tokens older than 180 days must expire.
+        """
+        u = db.create_user("lifetime_user@example.com", "Password123!", is_18=True, agreed_terms=True)
+        user_id = u["id"]
+
+        dev = db.create_device_token(user_id, device_name="Old Phone")
+        token = dev["device_token"]
+
+        # Case A: Token created 170 days ago (10 days remaining before 180-day cap)
+        past_created = datetime.now(timezone.utc) - timedelta(days=170)
+        with db.get_db_session() as session:
+            dt = session.query(DeviceToken).filter(DeviceToken.device_token == token).first()
+            dt.created_at = past_created
+            session.commit()
+
+        # Rolling renewal requests 30 days, but must be capped at exactly 10 days remaining!
+        renewed = db.renew_device_token(token, days=30)
+        self.assertIsNotNone(renewed)
+        renewed_exp = datetime.fromisoformat(renewed["expires_at"])
+        if renewed_exp.tzinfo is None:
+            renewed_exp = renewed_exp.replace(tzinfo=timezone.utc)
+        
+        max_limit = past_created + timedelta(days=180)
+        self.assertAlmostEqual(renewed_exp.timestamp(), max_limit.timestamp(), delta=5)
+
+        # Case B: Token created 181 days ago (exceeded 180-day absolute lifetime)
+        with db.get_db_session() as session:
+            dt = session.query(DeviceToken).filter(DeviceToken.device_token == token).first()
+            dt.created_at = datetime.now(timezone.utc) - timedelta(days=181)
+            session.commit()
+
+        # Resolving user from token must now fail and delete the token
+        user_info = db.get_user_by_device_token(token)
+        self.assertIsNone(user_info, "Token exceeding 180 days must be expired and deleted")
+
+        # Subsequent API call must return 401 Unauthorized
+        res_expired = self.client.get("/api/reminders/upcoming", headers={"Authorization": f"Bearer {token}"})
+        self.assertEqual(res_expired.status_code, 401)
+
+    def test_08_alert_deduplication_and_reset_on_login(self):
+        """
+        Requirement 1: Notification appears only once per failure period,
+        never repeated on subsequent polls, and resets when user logs in again.
+        """
+        notifications_dispatched = 0
+        alert_shown = False
+
+        def poll_reminders(status_code: int):
+            nonlocal notifications_dispatched, alert_shown
+            if status_code == 401:
+                if not alert_shown:
+                    alert_shown = True
+                    notifications_dispatched += 1
+            elif status_code == 200:
+                alert_shown = False
+
+        # First failure period: 5 consecutive polls returning 401
+        for _ in range(5):
+            poll_reminders(401)
+        
+        # Must notify exactly once!
+        self.assertEqual(notifications_dispatched, 1, "Must notify only once during consecutive 401s")
+
+        # User logs in again (poll succeeds)
+        poll_reminders(200)
+        self.assertFalse(alert_shown, "Alert state must reset after successful login/sync")
+
+        # Second failure period later on: 3 consecutive polls returning 401
+        for _ in range(3):
+            poll_reminders(401)
+
+        # Total notifications should now be exactly 2 (one per failure period)
+        self.assertEqual(notifications_dispatched, 2, "Must trigger new notification for a new failure period")
+
 if __name__ == "__main__":
     unittest.main()
