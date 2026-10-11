@@ -3,15 +3,51 @@
   "version": "1.0.0",
   "description": "SINBHA - Personal Habit & Task Companion with Desktop Bird Overlay",
   "main": "electron/main.js",
+  "author": "kbtteja456-KBT",
   "scripts": {
     "start": "electron .",
-    "dev": "electron ."
+    "prebuild": "node scripts/check_secrets.js",
+    "build:win": "npm run prebuild && electron-builder --win",
+    "dist": "npm run build:win"
+  },
+  "build": {
+    "appId": "com.sinbha.desktop",
+    "productName": "SINBHA",
+    "artifactName": "SINBHA-Setup.${ext}",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "static/bird/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "electron/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "SINBHA",
+      "uninstallDisplayName": "SINBHA Personal AI Companion",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "kbtteja456-KBT",
+      "repo": "sinbha-releases",
+      "releaseType": "release"
+    }
   },
   "devDependencies": {
-    "electron": "^44.7.0"
+    "electron": "^44.7.0",
+    "electron-builder": "^26.7.0"
   },
   "dependencies": {
-    "@neon/config": "^1.8.6",
-    "@neon/env": "^1.5.3"
+    "electron-updater": "^6.6.3"
   }
 }
