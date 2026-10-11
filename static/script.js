@@ -67,6 +67,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const birdDoneBtn = document.getElementById("birdDoneBtn");
   const birdSnoozeDropdownBtn = document.getElementById("birdSnoozeDropdownBtn");
   const birdSnoozeMenu = document.getElementById("birdSnoozeMenu");
+  const birdSnoozeMinsInput = document.getElementById("birdSnoozeMinsInput");
+  const birdSnoozeSubmitBtn = document.getElementById("birdSnoozeSubmitBtn");
   const birdChatBtn = document.getElementById("birdChatBtn");
 
   const persistenceSelect = document.getElementById("persistenceSelect");
@@ -1218,11 +1220,40 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // Bird Dragging State
+  let isDraggingWebBird = false;
+  let hasDraggedWebBird = false;
+  let webMouseStartX = 0;
+  let webMouseStartY = 0;
+  let webBirdStartX = 0;
+  let webBirdStartY = 0;
+  let isWebBirdFlyingReverse = false;
+
+  function repositionWebPopup(birdX, birdY) {
+    if (!birdActionPopup) return;
+    const popupWidth = 320;
+    const popupHeight = 180;
+    let left = birdX - popupWidth - 14;
+    if (left < 16) {
+      left = birdX + 260 + 14;
+    }
+    if (left + popupWidth > window.innerWidth - 16) {
+      left = window.innerWidth - popupWidth - 16;
+    }
+    if (left < 16) left = 16;
+    const top = Math.max(16, Math.min(window.innerHeight - popupHeight - 20, birdY + 10));
+    birdActionPopup.style.left = `${left}px`;
+    birdActionPopup.style.top = `${top}px`;
+    birdActionPopup.style.right = "auto";
+    birdActionPopup.style.bottom = "auto";
+  }
+
   function triggerBirdFlight(task, reminderId, isExplicit) {
     if (remindersPaused) return;
 
     activeReminderTask = task;
     activeReminderId = reminderId;
+    isWebBirdFlyingReverse = false;
 
     // Set note text
     if (birdNoteTitle) birdNoteTitle.textContent = task.title;
@@ -1238,6 +1269,17 @@ document.addEventListener("DOMContentLoaded", () => {
     // Reset popup display
     if (birdActionPopup) birdActionPopup.style.display = "none";
     if (birdSnoozeMenu) birdSnoozeMenu.style.display = "none";
+
+    // Reset wrapper
+    if (birdFlightWrapper) {
+      birdFlightWrapper.classList.remove("is-flying-reverse", "is-landed");
+      birdFlightWrapper.style.transform = "";
+      birdFlightWrapper.style.left = "";
+      birdFlightWrapper.style.top = "";
+      birdFlightWrapper.style.opacity = "1";
+      birdFlightWrapper.style.transition = "";
+      birdFlightWrapper.style.animation = "";
+    }
 
     // Show bird container
     if (birdReminderContainer) birdReminderContainer.style.display = "block";
@@ -1259,7 +1301,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         if (birdFlightTimer) clearTimeout(birdFlightTimer);
         birdFlightTimer = setTimeout(() => {
-          if (birdFlightWrapper && birdReminderContainer.style.display !== "none") {
+          if (birdFlightWrapper && birdReminderContainer.style.display !== "none" && !isWebBirdFlyingReverse) {
             birdFlightWrapper.classList.remove("is-flying");
             birdFlightWrapper.classList.add("is-landed");
           }
@@ -1276,8 +1318,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const greeting = warmGreetings[Math.floor(Math.random() * warmGreetings.length)];
     appendAiMessage(greeting);
 
-    // If it was an explicit reminder, mark it fired so it doesn't repeatedly trigger as exact reminder
-    if (reminderId) {
+    // If it was an explicit reminder, mark it fired so it doesn't repeatedly trigger
+    if (reminderId || isExplicit) {
       fetch("/api/reminders/fired", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1286,27 +1328,134 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // Smooth reverse flight departure when task is completed or snoozed
+  function flyAwayReverseWeb(callback) {
+    if (isWebBirdFlyingReverse) return;
+    isWebBirdFlyingReverse = true;
+    if (birdFlightTimer) clearTimeout(birdFlightTimer);
+
+    if (birdActionPopup) birdActionPopup.style.display = "none";
+    if (birdSnoozeMenu) birdSnoozeMenu.style.display = "none";
+
+    if (birdFlightWrapper) {
+      const rect = birdFlightWrapper.getBoundingClientRect();
+      birdFlightWrapper.classList.remove("is-landed", "is-flying");
+      birdFlightWrapper.style.animation = "none";
+      birdFlightWrapper.style.left = `${rect.left}px`;
+      birdFlightWrapper.style.top = `${rect.top}px`;
+      birdFlightWrapper.style.transform = "none";
+
+      birdFlightWrapper.classList.add("is-flying-reverse");
+
+      requestAnimationFrame(() => {
+        birdFlightWrapper.style.transition = "transform 1.6s cubic-bezier(0.25, 1, 0.4, 1), opacity 0.5s ease 1.1s";
+        birdFlightWrapper.style.transform = "translate3d(-360px, -220px, 0) scale(0.65) rotate(-14deg)";
+        birdFlightWrapper.style.opacity = "0";
+      });
+    }
+
+    setTimeout(() => {
+      hideBird();
+      if (callback) callback();
+      // Check for the next reminder in queue after 2 seconds
+      setTimeout(checkDueReminders, 2000);
+    }, 1650);
+  }
+
   function hideBird() {
     if (birdFlightTimer) clearTimeout(birdFlightTimer);
     if (birdReminderContainer) birdReminderContainer.style.display = "none";
     if (birdActionPopup) birdActionPopup.style.display = "none";
     if (birdSnoozeMenu) birdSnoozeMenu.style.display = "none";
     if (birdFlightWrapper) {
-      birdFlightWrapper.classList.remove("is-flying", "is-landed");
+      birdFlightWrapper.classList.remove("is-flying", "is-landed", "is-flying-reverse");
+      birdFlightWrapper.style.transform = "";
+      birdFlightWrapper.style.left = "";
+      birdFlightWrapper.style.top = "";
+      birdFlightWrapper.style.opacity = "1";
+      birdFlightWrapper.style.transition = "";
+      birdFlightWrapper.style.animation = "";
     }
     activeReminderTask = null;
     activeReminderId = null;
+    isDraggingWebBird = false;
+    hasDraggedWebBird = false;
+    isWebBirdFlyingReverse = false;
   }
 
-  // Tap bird to show popup options (Requirement 2)
+  // ========================================================
+  // DRAG AND DROP BIRD WITH CURSOR (WEB)
+  // ========================================================
   if (birdActor) {
+    birdActor.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      if (isWebBirdFlyingReverse) return;
+
+      isDraggingWebBird = true;
+      hasDraggedWebBird = false;
+      webMouseStartX = e.clientX;
+      webMouseStartY = e.clientY;
+
+      const rect = birdFlightWrapper.getBoundingClientRect();
+      webBirdStartX = rect.left;
+      webBirdStartY = rect.top;
+
+      birdActor.classList.add("is-dragging");
+    });
+
+    // Tap / click bird to show popup options (only if not dragged)
     birdActor.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (hasDraggedWebBird) {
+        hasDraggedWebBird = false;
+        return;
+      }
       if (!birdActionPopup) return;
+
       const isVisible = birdActionPopup.style.display === "block";
-      birdActionPopup.style.display = isVisible ? "none" : "block";
+      if (!isVisible) {
+        const rect = birdFlightWrapper.getBoundingClientRect();
+        repositionWebPopup(rect.left, rect.top);
+        birdActionPopup.style.display = "block";
+      } else {
+        birdActionPopup.style.display = "none";
+        if (birdSnoozeMenu) birdSnoozeMenu.style.display = "none";
+      }
     });
   }
+
+  window.addEventListener("mousemove", (e) => {
+    if (!isDraggingWebBird || !birdFlightWrapper) return;
+
+    const dx = e.clientX - webMouseStartX;
+    const dy = e.clientY - webMouseStartY;
+
+    if (Math.hypot(dx, dy) > 5) {
+      hasDraggedWebBird = true;
+
+      birdFlightWrapper.classList.remove("is-flying", "is-landed");
+      birdFlightWrapper.style.animation = "none";
+      birdFlightWrapper.style.transition = "none";
+
+      const clampedX = Math.max(-40, Math.min(window.innerWidth - 220, webBirdStartX + dx));
+      const clampedY = Math.max(-20, Math.min(window.innerHeight - 240, webBirdStartY + dy));
+
+      birdFlightWrapper.style.left = `${clampedX}px`;
+      birdFlightWrapper.style.top = `${clampedY}px`;
+      birdFlightWrapper.style.transform = "none";
+
+      if (birdActionPopup && birdActionPopup.style.display === "block") {
+        repositionWebPopup(clampedX, clampedY);
+      }
+    }
+  });
+
+  window.addEventListener("mouseup", () => {
+    if (isDraggingWebBird) {
+      isDraggingWebBird = false;
+      if (birdActor) birdActor.classList.remove("is-dragging");
+    }
+  });
 
   if (birdClosePopupBtn) {
     birdClosePopupBtn.addEventListener("click", (e) => {
@@ -1316,7 +1465,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Done button: Marks task complete & celebrates
+  // Done button: Marks task complete, celebrates & bird flies in reverse
   if (birdDoneBtn) {
     birdDoneBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
@@ -1327,7 +1476,7 @@ document.addEventListener("DOMContentLoaded", () => {
         await updateTaskStatus(task.id, "completed");
         appendAiMessage(`Wonderful job completing "${task.title}"! 🎉 Every step forward is a victory.`);
         showToast("🌸 Task completed!");
-        hideBird();
+        flyAwayReverseWeb();
       } catch (err) {
         console.error("Mark done error:", err);
       }
@@ -1341,32 +1490,61 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!birdSnoozeMenu) return;
       const isVis = birdSnoozeMenu.style.display === "flex";
       birdSnoozeMenu.style.display = isVis ? "none" : "flex";
+      if (!isVis && birdSnoozeMinsInput) {
+        setTimeout(() => birdSnoozeMinsInput.focus(), 50);
+      }
     });
   }
 
-  // Snooze option clicks (15 min, 1 hour, tomorrow)
-  document.querySelectorAll(".bird-snooze-option").forEach(opt => {
-    opt.addEventListener("click", async (e) => {
+  // Execute Snooze
+  async function executeWebSnooze(minutes) {
+    if (!activeReminderTask) return;
+    const task = activeReminderTask;
+    const mins = parseInt(minutes, 10);
+    if (!mins || isNaN(mins) || mins <= 0) return;
+
+    try {
+      await fetch("/api/reminders/snooze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task_id: task.id, minutes: mins })
+      });
+
+      const label = mins === 60 ? "1 hour" : (mins === 1440 ? "tomorrow" : `${mins} minutes`);
+      appendAiMessage(`I've snoozed "${task.title}" for ${label} 🌸 Take all the time you need, the bird will rest for now.`);
+      showToast(`⏰ Snoozed for ${label}`);
+      flyAwayReverseWeb();
+    } catch (err) {
+      console.error("Snooze error:", err);
+    }
+  }
+
+  // Custom Snooze submit button
+  if (birdSnoozeSubmitBtn) {
+    birdSnoozeSubmitBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      if (!activeReminderTask) return;
-      const task = activeReminderTask;
-      const mins = parseInt(opt.dataset.mins, 10);
-      if (!mins) return;
+      const mins = birdSnoozeMinsInput ? parseInt(birdSnoozeMinsInput.value, 10) : 15;
+      executeWebSnooze(mins || 15);
+    });
+  }
 
-      try {
-        await fetch("/api/reminders/snooze", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ task_id: task.id, minutes: mins })
-        });
-
-        const label = mins === 15 ? "15 minutes" : (mins === 60 ? "1 hour" : "tomorrow");
-        appendAiMessage(`I've snoozed "${task.title}" for ${label} 🌸 Take all the time you need, the bird will rest for now.`);
-        showToast(`⏰ Snoozed for ${label}`);
-        hideBird();
-      } catch (err) {
-        console.error("Snooze error:", err);
+  if (birdSnoozeMinsInput) {
+    birdSnoozeMinsInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        const mins = parseInt(birdSnoozeMinsInput.value, 10);
+        executeWebSnooze(mins || 15);
       }
+    });
+  }
+
+  // Quick Snooze chips
+  document.querySelectorAll(".bird-snooze-option").forEach(opt => {
+    opt.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const mins = parseInt(opt.dataset.mins, 10);
+      executeWebSnooze(mins);
     });
   });
 
@@ -1374,8 +1552,9 @@ document.addEventListener("DOMContentLoaded", () => {
   if (birdChatBtn) {
     birdChatBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      hideBird();
-      if (messageInput) messageInput.focus();
+      flyAwayReverseWeb(() => {
+        if (messageInput) messageInput.focus();
+      });
     });
   }
 

@@ -2136,7 +2136,13 @@ html, body {
   height: 100%;
   filter: drop-shadow(0 14px 20px rgba(0, 0, 0, 0.16));
   outline: none;
+  cursor: grab;
   transition: transform 0.2s ease;
+}
+
+.bird-actor:active,
+.bird-actor.is-dragging {
+  cursor: grabbing !important;
 }
 
 .bird-actor:hover {
@@ -2170,6 +2176,29 @@ html, body {
 .bird-flight-wrapper.is-flying #birdFrameLanded {
   opacity: 0;
   display: none;
+}
+
+/* State: Flying in Reverse */
+.bird-flight-wrapper.is-flying-reverse {
+  pointer-events: none !important;
+  transition: transform 1.6s cubic-bezier(0.25, 1, 0.4, 1), opacity 0.5s ease 1.1s !important;
+}
+
+.bird-flight-wrapper.is-flying-reverse #birdFrameWingsUp {
+  animation: wingFlapCycleUp 0.18s infinite steps(1) !important;
+  display: block !important;
+  opacity: 1 !important;
+}
+
+.bird-flight-wrapper.is-flying-reverse #birdFrameWingsDown {
+  animation: wingFlapCycleDown 0.18s infinite steps(1) !important;
+  display: block !important;
+  opacity: 1 !important;
+}
+
+.bird-flight-wrapper.is-flying-reverse #birdFrameLanded {
+  opacity: 0 !important;
+  display: none !important;
 }
 
 @keyframes wingFlapCycleUp {
@@ -2476,33 +2505,104 @@ html, body {
   left: 0;
   right: 0;
   background: #ffffff;
-  border-radius: 10px;
+  border-radius: 12px;
   border: 1.5px solid #fbcfe8;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
-  padding: 6px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(244, 114, 182, 0.18);
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
   z-index: 10000;
   animation: popupSlideUp 0.18s ease;
 }
 
-.bird-snooze-option {
-  background: none;
-  border: none;
-  text-align: left;
-  padding: 8px 12px;
-  border-radius: 6px;
-  font-size: 0.84rem;
-  font-weight: 600;
-  color: var(--text-main);
-  cursor: pointer;
-  transition: background 0.15s ease;
+.bird-snooze-menu .snooze-custom-input-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.bird-snooze-option:hover {
+.bird-snooze-menu .snooze-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.bird-snooze-menu .snooze-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bird-snooze-menu .snooze-number-input {
+  width: 60px;
+  padding: 5px 8px;
+  border: 1.5px solid #f472b6;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #1f2937;
+  outline: none;
+  background: #fff5f7;
+  text-align: center;
+}
+
+.bird-snooze-menu .snooze-number-input:focus {
+  border-color: #db2777;
+  box-shadow: 0 0 0 2px rgba(244, 114, 182, 0.25);
+}
+
+.bird-snooze-menu .snooze-unit {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: #6b7280;
+}
+
+.bird-snooze-menu .snooze-submit-btn {
+  background: linear-gradient(135deg, #f472b6 0%, #db2777 100%);
+  color: #ffffff;
+  border: none;
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+
+.bird-snooze-menu .snooze-submit-btn:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+
+.bird-snooze-menu .snooze-quick-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  border-top: 1px dashed #f3f4f6;
+  padding-top: 6px;
+}
+
+.bird-snooze-menu .bird-snooze-option {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  padding: 4px 8px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #374151;
+  text-align: center;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.bird-snooze-menu .bird-snooze-option:hover {
   background: #fff0f3;
-  color: var(--primary-pink);
+  border-color: #f472b6;
+  color: #db2777;
+  transform: translateY(-1px);
 }
 
 .bird-btn-chat {

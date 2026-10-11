@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   snoozeReminder: (taskId, minutes) => ipcRenderer.invoke('snooze-reminder', taskId, minutes),
   openChatWindow: () => ipcRenderer.send('open-chat-window'),
   dismissBird: () => ipcRenderer.send('dismiss-bird'),
+  birdDeparted: () => ipcRenderer.send('bird-departed'),
 
   // Settings & Status
   getAppStatus: () => ipcRenderer.invoke('get-app-status'),

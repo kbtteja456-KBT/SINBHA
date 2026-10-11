@@ -338,9 +338,21 @@
         <div class="bird-snooze-wrapper">
           <button id="birdSnoozeDropdownBtn" class="bird-action-btn bird-btn-snooze">⏰ Snooze ▾</button>
           <div id="birdSnoozeMenu" class="bird-snooze-menu" style="display: none;">
-            <button class="bird-snooze-option" data-mins="15">15 minutes</button>
-            <button class="bird-snooze-option" data-mins="60">1 hour</button>
-            <button class="bird-snooze-option" data-mins="1440">Tomorrow</button>
+            <div class="snooze-custom-input-box">
+              <span class="snooze-label">Snooze for:</span>
+              <div class="snooze-input-row">
+                <input type="number" id="birdSnoozeMinsInput" class="snooze-number-input" min="1" max="10080" placeholder="15" value="15" />
+                <span class="snooze-unit">min</span>
+                <button id="birdSnoozeSubmitBtn" class="snooze-submit-btn">Set</button>
+              </div>
+            </div>
+            <div class="snooze-quick-chips">
+              <button class="bird-snooze-option" data-mins="5">5m</button>
+              <button class="bird-snooze-option" data-mins="15">15m</button>
+              <button class="bird-snooze-option" data-mins="30">30m</button>
+              <button class="bird-snooze-option" data-mins="60">1h</button>
+              <button class="bird-snooze-option" data-mins="1440">Tomorrow</button>
+            </div>
           </div>
         </div>
 

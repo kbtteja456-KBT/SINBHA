@@ -269,9 +269,11 @@ function createTray() {
   });
 }
 
-// ----------------- Background Reminder Poller (Requirement 3) -----------------
+// ----------------- Background Reminder Poller (Requirement 3 & Sequential Queue) -----------------
+let isBirdShowingOnOverlay = false;
+
 async function checkDueRemindersLoop() {
-  if (remindersPaused || isFullscreenAppActive()) return;
+  if (remindersPaused || isFullscreenAppActive() || isBirdShowingOnOverlay) return;
 
   try {
     const tzOffset = new Date().getTimezoneOffset();
@@ -284,6 +286,9 @@ async function checkDueRemindersLoop() {
         try {
           const json = JSON.parse(data);
           if (json.reminder_needed && json.task && !json.emergency_stopped) {
+            // Keep active so tasks are delivered one by one in chronological order
+            isBirdShowingOnOverlay = true;
+
             // Trigger bird in overlay window!
             if (overlayWindow && !overlayWindow.isDestroyed()) {
               overlayWindow.webContents.send('show-bird', {
@@ -291,6 +296,24 @@ async function checkDueRemindersLoop() {
                 reminder_id: json.reminder_id,
                 is_explicit: json.is_explicit
               });
+            }
+
+            // Mark reminder fired in backend so it does not repeat
+            if (json.reminder_id || json.is_explicit) {
+              const postData = JSON.stringify({ task_id: json.task.id, reminder_id: json.reminder_id });
+              const fireReq = http.request(
+                `${BACKEND_URL}/api/reminders/fired`,
+                {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': Buffer.byteLength(postData)
+                  }
+                }
+              );
+              fireReq.on('error', () => {});
+              fireReq.write(postData);
+              fireReq.end();
             }
           }
         } catch (e) {}
@@ -316,9 +339,16 @@ function setupIpcHandlers() {
 
   // Dismiss bird
   ipcMain.on('dismiss-bird', () => {
+    isBirdShowingOnOverlay = false;
     if (overlayWindow && !overlayWindow.isDestroyed()) {
       overlayWindow.webContents.send('hide-bird');
     }
+  });
+
+  // Bird departed off-screen: advance queue to next task in line!
+  ipcMain.on('bird-departed', () => {
+    isBirdShowingOnOverlay = false;
+    setTimeout(checkDueRemindersLoop, 2000);
   });
 
   // Mark task done from bird popup

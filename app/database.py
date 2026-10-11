@@ -465,7 +465,7 @@ def update_task_status(task_id: int, new_status: str) -> bool:
         return False
 
     title = row["title"]
-    cursor.execute("UPDATE tasks SET status = ? WHERE id = ?", (new_status, task_id))
+    cursor.execute("UPDATE tasks SET status = ?, snoozed_until = NULL WHERE id = ?", (new_status, task_id))
     conn.commit()
     conn.close()
 
@@ -745,9 +745,22 @@ def check_due_reminders(now_dt: datetime = None) -> list:
         if t["status"] != "pending":
             continue
 
-        # Check if task is currently snoozed
-        if t.get("snoozed_until") and t["snoozed_until"] > now_iso:
-            continue
+        # Check if task is currently snoozed or snooze completed
+        if t.get("snoozed_until"):
+            if t["snoozed_until"] > now_iso:
+                # Still in snooze period: do not bother user
+                continue
+            else:
+                # Snooze duration has completed! The bird comes back right now as requested
+                needing_bird.append({
+                    "task": t,
+                    "reason": "snooze_expired",
+                    "reminder_id": None,
+                    "reminder_label": "Snooze Finished",
+                    "is_explicit": True,
+                    "warm_message": f"🕊️ Checking back in on '{t['title']}' as requested 🌸"
+                })
+                continue
 
         reminders = t.get("reminders") or []
         explicit_fired_now = False
@@ -773,19 +786,46 @@ def check_due_reminders(now_dt: datetime = None) -> list:
         if explicit_fired_now:
             continue
 
+        # If task has future scheduled reminders, DO NOT trigger premature 'due today' visit!
+        # The bird must come ONLY when the reminder time actually arrives.
+        has_future_reminders = any(
+            not r.get("fired") and (r.get("time") or r.get("trigger_at")) and str(r.get("time") or r.get("trigger_at")).replace("T", " ")[:16] > now_iso
+            for r in reminders
+        )
+        if has_future_reminders:
+            continue
+
         # 2. Check general repeat visit (due today or overdue)
         # Suppressed if currently in quiet hours!
         if in_quiet:
             continue
 
         is_overdue = t.get("is_overdue", False)
+        
+        # If due_datetime is specified and is in the future, it is not yet due!
+        if t.get("due_datetime") and t["due_datetime"] > now_iso:
+            continue
+
         is_due_today = (t.get("due_date_iso") == today_date_str) or (t.get("due_datetime") and t["due_datetime"].startswith(today_date_str))
 
         if is_overdue or is_due_today:
             last_rem = t.get("last_reminded_at")
             should_visit = False
             if not last_rem:
-                should_visit = True
+                # If newly created today without explicit reminder, don't immediately pop up right after confirming!
+                created_str = t.get("created_at")
+                if created_str:
+                    try:
+                        c_dt = datetime.strptime(created_str, "%Y-%m-%d %H:%M:%S")
+                        # Give at least 4 hours before any unsolicited general repeat check-in on new tasks
+                        if (now_dt - c_dt).total_seconds() < 14400:
+                            should_visit = False
+                        else:
+                            should_visit = True
+                    except Exception:
+                        should_visit = False
+                else:
+                    should_visit = False
             else:
                 try:
                     last_dt = datetime.strptime(last_rem, "%Y-%m-%d %H:%M:%S")
@@ -809,6 +849,23 @@ def check_due_reminders(now_dt: datetime = None) -> list:
                     "is_explicit": False,
                     "warm_message": warm_msg
                 })
+
+    # Sort tasks strictly in chronological order by when their reminder was set to fire
+    def reminder_sort_key(item):
+        t = item["task"]
+        if item.get("reason") == "snooze_expired" and t.get("snoozed_until"):
+            return (0, t["snoozed_until"])
+        if item.get("is_explicit") and item.get("reminder_id"):
+            for r in t.get("reminders") or []:
+                if r.get("id") == item["reminder_id"]:
+                    return (0, str(r.get("time") or r.get("trigger_at") or "")[:16])
+        if t.get("due_datetime"):
+            return (1, t["due_datetime"])
+        if t.get("due_date_iso"):
+            return (2, t["due_date_iso"])
+        return (3, t.get("created_at") or "9999")
+
+    needing_bird.sort(key=reminder_sort_key)
 
     return needing_bird
 
@@ -838,7 +895,7 @@ def mark_reminder_fired(task_id: int, reminder_id: str = None) -> bool:
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cursor.execute(
-        "UPDATE tasks SET reminders = ?, last_reminded_at = ? WHERE id = ?",
+        "UPDATE tasks SET reminders = ?, last_reminded_at = ?, snoozed_until = NULL WHERE id = ?",
         (json.dumps(rems), now_str, task_id)
     )
     conn.commit()

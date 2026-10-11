@@ -44,9 +44,21 @@
         <div class="snooze-wrapper">
           <button id="overlaySnoozeToggleBtn" class="popup-btn popup-btn-snooze">⏰ Snooze ▾</button>
           <div id="overlaySnoozeMenu" class="snooze-dropdown-menu" style="display: none;">
-            <button class="snooze-opt" data-mins="15">15 minutes</button>
-            <button class="snooze-opt" data-mins="60">1 hour</button>
-            <button class="snooze-opt" data-mins="1440">Tomorrow</button>
+            <div class="snooze-custom-input-box">
+              <span class="snooze-label">Snooze for:</span>
+              <div class="snooze-input-row">
+                <input type="number" id="overlaySnoozeMinsInput" class="snooze-number-input" min="1" max="10080" placeholder="15" value="15" />
+                <span class="snooze-unit">min</span>
+                <button id="overlaySnoozeSubmitBtn" class="snooze-submit-btn">Set</button>
+              </div>
+            </div>
+            <div class="snooze-quick-chips">
+              <button class="snooze-opt" data-mins="5">5m</button>
+              <button class="snooze-opt" data-mins="15">15m</button>
+              <button class="snooze-opt" data-mins="30">30m</button>
+              <button class="snooze-opt" data-mins="60">1h</button>
+              <button class="snooze-opt" data-mins="1440">Tomorrow</button>
+            </div>
           </div>
         </div>
 

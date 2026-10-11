@@ -54,10 +54,15 @@ html, body {
   position: relative;
   width: 100%;
   height: 100%;
-  cursor: pointer;
+  cursor: grab;
   filter: drop-shadow(0 16px 22px rgba(0, 0, 0, 0.22));
   outline: none;
   transition: transform 0.2s ease;
+}
+
+.overlay-bird-actor:active,
+.overlay-bird-actor.is-dragging {
+  cursor: grabbing !important;
 }
 
 .overlay-bird-actor:hover {
@@ -122,6 +127,30 @@ html, body {
 @keyframes wingFlapDown {
   0%, 49% { opacity: 0; visibility: hidden; }
   50%, 100% { opacity: 1; visibility: visible; }
+}
+
+/* State: Flying in Reverse (Taking off smoothly back to top-left) */
+.overlay-flight-wrapper.is-flying-reverse {
+  display: block !important;
+  pointer-events: none !important;
+  transition: transform 1.7s cubic-bezier(0.32, 0, 0.67, 0), opacity 0.5s ease 1.2s !important;
+}
+
+.overlay-flight-wrapper.is-flying-reverse #frameWingsUp {
+  animation: wingFlapUp 0.18s infinite steps(1) !important;
+  display: block !important;
+  opacity: 1 !important;
+}
+
+.overlay-flight-wrapper.is-flying-reverse #frameWingsDown {
+  animation: wingFlapDown 0.18s infinite steps(1) !important;
+  display: block !important;
+  opacity: 1 !important;
+}
+
+.overlay-flight-wrapper.is-flying-reverse #frameLanded {
+  opacity: 0 !important;
+  display: none !important;
 }
 
 /* Smooth Curved Trajectory across whatever app the user is running */
@@ -351,18 +380,19 @@ html, body {
 
 .snooze-dropdown-menu {
   position: absolute;
-  bottom: calc(100% + 6px);
-  left: 0;
-  width: 130px;
+  bottom: calc(100% + 8px);
+  left: -40px;
+  width: 200px;
   background: #ffffff;
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-  border: 1px solid #f3f4f6;
-  padding: 4px;
+  border-radius: 14px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.2), 0 2px 8px rgba(244, 114, 182, 0.2);
+  border: 1.5px solid #fbcfe8;
+  padding: 10px;
   display: flex;
   flex-direction: column;
+  gap: 8px;
   z-index: 10001;
-  animation: menuFade 0.15s ease;
+  animation: menuFade 0.16s ease;
 }
 
 @keyframes menuFade {
@@ -370,22 +400,93 @@ html, body {
   100% { opacity: 1; transform: translateY(0); }
 }
 
-.snooze-opt {
-  background: none;
+.snooze-custom-input-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.snooze-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.snooze-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.snooze-number-input {
+  width: 60px;
+  padding: 5px 8px;
+  border: 1.5px solid #f472b6;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #1f2937;
+  outline: none;
+  background: #fff5f7;
+  text-align: center;
+}
+
+.snooze-number-input:focus {
+  border-color: #db2777;
+  box-shadow: 0 0 0 2px rgba(244, 114, 182, 0.25);
+}
+
+.snooze-unit {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: #6b7280;
+}
+
+.snooze-submit-btn {
+  background: linear-gradient(135deg, #f472b6 0%, #db2777 100%);
+  color: #ffffff;
   border: none;
-  padding: 7px 10px;
-  font-size: 0.76rem;
-  font-weight: 500;
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+
+.snooze-submit-btn:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+
+.snooze-quick-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  border-top: 1px dashed #f3f4f6;
+  padding-top: 6px;
+}
+
+.snooze-opt {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  padding: 4px 8px;
+  font-size: 0.72rem;
+  font-weight: 600;
   color: #374151;
-  text-align: left;
+  text-align: center;
   border-radius: 6px;
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: all 0.15s ease;
 }
 
 .snooze-opt:hover {
   background: #fff0f3;
+  border-color: #f472b6;
   color: #db2777;
+  transform: translateY(-1px);
 }
 
 .popup-btn-chat {
