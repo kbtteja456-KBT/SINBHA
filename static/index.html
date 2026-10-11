@@ -276,6 +276,25 @@
             </select>
           </div>
 
+          <!-- Timezone selector (Step 10 Requirement 6) -->
+          <div class="setting-field-group">
+            <label for="timezoneSelect" class="setting-label">
+              <strong>Timezone</strong>
+              <span class="setting-desc">Used for scheduling your reminders and converting relative times</span>
+            </label>
+            <select id="timezoneSelect" class="setting-select">
+              <option value="UTC">UTC (Coordinated Universal Time)</option>
+              <option value="Asia/Kolkata">Asia/Kolkata (IST +5:30)</option>
+              <option value="America/New_York">America/New_York (EST/EDT)</option>
+              <option value="America/Chicago">America/Chicago (CST/CDT)</option>
+              <option value="America/Los_Angeles">America/Los_Angeles (PST/PDT)</option>
+              <option value="Europe/London">Europe/London (GMT/BST)</option>
+              <option value="Europe/Paris">Europe/Paris (CET/CEST)</option>
+              <option value="Asia/Tokyo">Asia/Tokyo (JST)</option>
+              <option value="Australia/Sydney">Australia/Sydney (AEST/AEDT)</option>
+            </select>
+          </div>
+
           <div class="setting-field-group">
             <div class="setting-switch-row">
               <label class="setting-switch">

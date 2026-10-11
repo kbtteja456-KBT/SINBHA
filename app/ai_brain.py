@@ -65,20 +65,25 @@ NO explanations, NO markdown backticks.
 
 # ----------------- Date & Time Conversion Helpers (Step 6B) -----------------
 
-def parse_relative_datetime(raw_str: str, base_dt: datetime.datetime = None) -> dict:
+def parse_relative_datetime(raw_str: str, base_dt: datetime.datetime = None, user_timezone: str = "UTC") -> dict:
     """
-    Parses natural language date and time expressions into structured date, time, and ISO strings.
+    Parses natural language date and time expressions into structured date, time, and UTC ISO strings.
+    Requirement 6: Uses user_timezone (default from browser) when converting phrases like 'tomorrow at 8am'.
     Examples:
-    - 'tomorrow at 8am' -> date: '2026-10-11', time: '08:00', datetime: '2026-10-11 08:00'
-    - 'Friday at 4:30pm' -> date: '2026-10-16', time: '16:30'
-    - 'in 2 hours' -> date & time offset from base_dt
-    - 'tomorrow' -> date: '2026-10-11', time: None, time_specified: False
+    - 'tomorrow at 8am' -> date: '2026-10-11', time: '08:00', datetime: '2026-10-11 08:00', due_datetime_utc: '...'
     """
+    from zoneinfo import ZoneInfo
+    try:
+        tz = ZoneInfo(user_timezone or "UTC")
+    except Exception:
+        tz = datetime.timezone.utc
+
     if not raw_str or str(raw_str).strip().lower() in ("none", "no deadline", "no due date", "null", ""):
         return {
             "due_date": None,
             "due_time": None,
             "due_datetime": None,
+            "due_datetime_utc": None,
             "display": None,
             "time_specified": False,
             "is_ambiguous": False,
@@ -86,7 +91,11 @@ def parse_relative_datetime(raw_str: str, base_dt: datetime.datetime = None) -> 
         }
 
     if base_dt is None:
-        base_dt = datetime.datetime.now()
+        base_dt = datetime.datetime.now(tz)
+    elif base_dt.tzinfo is None:
+        base_dt = base_dt.replace(tzinfo=tz)
+    else:
+        base_dt = base_dt.astimezone(tz)
 
     clean = str(raw_str).strip().lower()
 
@@ -99,6 +108,7 @@ def parse_relative_datetime(raw_str: str, base_dt: datetime.datetime = None) -> 
             "due_date": None,
             "due_time": None,
             "due_datetime": None,
+            "due_datetime_utc": None,
             "display": None,
             "time_specified": False,
             "is_ambiguous": True,
@@ -115,10 +125,12 @@ def parse_relative_datetime(raw_str: str, base_dt: datetime.datetime = None) -> 
         else:
             target = base_dt + datetime.timedelta(hours=val)
         target_dt_str = target.strftime("%Y-%m-%d %H:%M")
+        target_utc = target.astimezone(datetime.timezone.utc)
         return {
             "due_date": target.strftime("%Y-%m-%d"),
             "due_time": target.strftime("%H:%M"),
             "due_datetime": target_dt_str,
+            "due_datetime_utc": target_utc.strftime("%Y-%m-%d %H:%M"),
             "display": target.strftime("%Y-%m-%d at %I:%M %p (%A)").replace(" 0", " "),
             "time_specified": True,
             "is_ambiguous": False,
@@ -224,12 +236,15 @@ def parse_relative_datetime(raw_str: str, base_dt: datetime.datetime = None) -> 
     due_time_str = f"{hour:02d}:{minute:02d}" if time_specified else None
     
     if time_specified:
-        target_dt = datetime.datetime(target_date.year, target_date.month, target_date.day, hour, minute)
+        target_dt = datetime.datetime(target_date.year, target_date.month, target_date.day, hour, minute, tzinfo=tz)
         due_datetime_str = target_dt.strftime("%Y-%m-%d %H:%M")
+        target_dt_utc = target_dt.astimezone(datetime.timezone.utc)
+        due_datetime_utc_str = target_dt_utc.strftime("%Y-%m-%d %H:%M")
         display_str = target_dt.strftime("%Y-%m-%d at %I:%M %p (%A)").replace(" 0", " ")
         suggested = generate_suggested_reminders(target_dt, base_dt)
     else:
         due_datetime_str = None
+        due_datetime_utc_str = None
         display_str = target_date.strftime("%Y-%m-%d (%A)")
         suggested = generate_date_only_reminders(target_date, base_dt)
 
@@ -237,6 +252,7 @@ def parse_relative_datetime(raw_str: str, base_dt: datetime.datetime = None) -> 
         "due_date": due_date_str,
         "due_time": due_time_str,
         "due_datetime": due_datetime_str,
+        "due_datetime_utc": due_datetime_utc_str,
         "display": display_str,
         "time_specified": time_specified,
         "is_ambiguous": False,
@@ -282,7 +298,7 @@ def generate_suggested_reminders(target_dt: datetime.datetime, now_dt: datetime.
     # 3. Evening before (8:00 PM) if task is tomorrow or later
     if target_dt.date() > now_dt.date():
         prev_day = target_dt.date() - datetime.timedelta(days=1)
-        r_eve = datetime.datetime(prev_day.year, prev_day.month, prev_day.day, 20, 0)
+        r_eve = datetime.datetime(prev_day.year, prev_day.month, prev_day.day, 20, 0, tzinfo=now_dt.tzinfo)
         if r_eve > now_dt:
             reminders.append({
                 "id": "eve",
@@ -309,7 +325,7 @@ def generate_date_only_reminders(target_date: datetime.date, now_dt: datetime.da
     reminders = []
     if target_date > now_dt.date():
         prev_day = target_date - datetime.timedelta(days=1)
-        r_eve = datetime.datetime(prev_day.year, prev_day.month, prev_day.day, 20, 0)
+        r_eve = datetime.datetime(prev_day.year, prev_day.month, prev_day.day, 20, 0, tzinfo=now_dt.tzinfo)
         if r_eve > now_dt:
             reminders.append({
                 "id": "eve",
@@ -318,7 +334,7 @@ def generate_date_only_reminders(target_date: datetime.date, now_dt: datetime.da
                 "default": True,
                 "explicit": True
             })
-    r_morn = datetime.datetime(target_date.year, target_date.month, target_date.day, 9, 0)
+    r_morn = datetime.datetime(target_date.year, target_date.month, target_date.day, 9, 0, tzinfo=now_dt.tzinfo)
     if r_morn > now_dt:
         reminders.append({
             "id": "morn",

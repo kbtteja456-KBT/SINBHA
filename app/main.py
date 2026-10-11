@@ -38,6 +38,7 @@ class SignupRequest(BaseModel):
     is_18_or_older: Optional[bool] = None
     agreed_terms: Optional[bool] = None
     agree_terms: Optional[bool] = None
+    timezone: Optional[str] = "UTC"
 
     def get_is_18(self) -> bool:
         if self.is_18 is not None:
@@ -60,6 +61,7 @@ class LoginRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     tz_offset_minutes: Optional[int] = None
+    timezone: Optional[str] = None
 
 class ActionConfirmRequest(BaseModel):
     action: str  # "confirm" or "cancel"
@@ -86,6 +88,7 @@ class SettingsUpdateRequest(BaseModel):
     quiet_hours_start: str = "22:00"
     quiet_hours_end: str = "08:00"
     country: Optional[str] = "US"
+    timezone: Optional[str] = "UTC"
 
 class TaskStatusUpdateRequest(BaseModel):
     status: str  # "pending" or "completed"
@@ -153,7 +156,8 @@ async def signup_endpoint(payload: SignupRequest, response: Response):
             email=payload.email,
             password=payload.password,
             is_18=payload.get_is_18(),
-            agreed_terms=payload.get_agreed_terms()
+            agreed_terms=payload.get_agreed_terms(),
+            timezone_name=payload.timezone or "UTC"
         )
         token = db.create_session(user["id"])
         response.set_cookie(
@@ -491,7 +495,8 @@ async def chat_endpoint(payload: ChatRequest, user: dict = Depends(get_current_u
                 utc_now = datetime.datetime.now(datetime.timezone.utc)
                 client_now = (utc_now - datetime.timedelta(minutes=payload.tz_offset_minutes)).replace(tzinfo=None)
 
-            dt_res = parse_relative_datetime(raw_due, base_dt=client_now)
+            user_tz = payload.timezone or user.get("timezone") or db.get_setting(user_id, "timezone", "UTC")
+            dt_res = parse_relative_datetime(raw_due, base_dt=client_now, user_timezone=user_tz)
             
             if dt_res["is_ambiguous"]:
                 if "when" not in ai_reply.lower() and "due" not in ai_reply.lower():
@@ -689,7 +694,9 @@ async def update_settings_endpoint(payload: SettingsUpdateRequest, user: dict = 
     db.set_setting(user_id, "quiet_hours_end", payload.quiet_hours_end)
     if payload.country:
         db.set_setting(user_id, "country", payload.country)
-    db.log_audit(user_id, "SETTINGS_UPDATED", f"Persistence: {payload.persistence}, Quiet hours: {payload.quiet_hours_start}-{payload.quiet_hours_end}")
+    if payload.timezone:
+        db.set_setting(user_id, "timezone", payload.timezone)
+    db.log_audit(user_id, "SETTINGS_UPDATED", f"Persistence: {payload.persistence}, Quiet hours: {payload.quiet_hours_start}-{payload.quiet_hours_end}, Timezone: {payload.timezone or 'UTC'}")
     return {"success": True, "settings": db.get_all_settings(user_id)}
 
 @app.post("/api/confirm-action")

@@ -73,6 +73,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const persistenceSelect = document.getElementById("persistenceSelect");
   const countrySelect = document.getElementById("countrySelect");
+  const timezoneSelect = document.getElementById("timezoneSelect");
   const quietHoursToggle = document.getElementById("quietHoursToggle");
   const quietTimePickerRow = document.getElementById("quietTimePickerRow");
   const quietStartInput = document.getElementById("quietStartInput");
@@ -1173,6 +1174,14 @@ document.addEventListener("DOMContentLoaded", () => {
       if (countrySelect && s.country) {
         countrySelect.value = s.country;
       }
+      if (timezoneSelect) {
+        if (s.timezone) {
+          timezoneSelect.value = s.timezone;
+        } else {
+          const autoTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+          if (autoTz) timezoneSelect.value = autoTz;
+        }
+      }
       if (quietHoursToggle && s.quiet_hours_enabled !== undefined) {
         const isEnabled = (s.quiet_hours_enabled === "true" || s.quiet_hours_enabled === true);
         quietHoursToggle.checked = isEnabled;
@@ -1207,6 +1216,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const payload = {
         persistence: persistenceSelect ? persistenceSelect.value : "normal",
         country: countrySelect ? countrySelect.value : "US",
+        timezone: timezoneSelect ? timezoneSelect.value : (Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"),
         quiet_hours_enabled: quietHoursToggle ? (quietHoursToggle.checked ? "true" : "false") : "true",
         quiet_hours_start: quietStartInput ? quietStartInput.value : "22:00",
         quiet_hours_end: quietEndInput ? quietEndInput.value : "08:00"
@@ -1223,6 +1233,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (persistenceSelect) persistenceSelect.addEventListener("change", saveSettings);
   if (countrySelect) countrySelect.addEventListener("change", saveSettings);
+  if (timezoneSelect) timezoneSelect.addEventListener("change", saveSettings);
   if (quietHoursToggle) {
     quietHoursToggle.addEventListener("change", () => {
       if (quietTimePickerRow) {
@@ -1790,7 +1801,8 @@ document.addEventListener("DOMContentLoaded", () => {
             email,
             password,
             is_18_or_older: ageChecked,
-            agree_terms: termsChecked
+            agree_terms: termsChecked,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
           })
         });
         const data = await res.json();

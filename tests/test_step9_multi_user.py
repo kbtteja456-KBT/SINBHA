@@ -35,7 +35,7 @@ def setup_test_environment():
     temp_db = os.path.join(temp_dir, "test_step9.db")
     
     import app.database as db
-    db.DB_FILE = temp_db
+    db.set_engine_url(f"sqlite:///{temp_db}")
     
     # Initialize schema
     db.init_db()
