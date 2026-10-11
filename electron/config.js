@@ -19,6 +19,12 @@ module.exports = {
 
   // Version features for "What's New" popup
   WHATS_NEW: {
+        '1.0.1': [
+      '✨ Fixed natural language reminder parsing & regional date formats',
+      '🕊️ Instant desktop bird flight notification on due tasks',
+      '☁️ High-speed direct connection to Render cloud backend',
+      '🔄 Automatic background updates & seamless upgrade delivery'
+    ],
     '1.0.0': [
       '🌸 Initial desktop release connected to cloud backend',
       '🕊️ Transparent desktop bird companion with reminder flights',
