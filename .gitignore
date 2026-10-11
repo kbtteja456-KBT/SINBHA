@@ -22,3 +22,13 @@ node_modules/
 dist/
 
 .neon
+
+# Android Build & Keystores (NEVER commit signing keys)
+*.keystore
+*.jks
+signing.properties
+android/.gradle/
+android/app/build/
+android/build/
+android/captures/
+.gradle/

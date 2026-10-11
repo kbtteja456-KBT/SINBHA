@@ -1,4 +1,4 @@
-﻿// ========================================================
+// ========================================================
 // Pre-Build Security Check (Requirement 1)
 // Fails the build immediately if any secret-looking file or
 // credentials (.env, API keys, database URLs) are found in
@@ -49,7 +49,9 @@ const filesToScan = [
   path.join(ROOT_DIR, 'electron', 'config.js'),
   path.join(ROOT_DIR, 'electron', 'main.js'),
   path.join(ROOT_DIR, 'electron', 'preload.js'),
-  path.join(ROOT_DIR, 'electron', 'overlay.js')
+  path.join(ROOT_DIR, 'electron', 'overlay.js'),
+  path.join(ROOT_DIR, 'capacitor.config.json'),
+  path.join(ROOT_DIR, 'www', 'index.html')
 ];
 
 for (const filePath of filesToScan) {

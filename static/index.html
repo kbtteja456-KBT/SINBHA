@@ -354,6 +354,86 @@
           </div>
         </div>
 
+        <div class="settings-reminders-section" id="settingsAndroidSection" style="display: none;">
+          <h3>📱 Android Companion & Permissions</h3>
+          <p>Configure background permissions and floating companion bird.</p>
+
+          <div class="android-permission-cards">
+            <!-- Notifications -->
+            <div class="android-perm-card" id="permCardNotif">
+              <div class="android-perm-header">
+                <span class="android-perm-icon">🔔</span>
+                <div class="android-perm-info">
+                  <strong>Notifications</strong>
+                  <span class="android-perm-desc">Allows high-priority alerts when tasks are due</span>
+                </div>
+                <span class="android-perm-status" id="permStatusNotif">Checking...</span>
+              </div>
+              <button type="button" class="android-perm-btn" id="reqNotifBtn">Grant Permission</button>
+            </div>
+
+            <!-- Display Over Other Apps -->
+            <div class="android-perm-card" id="permCardOverlay">
+              <div class="android-perm-header">
+                <span class="android-perm-icon">🕊️</span>
+                <div class="android-perm-info">
+                  <strong>Display Over Other Apps</strong>
+                  <span class="android-perm-desc">Enables the gentle floating bird companion to visit you over other apps</span>
+                </div>
+                <span class="android-perm-status" id="permStatusOverlay">Checking...</span>
+              </div>
+              <button type="button" class="android-perm-btn" id="reqOverlayBtn">Grant Permission</button>
+            </div>
+
+            <!-- Exact Alarms -->
+            <div class="android-perm-card" id="permCardAlarm">
+              <div class="android-perm-header">
+                <span class="android-perm-icon">⏰</span>
+                <div class="android-perm-info">
+                  <strong>Exact Alarms</strong>
+                  <span class="android-perm-desc">Wakes the phone at the exact minute your scheduled reminders are due</span>
+                </div>
+                <span class="android-perm-status" id="permStatusAlarm">Checking...</span>
+              </div>
+              <button type="button" class="android-perm-btn" id="reqAlarmBtn">Grant Permission</button>
+            </div>
+
+            <!-- Battery Optimization -->
+            <div class="android-perm-card" id="permCardBattery">
+              <div class="android-perm-header">
+                <span class="android-perm-icon">🔋</span>
+                <div class="android-perm-info">
+                  <strong>Battery Optimization (Don't optimize)</strong>
+                  <span class="android-perm-desc">Prevents Android from freezing SINBHA in the background</span>
+                </div>
+                <span class="android-perm-status" id="permStatusBattery">Checking...</span>
+              </div>
+              <button type="button" class="android-perm-btn" id="reqBatteryBtn">Allow Background Running</button>
+            </div>
+
+            <!-- OnePlus / Oppo / Realme Specialized Card -->
+            <div class="android-perm-card brand-highlight" id="permCardBrand">
+              <div class="android-perm-header">
+                <span class="android-perm-icon">🚀</span>
+                <div class="android-perm-info">
+                  <strong>OxygenOS / ColorOS Auto-launch</strong>
+                  <span class="android-perm-desc">OnePlus & Realme phones require enabling "Auto-launch" & "Allow background activity" in App Management</span>
+                </div>
+              </div>
+              <button type="button" class="android-perm-btn" id="reqAutostartBtn">Open Auto-launch Settings</button>
+            </div>
+          </div>
+
+          <div style="margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap;">
+            <button type="button" id="testBirdNativeBtn" class="confirm-btn-primary" style="flex: 1; min-width: 140px; justify-content: center;">
+              🕊️ Test Bird Flight
+            </button>
+            <button type="button" id="syncRemindersNativeBtn" class="confirm-btn-secondary" style="flex: 1; min-width: 140px; justify-content: center;">
+              🔄 Sync Exact Alarms
+            </button>
+          </div>
+        </div>
+
         <div class="settings-danger-section">
           <h3>Data Rights & Account Management (Step 11)</h3>
           <p>Download your personal archive, update your security credentials, or permanently erase your data.</p>
@@ -577,6 +657,22 @@
         </div>
 
         <button id="birdChatBtn" class="bird-action-btn bird-btn-chat">💬 Open Chat</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- APP UPDATE GATE MODAL (Requirement 5) -->
+  <div class="confirm-modal-overlay" id="appUpdateGateModal" style="display: none; z-index: 99999;">
+    <div class="confirm-modal-card" style="max-width: 440px; text-align: center;">
+      <div class="confirm-icon-box" style="background: #fdf2f8; color: #db2777; font-size: 2.2rem;">🌸</div>
+      <h3 style="color: #0f172a; margin-bottom: 8px;">Update Required to Continue</h3>
+      <p id="appUpdateGateDesc" style="color: #64748b; font-size: 0.9rem; line-height: 1.5; margin-bottom: 20px;">
+        A new version of SINBHA is available with important companion enhancements and stability fixes.
+      </p>
+      <div style="display: flex; flex-direction: column; gap: 10px;">
+        <a id="appUpdateDownloadLink" href="https://github.com/kbtteja456-KBT/SINBHA/releases/latest" target="_blank" class="confirm-btn-primary" style="text-decoration: none; justify-content: center; padding: 12px; font-weight: 700; font-size: 0.95rem;">
+          Download Update ⚡
+        </a>
       </div>
     </div>
   </div>

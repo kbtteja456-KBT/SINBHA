@@ -2023,13 +2023,242 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
 
+    // ========================================================
+    // ANDROID CAPACITOR NATIVE BRIDGE CONTROLLER (STEP 14)
+    // ========================================================
+
+    async function syncSessionWithNativeApp() {
+      if (window.Capacitor && window.Capacitor.isNativePlatform()) {
+        try {
+          const res = await fetch("/api/auth/token");
+          if (res.ok) {
+            const tData = await res.json();
+            if (tData.token && window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative) {
+              await window.Capacitor.Plugins.SinbhaNative.syncSession({
+                token: tData.token,
+                userId: tData.user_id,
+                email: tData.email,
+                emergency_stopped: tData.emergency_stopped,
+                quiet_hours: {
+                  enabled: quietHoursToggle ? (quietHoursToggle.checked ? "true" : "false") : "true",
+                  start: quietStartInput ? quietStartInput.value : "22:00",
+                  end: quietEndInput ? quietEndInput.value : "08:00"
+                }
+              });
+              console.log("Device session synchronized to Android keystore.");
+            }
+          }
+        } catch (e) {
+          console.warn("Native session sync failed:", e);
+        }
+      }
+    }
+
+    async function checkNativeCompanionSettings() {
+      const androidSec = document.getElementById("settingsAndroidSection");
+      const desktopSec = document.getElementById("settingsDesktopSection");
+
+      const isNative = window.Capacitor && window.Capacitor.isNativePlatform();
+      if (isNative) {
+        if (androidSec) androidSec.style.display = "block";
+        if (desktopSec) desktopSec.style.display = "none";
+
+        try {
+          if (window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative) {
+            const perms = await window.Capacitor.Plugins.SinbhaNative.checkPermissions();
+
+            // Notifications
+            const pNotif = document.getElementById("permStatusNotif");
+            const bNotif = document.getElementById("reqNotifBtn");
+            if (pNotif && bNotif) {
+              if (perms.notifications) {
+                pNotif.textContent = "✓ Granted";
+                pNotif.className = "android-perm-status granted";
+                bNotif.textContent = "Enabled";
+                bNotif.className = "android-perm-btn granted-btn";
+              } else {
+                pNotif.textContent = "Action Needed";
+                pNotif.className = "android-perm-status missing";
+              }
+            }
+
+            // Overlay
+            const pOverlay = document.getElementById("permStatusOverlay");
+            const bOverlay = document.getElementById("reqOverlayBtn");
+            if (pOverlay && bOverlay) {
+              if (perms.overlay) {
+                pOverlay.textContent = "✓ Granted";
+                pOverlay.className = "android-perm-status granted";
+                bOverlay.textContent = "Enabled";
+                bOverlay.className = "android-perm-btn granted-btn";
+              } else {
+                pOverlay.textContent = "Action Needed";
+                pOverlay.className = "android-perm-status missing";
+              }
+            }
+
+            // Exact Alarm
+            const pAlarm = document.getElementById("permStatusAlarm");
+            const bAlarm = document.getElementById("reqAlarmBtn");
+            if (pAlarm && bAlarm) {
+              if (perms.exactAlarm) {
+                pAlarm.textContent = "✓ Granted";
+                pAlarm.className = "android-perm-status granted";
+                bAlarm.textContent = "Enabled";
+                bAlarm.className = "android-perm-btn granted-btn";
+              } else {
+                pAlarm.textContent = "Action Needed";
+                pAlarm.className = "android-perm-status missing";
+              }
+            }
+
+            // Battery Optimization
+            const pBatt = document.getElementById("permStatusBattery");
+            const bBatt = document.getElementById("reqBatteryBtn");
+            if (pBatt && bBatt) {
+              if (perms.batteryIgnored) {
+                pBatt.textContent = "✓ Unrestricted";
+                pBatt.className = "android-perm-status granted";
+                bBatt.textContent = "Optimized Excluded";
+                bBatt.className = "android-perm-btn granted-btn";
+              } else {
+                pBatt.textContent = "Action Needed";
+                pBatt.className = "android-perm-status missing";
+              }
+            }
+          }
+        } catch (err) {
+          console.warn("Failed checking native permissions:", err);
+        }
+      }
+    }
+
+    function isOlderVersion(current, minimum) {
+      if (!current || !minimum) return false;
+      const cParts = current.split('.').map(n => parseInt(n, 10) || 0);
+      const mParts = minimum.split('.').map(n => parseInt(n, 10) || 0);
+      for (let i = 0; i < Math.max(cParts.length, mParts.length); i++) {
+        const c = cParts[i] || 0;
+        const m = mParts[i] || 0;
+        if (c < m) return true;
+        if (c > m) return false;
+      }
+      return false;
+    }
+
+    async function checkAppVersionGate() {
+      try {
+        const res = await fetch("/api/app/version-check");
+        if (!res.ok) return;
+        const data = await res.json();
+
+        if (window.Capacitor && window.Capacitor.isNativePlatform()) {
+          if (window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative) {
+            const vInfo = await window.Capacitor.Plugins.SinbhaNative.getAppVersion();
+            const current = vInfo.versionName || "1.0.0";
+            const minRequired = data.min_version_android || "1.0.0";
+            if (isOlderVersion(current, minRequired)) {
+              const gateModal = document.getElementById("appUpdateGateModal");
+              const gateDesc = document.getElementById("appUpdateGateDesc");
+              const gateLink = document.getElementById("appUpdateDownloadLink");
+              if (gateModal) {
+                gateModal.style.display = "flex";
+                if (gateDesc) {
+                  gateDesc.innerHTML = `SINBHA v${minRequired} is required to continue.<br>Your installed app (v${current}) is outdated. Please update now.`;
+                }
+                if (gateLink && data.download_url_android) {
+                  gateLink.href = data.download_url_android;
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("Version check failed:", e);
+      }
+    }
+
+    // Bind Android Settings Button Click Handlers
+    const bindNativeAction = (btnId, permType) => {
+      const btn = document.getElementById(btnId);
+      if (btn) {
+        btn.addEventListener("click", async () => {
+          if (window.Capacitor?.Plugins?.SinbhaNative) {
+            await window.Capacitor.Plugins.SinbhaNative.requestPermission({ type: permType });
+            setTimeout(checkNativeCompanionSettings, 1000);
+          }
+        });
+      }
+    };
+
+    bindNativeAction("reqNotifBtn", "notifications");
+    bindNativeAction("reqOverlayBtn", "overlay");
+    bindNativeAction("reqAlarmBtn", "exactAlarm");
+    bindNativeAction("reqBatteryBtn", "battery");
+    bindNativeAction("reqAutostartBtn", "autostart");
+
+    const testBirdNativeBtn = document.getElementById("testBirdNativeBtn");
+    if (testBirdNativeBtn) {
+      testBirdNativeBtn.addEventListener("click", async () => {
+        if (window.Capacitor?.Plugins?.SinbhaNative) {
+          await window.Capacitor.Plugins.SinbhaNative.testBird({
+            title: "Evening companion check-in 🌸",
+            dueText: "Due right now"
+          });
+          showToast("🕊️ Flying companion bird launched!");
+        } else {
+          showToast("Available on Android APK");
+        }
+      });
+    }
+
+    const syncRemindersNativeBtn = document.getElementById("syncRemindersNativeBtn");
+    if (syncRemindersNativeBtn) {
+      syncRemindersNativeBtn.addEventListener("click", async () => {
+        if (window.Capacitor?.Plugins?.SinbhaNative) {
+          await window.Capacitor.Plugins.SinbhaNative.syncReminders();
+          showToast("🔄 Exact alarms scheduled with system!");
+        }
+      });
+    }
+
+    // Handle deep-link event to open task chat from bird or notification
+    window.addEventListener("sinbha:openTaskChat", (ev) => {
+      const detail = ev.detail || {};
+      const taskId = detail.taskId;
+      if (taskId) {
+        showToast(`Opening chat for task #${taskId} 🌸`);
+        if (messageInput) {
+          messageInput.value = `Tell me about my task #${taskId}`;
+          messageInput.focus();
+        }
+      }
+    });
+
+    // Check settings open hook
+    if (openSettingsBtn) {
+      openSettingsBtn.addEventListener("click", () => {
+        checkNativeCompanionSettings();
+      });
+    }
+
     // Startup: Verify Authentication status first
     checkAuthStatus();
+    checkAppVersionGate();
+
+    // Hook session sync after auth
+    const origShowAppScreen = showAppScreen;
+    showAppScreen = function(user) {
+      origShowAppScreen(user);
+      syncSessionWithNativeApp();
+      checkNativeCompanionSettings();
+    };
 
     // Periodic reminder checker every 60 seconds (only fires if logged in)
     setInterval(() => {
       if (currentUser) {
         checkDueReminders();
+        syncSessionWithNativeApp();
       }
     }, 60000);
   });

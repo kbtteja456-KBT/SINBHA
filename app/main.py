@@ -794,6 +794,91 @@ async def reminder_snooze_endpoint(payload: ReminderSnoozeRequest, user: dict = 
     ok = db.snooze_task(user["id"], payload.task_id, payload.minutes)
     return {"success": ok}
 
+@app.get("/api/reminders/upcoming")
+async def get_upcoming_reminders_endpoint(user: dict = Depends(get_current_user)):
+    """Returns upcoming pending reminders for native Android exact alarm scheduling."""
+    user_id = user["id"]
+    emergency_stopped = db.get_emergency_stopped(user_id)
+    settings = db.get_all_settings(user_id)
+    if emergency_stopped:
+        return {
+            "reminders": [],
+            "emergency_stopped": True,
+            "settings": settings
+        }
+
+    pending_tasks = [t for t in db.get_all_tasks(user_id) if t["status"] == "pending"]
+    reminders_list = []
+    for t in pending_tasks:
+        snooze_str = t.get("snoozed_until")
+        if snooze_str:
+            reminders_list.append({
+                "task_id": t["id"],
+                "task_title": t["title"],
+                "reminder_id": f"snooze_{t['id']}",
+                "time": snooze_str,
+                "label": f"Snoozed: {t['title']}",
+                "is_explicit": True
+            })
+        for r in (t.get("reminders") or []):
+            r_id = r.get("id")
+            r_time = r.get("time")
+            fired_ids = set(t.get("fired_reminders") or [])
+            if r_id and r_id not in fired_ids and r_time:
+                reminders_list.append({
+                    "task_id": t["id"],
+                    "task_title": t["title"],
+                    "reminder_id": r_id,
+                    "time": r_time,
+                    "label": r.get("label", f"Reminder: {t['title']}"),
+                    "is_explicit": True
+                })
+        due_d = t.get("due_date")
+        due_t = t.get("due_time")
+        if due_d and not (t.get("reminders") or []):
+            reminders_list.append({
+                "task_id": t["id"],
+                "task_title": t["title"],
+                "reminder_id": None,
+                "time": f"{due_d} {due_t if due_t else '09:00'}",
+                "label": f"Due: {t['title']}",
+                "is_explicit": False
+            })
+
+    return {
+        "reminders": reminders_list,
+        "emergency_stopped": False,
+        "settings": settings
+    }
+
+@app.get("/api/auth/token")
+async def get_auth_token_endpoint(request: Request, user: dict = Depends(get_current_user)):
+    """Returns current active session token for native app keystore synchronization."""
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    if not token:
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header[7:].strip()
+    return {
+        "token": token,
+        "user_id": user["id"],
+        "email": user["email"],
+        "emergency_stopped": user.get("emergency_stopped", False)
+    }
+
+@app.get("/api/app/version-check")
+async def app_version_check_endpoint():
+    """Requirement 5: Minimum supported version check for Android and Windows apps."""
+    return {
+        "min_version_android": os.getenv("MIN_APP_VERSION_ANDROID", "1.0.0"),
+        "latest_version_android": os.getenv("LATEST_APP_VERSION_ANDROID", "1.0.0"),
+        "min_version_desktop": os.getenv("MIN_APP_VERSION_DESKTOP", "1.0.0"),
+        "latest_version_desktop": os.getenv("LATEST_APP_VERSION_DESKTOP", "1.0.1"),
+        "download_url_android": "https://github.com/kbtteja456-KBT/SINBHA/releases/latest",
+        "download_url_desktop": "https://github.com/kbtteja456-KBT/SINBHA/releases/latest",
+        "message": "A newer version of SINBHA is available. Please update to continue enjoying your companion."
+    }
+
 @app.get("/api/settings")
 async def get_settings_endpoint(user: dict = Depends(get_current_user)):
     """Returns settings for the logged-in user."""

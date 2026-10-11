@@ -1,4 +1,4 @@
-﻿// ========================================================
+// ========================================================
 // SINBHA - Electron Desktop Application (Windows)
 // Connects to hosted cloud backend (https://sinbha-backend.onrender.com)
 // Provides transparent click-through bird overlay, system tray,
@@ -356,6 +356,46 @@ function setupAutoUpdater() {
   }, config.UPDATE_CHECK_INTERVAL_MS);
 }
 
+// ----------------- Minimum Version Gate (Requirement 5) -----------------
+function isOlderVersion(current, minimum) {
+  if (!current || !minimum) return false;
+  const cParts = current.split('.').map(n => parseInt(n, 10) || 0);
+  const mParts = minimum.split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(cParts.length, mParts.length); i++) {
+    const c = cParts[i] || 0;
+    const m = mParts[i] || 0;
+    if (c < m) return true;
+    if (c > m) return false;
+  }
+  return false;
+}
+
+async function checkMinimumSupportedVersion() {
+  try {
+    const res = await fetch(`${config.BACKEND_URL}/api/app/version-check`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    const currentVersion = app.getVersion();
+    if (data.min_version_desktop && isOlderVersion(currentVersion, data.min_version_desktop)) {
+      const choice = await dialog.showMessageBox({
+        type: 'warning',
+        title: 'Update Required 🌸',
+        message: 'Please update SINBHA to continue.',
+        detail: `Your version (${currentVersion}) is no longer supported. Minimum required version is ${data.min_version_desktop}.`,
+        buttons: ['Download Update ⚡', 'Close SINBHA'],
+        defaultId: 0,
+        cancelId: 1
+      });
+      if (choice.response === 0 && data.download_url_desktop) {
+        shell.openExternal(data.download_url_desktop);
+      }
+      app.exit(0);
+    }
+  } catch (e) {
+    // Graceful network timeout fallback
+  }
+}
+
 // ----------------- IPC Handlers -----------------
 function setupIpcHandlers() {
   // Click-through toggler
@@ -473,6 +513,7 @@ if (!gotTheLock) {
     // Auto-update & What's New checks
     setupAutoUpdater();
     checkWhatsNew();
+    checkMinimumSupportedVersion();
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
