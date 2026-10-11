@@ -72,6 +72,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const birdChatBtn = document.getElementById("birdChatBtn");
 
   const persistenceSelect = document.getElementById("persistenceSelect");
+  const countrySelect = document.getElementById("countrySelect");
   const quietHoursToggle = document.getElementById("quietHoursToggle");
   const quietTimePickerRow = document.getElementById("quietTimePickerRow");
   const quietStartInput = document.getElementById("quietStartInput");
@@ -79,10 +80,45 @@ document.addEventListener("DOMContentLoaded", () => {
   const dndToggle = document.getElementById("dndToggle");
   const startWithWindowsToggle = document.getElementById("startWithWindowsToggle");
 
+  // Step 9 Auth Elements
+  const authScreen = document.getElementById("authScreen");
+  const appContainer = document.getElementById("appContainer");
+  const tabLoginBtn = document.getElementById("tabLoginBtn");
+  const tabSignupBtn = document.getElementById("tabSignupBtn");
+  const authAlert = document.getElementById("authAlert");
+  const loginForm = document.getElementById("loginForm");
+  const signupForm = document.getElementById("signupForm");
+  const loginEmail = document.getElementById("loginEmail");
+  const loginPassword = document.getElementById("loginPassword");
+  const signupEmail = document.getElementById("signupEmail");
+  const signupPassword = document.getElementById("signupPassword");
+  const signupAgeCheck = document.getElementById("signupAgeCheck");
+  const signupTermsCheck = document.getElementById("signupTermsCheck");
+  const userHeaderPill = document.getElementById("userHeaderPill");
+  const headerUserEmail = document.getElementById("headerUserEmail");
+  const headerLogoutBtn = document.getElementById("headerLogoutBtn");
+
+  // Terms & Privacy Modals
+  const openTermsLink = document.getElementById("openTermsLink");
+  const openPrivacyLink = document.getElementById("openPrivacyLink");
+  const termsModal = document.getElementById("termsModal");
+  const closeTermsBtn = document.getElementById("closeTermsBtn");
+  const confirmTermsCloseBtn = document.getElementById("confirmTermsCloseBtn");
+  const privacyModal = document.getElementById("privacyModal");
+  const closePrivacyBtn = document.getElementById("closePrivacyBtn");
+  const confirmPrivacyCloseBtn = document.getElementById("confirmPrivacyCloseBtn");
+
+  // Delete Account Confirmation Modal
+  const openDeleteAccountConfirmBtn = document.getElementById("openDeleteAccountConfirmBtn");
+  const deleteAccountConfirmModal = document.getElementById("deleteAccountConfirmModal");
+  const cancelDeleteAccountBtn = document.getElementById("cancelDeleteAccountBtn");
+  const confirmDeleteAccountBtn = document.getElementById("confirmDeleteAccountBtn");
+
   // Toast notification
   const toast = document.getElementById("toast");
 
   // Global state
+  let currentUser = null;
   let isDevMode = false;
   let activeReminderTask = null;
   let activeReminderId = null;
@@ -556,6 +592,10 @@ document.addEventListener("DOMContentLoaded", () => {
   async function loadChatHistory() {
     try {
       const res = await fetch("/api/messages");
+      if (res.status === 401) {
+        showAuthScreen();
+        return;
+      }
       if (!res.ok) return;
       const data = await res.json();
       
@@ -583,6 +623,10 @@ document.addEventListener("DOMContentLoaded", () => {
   async function loadTasks() {
     try {
       const res = await fetch("/api/tasks");
+      if (res.status === 401) {
+        showAuthScreen();
+        return;
+      }
       if (!res.ok) return;
       const data = await res.json();
       const tasks = data.tasks || [];
@@ -874,6 +918,12 @@ document.addEventListener("DOMContentLoaded", () => {
         })
       });
 
+      if (response.status === 401) {
+        showToast("Your session has expired. Please log in.");
+        showAuthScreen();
+        return;
+      }
+
       if (!response.ok) {
         throw new Error("Server responded with error");
       }
@@ -1120,6 +1170,9 @@ document.addEventListener("DOMContentLoaded", () => {
       if (persistenceSelect && s.persistence) {
         persistenceSelect.value = s.persistence;
       }
+      if (countrySelect && s.country) {
+        countrySelect.value = s.country;
+      }
       if (quietHoursToggle && s.quiet_hours_enabled !== undefined) {
         const isEnabled = (s.quiet_hours_enabled === "true" || s.quiet_hours_enabled === true);
         quietHoursToggle.checked = isEnabled;
@@ -1153,6 +1206,7 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       const payload = {
         persistence: persistenceSelect ? persistenceSelect.value : "normal",
+        country: countrySelect ? countrySelect.value : "US",
         quiet_hours_enabled: quietHoursToggle ? (quietHoursToggle.checked ? "true" : "false") : "true",
         quiet_hours_start: quietStartInput ? quietStartInput.value : "22:00",
         quiet_hours_end: quietEndInput ? quietEndInput.value : "08:00"
@@ -1168,6 +1222,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   if (persistenceSelect) persistenceSelect.addEventListener("change", saveSettings);
+  if (countrySelect) countrySelect.addEventListener("change", saveSettings);
   if (quietHoursToggle) {
     quietHoursToggle.addEventListener("change", () => {
       if (quietTimePickerRow) {
@@ -1568,15 +1623,302 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Initialize
-  loadChatHistory();
-  loadTasks();
-  loadSettings();
-  checkAppInfo();
+  // ========================================================
+  // STEP 9: AUTHENTICATION, USER SESSION & ACCOUNT CONTROLLER
+  // ========================================================
 
-  // Check reminders immediately upon opening the app (Requirement 4: missed reminders)
-  checkDueReminders();
+  function showAuthAlert(msg, type = "error") {
+    if (!authAlert) return;
+    authAlert.textContent = msg;
+    authAlert.className = `auth-alert ${type}`;
+    authAlert.style.display = "flex";
+  }
 
-  // Periodic reminder checker every 60 seconds (Requirement 1)
-  setInterval(checkDueReminders, 60000);
+  function hideAuthAlert() {
+    if (!authAlert) return;
+    authAlert.style.display = "none";
+    authAlert.textContent = "";
+  }
+
+  function showAuthScreen() {
+    currentUser = null;
+    hideBird();
+    if (appContainer) appContainer.style.display = "none";
+    if (authScreen) authScreen.style.display = "flex";
+    if (userHeaderPill) userHeaderPill.style.display = "none";
+    if (devMemoryBtn) devMemoryBtn.style.display = "none";
+    hideAuthAlert();
+  }
+
+  function showAppScreen(user) {
+    currentUser = user;
+    if (authScreen) authScreen.style.display = "none";
+    if (appContainer) appContainer.style.display = "flex";
+    if (userHeaderPill) {
+      userHeaderPill.style.display = "inline-flex";
+      if (headerUserEmail) headerUserEmail.textContent = user.email;
+    }
+
+    // Load user data
+    checkAppInfo();
+    loadChatHistory();
+    loadTasks();
+    loadSettings();
+    checkDueReminders();
+  }
+
+  async function checkAuthStatus() {
+    try {
+      const res = await fetch("/api/auth/me");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.user) {
+          showAppScreen(data.user);
+          return;
+        }
+      }
+      showAuthScreen();
+    } catch (e) {
+      console.error("Auth check failed:", e);
+      showAuthScreen();
+    }
+  }
+
+  // Auth Tab Switchers
+  if (tabLoginBtn && tabSignupBtn) {
+    tabLoginBtn.addEventListener("click", () => {
+      tabLoginBtn.classList.add("active");
+      tabSignupBtn.classList.remove("active");
+      if (loginForm) loginForm.style.display = "flex";
+      if (signupForm) signupForm.style.display = "none";
+      hideAuthAlert();
+    });
+
+    tabSignupBtn.addEventListener("click", () => {
+      tabSignupBtn.classList.add("active");
+      tabLoginBtn.classList.remove("active");
+      if (signupForm) signupForm.style.display = "flex";
+      if (loginForm) loginForm.style.display = "none";
+      hideAuthAlert();
+    });
+  }
+
+  // Login Form Submission
+  if (loginForm) {
+    loginForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      hideAuthAlert();
+
+      const email = loginEmail ? loginEmail.value.trim() : "";
+      const password = loginPassword ? loginPassword.value : "";
+      if (!email || !password) {
+        showAuthAlert("Please enter both email and password.");
+        return;
+      }
+
+      const submitBtn = document.getElementById("loginSubmitBtn");
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Logging In... 🌸";
+      }
+
+      try {
+        const res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password })
+        });
+        const data = await res.json();
+
+        if (res.ok && data.user) {
+          showToast(`🌸 Welcome back, ${data.user.email}!`);
+          showAppScreen(data.user);
+        } else {
+          showAuthAlert(data.detail || "Invalid login credentials. Please try again.");
+        }
+      } catch (err) {
+        console.error(err);
+        showAuthAlert("Could not connect to the SINBHA server. Please ensure the backend is running.");
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Log In 🌸";
+        }
+      }
+    });
+  }
+
+  // Signup Form Submission
+  if (signupForm) {
+    signupForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      hideAuthAlert();
+
+      const email = signupEmail ? signupEmail.value.trim() : "";
+      const password = signupPassword ? signupPassword.value : "";
+      const ageChecked = signupAgeCheck ? signupAgeCheck.checked : false;
+      const termsChecked = signupTermsCheck ? signupTermsCheck.checked : false;
+
+      if (!ageChecked) {
+        showAuthAlert("You must confirm that you are 18 years of age or older.");
+        return;
+      }
+      if (!termsChecked) {
+        showAuthAlert("You must agree to the Terms of Service and Privacy Policy.");
+        return;
+      }
+      if (!email || !password) {
+        showAuthAlert("Please provide email and password.");
+        return;
+      }
+      if (password.length < 8) {
+        showAuthAlert("Password must be at least 8 characters long.");
+        return;
+      }
+
+      const submitBtn = document.getElementById("signupSubmitBtn");
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Creating Account... 🌸";
+      }
+
+      try {
+        const res = await fetch("/api/auth/signup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email,
+            password,
+            is_18_or_older: ageChecked,
+            agree_terms: termsChecked
+          })
+        });
+        const data = await res.json();
+
+        if (res.ok && data.user) {
+          showToast(`🌸 Account created! Welcome to SINBHA, ${data.user.email}!`);
+          showAppScreen(data.user);
+        } else {
+          showAuthAlert(data.detail || "Could not complete signup. Please try another email.");
+        }
+      } catch (err) {
+        console.error(err);
+        showAuthAlert("Could not connect to the SINBHA server. Please ensure the backend is running.");
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Create Account 🌸";
+        }
+      }
+    });
+  }
+
+  // Logout Handler
+  async function performLogout() {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch (e) {
+      console.error(e);
+    }
+    showToast("Logged out 🌸");
+    showAuthScreen();
+  }
+
+  if (headerLogoutBtn) {
+    headerLogoutBtn.addEventListener("click", performLogout);
+  }
+
+  // Terms & Privacy Modals
+  if (openTermsLink) {
+    openTermsLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      if (termsModal) termsModal.style.display = "flex";
+    });
+  }
+  if (closeTermsBtn) {
+    closeTermsBtn.addEventListener("click", () => {
+      if (termsModal) termsModal.style.display = "none";
+    });
+  }
+  if (confirmTermsCloseBtn) {
+    confirmTermsCloseBtn.addEventListener("click", () => {
+      if (termsModal) termsModal.style.display = "none";
+    });
+  }
+
+  if (openPrivacyLink) {
+    openPrivacyLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      if (privacyModal) privacyModal.style.display = "flex";
+    });
+  }
+  if (closePrivacyBtn) {
+    closePrivacyBtn.addEventListener("click", () => {
+      if (privacyModal) privacyModal.style.display = "none";
+    });
+  }
+  if (confirmPrivacyCloseBtn) {
+    confirmPrivacyCloseBtn.addEventListener("click", () => {
+      if (privacyModal) privacyModal.style.display = "none";
+    });
+  }
+
+  // Delete Account Permanently (Requirement 8)
+  if (openDeleteAccountConfirmBtn) {
+    openDeleteAccountConfirmBtn.addEventListener("click", () => {
+      if (deleteAccountConfirmModal) deleteAccountConfirmModal.style.display = "flex";
+    });
+  }
+
+  if (cancelDeleteAccountBtn) {
+    cancelDeleteAccountBtn.addEventListener("click", () => {
+      if (deleteAccountConfirmModal) deleteAccountConfirmModal.style.display = "none";
+    });
+  }
+
+  if (confirmDeleteAccountBtn) {
+    confirmDeleteAccountBtn.addEventListener("click", async () => {
+      try {
+        confirmDeleteAccountBtn.disabled = true;
+        confirmDeleteAccountBtn.textContent = "Deleting account...";
+
+        const res = await fetch("/api/account/delete", { method: "POST" });
+        if (res.ok) {
+          if (deleteAccountConfirmModal) deleteAccountConfirmModal.style.display = "none";
+          if (settingsModal) settingsModal.style.display = "none";
+          showToast("🌸 Account and all data deleted permanently");
+          currentUser = null;
+          showAuthScreen();
+        } else {
+          const d = await res.json().catch(() => ({}));
+          showToast(d.detail || "Could not delete account");
+        }
+      } catch (err) {
+        console.error(err);
+        showToast("Error deleting account");
+      } finally {
+        confirmDeleteAccountBtn.disabled = false;
+        confirmDeleteAccountBtn.textContent = "Yes, Delete Account & All Data";
+      }
+    });
+  }
+
+  // Escape key closes terms / privacy / delete modals
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      if (termsModal) termsModal.style.display = "none";
+      if (privacyModal) privacyModal.style.display = "none";
+      if (deleteAccountConfirmModal) deleteAccountConfirmModal.style.display = "none";
+    }
+  });
+
+  // Startup: Verify Authentication status first
+  checkAuthStatus();
+
+  // Periodic reminder checker every 60 seconds (only fires if logged in)
+  setInterval(() => {
+    if (currentUser) {
+      checkDueReminders();
+    }
+  }, 60000);
 });

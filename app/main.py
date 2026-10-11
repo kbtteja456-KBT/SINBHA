@@ -2,7 +2,7 @@ import os
 import socket
 import re
 import datetime
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Request, Response, status
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
@@ -27,8 +27,35 @@ from app import database as db
 
 app = FastAPI(title="SINBHA - Personal AI Companion")
 
-# Emergency stop state tracker
-emergency_stop_triggered = False
+SESSION_COOKIE_NAME = "sinbha_session"
+
+# ----------------- Request Models -----------------
+
+class SignupRequest(BaseModel):
+    email: str
+    password: str
+    is_18: Optional[bool] = None
+    is_18_or_older: Optional[bool] = None
+    agreed_terms: Optional[bool] = None
+    agree_terms: Optional[bool] = None
+
+    def get_is_18(self) -> bool:
+        if self.is_18 is not None:
+            return self.is_18
+        if self.is_18_or_older is not None:
+            return self.is_18_or_older
+        return False
+
+    def get_agreed_terms(self) -> bool:
+        if self.agreed_terms is not None:
+            return self.agreed_terms
+        if self.agree_terms is not None:
+            return self.agree_terms
+        return False
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
 
 class ChatRequest(BaseModel):
     message: str
@@ -58,6 +85,7 @@ class SettingsUpdateRequest(BaseModel):
     quiet_hours_enabled: str = "true"
     quiet_hours_start: str = "22:00"
     quiet_hours_end: str = "08:00"
+    country: Optional[str] = "US"
 
 class TaskStatusUpdateRequest(BaseModel):
     status: str  # "pending" or "completed"
@@ -80,17 +108,145 @@ def get_local_ip():
     except Exception:
         return "127.0.0.1"
 
-# ----------------- Chat & Message Endpoints -----------------
+def is_dev_mode_active() -> bool:
+    """Checks if DEV_MODE is enabled in environment."""
+    return os.getenv("DEV_MODE", "false").strip().lower() in ("true", "1", "yes")
+
+# ----------------- Authentication & Session Dependency (Step 9) -----------------
+
+def get_client_ip(request: Request) -> str:
+    """Extracts client IP address for rate limiting."""
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "127.0.0.1"
+
+async def get_current_user_optional(request: Request) -> Optional[dict]:
+    """Retrieves logged-in user if session is valid; else returns None."""
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    if not token:
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header[7:].strip()
+    if not token:
+        return None
+    return db.get_user_by_session(token)
+
+async def get_current_user(request: Request) -> dict:
+    """Dependency that enforces authenticated user. Rejects with 401 if not logged in."""
+    user = await get_current_user_optional(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required. Please log in.")
+    return user
+
+# ----------------- Auth Endpoints (Step 9) -----------------
+
+@app.post("/api/auth/signup")
+async def signup_endpoint(payload: SignupRequest, response: Response):
+    """
+    Requirement 1 & 7: User registration with email + password (min 8 chars, argon2 hash),
+    checkboxes for 18+ and Terms/Privacy agreement.
+    Requirement 5: Migrates existing unassigned data to the first created account.
+    """
+    try:
+        user = db.create_user(
+            email=payload.email,
+            password=payload.password,
+            is_18=payload.get_is_18(),
+            agreed_terms=payload.get_agreed_terms()
+        )
+        token = db.create_session(user["id"])
+        response.set_cookie(
+            key=SESSION_COOKIE_NAME,
+            value=token,
+            httponly=True,
+            samesite="lax",
+            max_age=14 * 86400,
+            path="/"
+        )
+        return {
+            "success": True,
+            "user": user,
+            "message": "Account created successfully! 🌸 Welcome to SINBHA."
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create account: {e}")
+
+@app.post("/api/auth/login")
+async def login_endpoint(payload: LoginRequest, request: Request, response: Response):
+    """
+    Requirement 1 & 2: User login with argon2 password verification,
+    secure sessions (httpOnly, SameSite), and rate limiting (lockout on 5 failures).
+    """
+    client_ip = get_client_ip(request)
+    try:
+        user = db.authenticate_user(payload.email, payload.password, client_ip=client_ip)
+        token = db.create_session(user["id"])
+        response.set_cookie(
+            key=SESSION_COOKIE_NAME,
+            value=token,
+            httponly=True,
+            samesite="lax",
+            max_age=14 * 86400,
+            path="/"
+        )
+        return {
+            "success": True,
+            "user": user,
+            "message": "Welcome back! 🌸"
+        }
+    except ValueError as e:
+        msg = str(e)
+        if "Too many failed" in msg or "lockout" in msg.lower() or "try again after" in msg.lower():
+            raise HTTPException(status_code=429, detail=msg)
+        raise HTTPException(status_code=401, detail=msg)
+
+@app.post("/api/auth/logout")
+async def logout_endpoint(request: Request, response: Response):
+    """Logs out user by destroying session token."""
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    if token:
+        db.delete_session(token)
+    response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
+    return {"success": True, "message": "Logged out successfully 🌸"}
+
+@app.get("/api/auth/me")
+async def get_me_endpoint(request: Request):
+    """Returns currently logged-in user info or logged_in=False."""
+    user = await get_current_user_optional(request)
+    if not user:
+        return {"logged_in": False, "user": None}
+    return {
+        "logged_in": True,
+        "user": user
+    }
+
+@app.post("/api/account/delete")
+async def delete_account_endpoint(response: Response, user: dict = Depends(get_current_user)):
+    """
+    Requirement 8: 'Delete my account and all my data' with permanent removal.
+    """
+    user_id = user["id"]
+    db.log_audit(user_id, "ACCOUNT_DELETED", f"User permanently deleted account '{user['email']}'")
+    db.delete_user_account(user_id)
+    response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
+    return {"success": True, "status": "ok", "message": "Your account and all associated data have been permanently erased."}
+
+# ----------------- Chat & Message Endpoints (Per-User) -----------------
 
 @app.get("/api/messages")
-async def get_messages_endpoint():
-    """Returns stored conversation history so UI restores on reload."""
-    msgs = db.get_all_messages()
-    return {"messages": msgs, "emergency_stopped": emergency_stop_triggered}
+async def get_messages_endpoint(user: dict = Depends(get_current_user)):
+    """Returns stored conversation history for the logged-in user."""
+    user_id = user["id"]
+    msgs = db.get_all_messages(user_id)
+    stopped = db.get_emergency_stopped(user_id)
+    return {"messages": msgs, "emergency_stopped": stopped}
 
 @app.post("/api/chat")
-async def chat_endpoint(payload: ChatRequest):
-    global emergency_stop_triggered
+async def chat_endpoint(payload: ChatRequest, user: dict = Depends(get_current_user)):
+    user_id = user["id"]
     user_msg = payload.message.strip()
     
     if not user_msg:
@@ -99,18 +255,17 @@ async def chat_endpoint(payload: ChatRequest):
             "proposal": None
         })
     
-    # RULE 3 & 7: STOP check comes FIRST
+    # RULE 3 & 7: STOP check comes FIRST (Per-User)
     if user_msg.upper() == "STOP":
-        emergency_stop_triggered = True
-        db.save_message("user", user_msg)
+        db.set_emergency_stopped(user_id, True)
+        db.save_message(user_id, "user", user_msg)
         
-        # Requirement 6 & 7: If STOP is triggered, cancel any pending proposal or card
-        db.cancel_pending_proposal(reason="Emergency STOP command received in chat")
-        db.cancel_pending_task_action(reason="Emergency STOP command received in chat")
+        db.cancel_pending_proposal(user_id, reason="Emergency STOP command received in chat")
+        db.cancel_pending_task_action(user_id, reason="Emergency STOP command received in chat")
         
         stop_reply = "🛑 STOP command received. All operations halted immediately. Type any message or click 'Resume Chat' to continue whenever you're ready 🌸"
-        db.save_message("assistant", stop_reply)
-        db.log_audit("STOP_TRIGGERED", "User commanded STOP in chat.")
+        db.save_message(user_id, "assistant", stop_reply)
+        db.log_audit(user_id, "STOP_TRIGGERED", "User commanded STOP in chat.")
         return JSONResponse({
             "reply": stop_reply,
             "proposal": None,
@@ -118,36 +273,36 @@ async def chat_endpoint(payload: ChatRequest):
         })
 
     # If stopped previously and user sends a normal message, automatically resume
-    if emergency_stop_triggered:
-        emergency_stop_triggered = False
-        db.log_audit("STOP_RESUMED", "Chat resumed by normal message.")
+    if db.get_emergency_stopped(user_id):
+        db.set_emergency_stopped(user_id, False)
+        db.log_audit(user_id, "STOP_RESUMED", "Chat resumed by normal message.")
 
     # 1. Check for pending task action confirmation in chat (complete or delete)
-    pending_task_act = db.get_pending_task_action()
+    pending_task_act = db.get_pending_task_action(user_id)
     if pending_task_act:
         lower_msg = user_msg.lower()
         is_confirm = bool(re.search(r"^(yes|yeah|yep|yup|confirm|sure|mark\s+it|do\s+it|delete\s+it|remove\s+it|please\s+do)\b", lower_msg))
         is_cancel = bool(re.search(r"^(no|nope|cancel|don't|drop\s+it|nevermind|nah|mat\s+karo)\b", lower_msg))
 
         if is_confirm:
-            res = db.confirm_pending_task_action()
+            res = db.confirm_pending_task_action(user_id)
             if res:
-                db.save_message("user", user_msg)
+                db.save_message(user_id, "user", user_msg)
                 if res["action_type"] == "task_complete":
                     reply_msg = f"Woohoo! 🎉 Marked '{res['task_title']}' as completed! Amazing job! 🌸"
                 else:
                     reply_msg = f"I've removed '{res['task_title']}' from your tasks 🌸"
-                db.save_message("assistant", reply_msg)
+                db.save_message(user_id, "assistant", reply_msg)
                 return JSONResponse({
                     "reply": reply_msg,
                     "proposal": None,
                     "task_action_performed": res
                 })
         elif is_cancel:
-            db.cancel_pending_task_action(reason="User cancelled in chat")
-            db.save_message("user", user_msg)
+            db.cancel_pending_task_action(user_id, reason="User cancelled in chat")
+            db.save_message(user_id, "user", user_msg)
             reply_msg = "No problem at all! Kept it just as it is 🌸"
-            db.save_message("assistant", reply_msg)
+            db.save_message(user_id, "assistant", reply_msg)
             return JSONResponse({
                 "reply": reply_msg,
                 "proposal": None,
@@ -155,28 +310,28 @@ async def chat_endpoint(payload: ChatRequest):
             })
 
     # 2. Check for pending task proposal confirmation in chat ("confirm", "yes", "save it" / "cancel", "no")
-    pending_task = db.get_pending_proposal()
+    pending_task = db.get_pending_proposal(user_id)
     if pending_task:
         lower_msg = user_msg.lower()
         is_task_confirm = bool(re.search(r"^(yes|yeah|yep|yup|confirm|sure|save\s+it|save\s+task|please\s+do|do\s+it|add\s+it)\b", lower_msg))
         is_task_cancel = bool(re.search(r"^(no|nope|cancel|don't\s+save|drop\s+it|nevermind|nah|mat\s+karo)\b", lower_msg))
 
         if is_task_confirm:
-            confirmed = db.confirm_pending_proposal()
+            confirmed = db.confirm_pending_proposal(user_id)
             if confirmed:
-                db.save_message("user", user_msg)
+                db.save_message(user_id, "user", user_msg)
                 reply_msg = f"Saved! I've added '{confirmed['title']}' to your tasks. You've got this! 🌸"
-                db.save_message("assistant", reply_msg)
+                db.save_message(user_id, "assistant", reply_msg)
                 return JSONResponse({
                     "reply": reply_msg,
                     "proposal": None,
                     "task_confirmed": confirmed
                 })
         elif is_task_cancel:
-            db.cancel_pending_proposal(reason="User cancelled in chat")
-            db.save_message("user", user_msg)
+            db.cancel_pending_proposal(user_id, reason="User cancelled in chat")
+            db.save_message(user_id, "user", user_msg)
             reply_msg = "No problem at all! I dropped that task proposal 🌸"
-            db.save_message("assistant", reply_msg)
+            db.save_message(user_id, "assistant", reply_msg)
             return JSONResponse({
                 "reply": reply_msg,
                 "proposal": None,
@@ -184,7 +339,7 @@ async def chat_endpoint(payload: ChatRequest):
             })
 
     # 3. Check for pending memory fact deletion confirmation
-    pending_mem = db.get_pending_action()
+    pending_mem = db.get_pending_action(user_id)
     if pending_mem and pending_mem["action_type"] == "forget_fact":
         lower_msg = user_msg.lower()
         is_yes = bool(re.search(r"^(yes|yeah|yep|yup|sure|ok|okay|confirm|please|do it|forget it|delete it|ha|haan|yes please|definitely|go ahead)\b", lower_msg))
@@ -192,11 +347,11 @@ async def chat_endpoint(payload: ChatRequest):
 
         if is_yes:
             target_id = pending_mem["target_id"]
-            db.save_message("user", user_msg)
-            db.delete_fact(target_id)  # Logs FACT_DELETED in audit_log
-            db.clear_pending_action()
+            db.save_message(user_id, "user", user_msg)
+            db.delete_fact(user_id, target_id)
+            db.clear_pending_action(user_id)
             reply = "I've forgotten that for you! It's wiped from my memory 🌸"
-            db.save_message("assistant", reply)
+            db.save_message(user_id, "assistant", reply)
             return JSONResponse({
                 "reply": reply,
                 "proposal": None,
@@ -204,28 +359,28 @@ async def chat_endpoint(payload: ChatRequest):
                 "deleted_fact_id": target_id
             })
         elif is_no:
-            db.save_message("user", user_msg)
-            db.clear_pending_action()
+            db.save_message(user_id, "user", user_msg)
+            db.clear_pending_action(user_id)
             reply = "No problem at all! I'll keep remembering it 🌸"
-            db.save_message("assistant", reply)
+            db.save_message(user_id, "assistant", reply)
             return JSONResponse({
                 "reply": reply,
                 "proposal": None,
                 "action_performed": "cancelled"
             })
         else:
-            db.clear_pending_action()
+            db.clear_pending_action(user_id)
 
     # 4. Check for task completion or deletion intent through chat (Step 6)
-    all_current_tasks = db.get_all_tasks()
+    all_current_tasks = db.get_all_tasks(user_id)
     task_intent = detect_task_chat_intent(user_msg, all_current_tasks)
     
     if task_intent["intent"] == "complete":
         matched = task_intent["task"]
-        act_id = db.set_pending_task_action("task_complete", matched["id"], matched["title"])
-        db.save_message("user", user_msg)
+        db.set_pending_task_action(user_id, "task_complete", matched["id"], matched["title"])
+        db.save_message(user_id, "user", user_msg)
         reply = f"Woohoo! That's awesome! 🎉 Should I mark '{matched['title']}' as done?"
-        db.save_message("assistant", reply)
+        db.save_message(user_id, "assistant", reply)
         return JSONResponse({
             "reply": reply,
             "proposal": {
@@ -237,10 +392,10 @@ async def chat_endpoint(payload: ChatRequest):
         })
     elif task_intent["intent"] == "delete":
         matched = task_intent["task"]
-        act_id = db.set_pending_task_action("task_delete", matched["id"], matched["title"])
-        db.save_message("user", user_msg)
+        db.set_pending_task_action(user_id, "task_delete", matched["id"], matched["title"])
+        db.save_message(user_id, "user", user_msg)
         reply = f"Are you sure you want me to remove '{matched['title']}' from your tasks? 🌸"
-        db.save_message("assistant", reply)
+        db.save_message(user_id, "assistant", reply)
         return JSONResponse({
             "reply": reply,
             "proposal": {
@@ -251,32 +406,32 @@ async def chat_endpoint(payload: ChatRequest):
             }
         })
     elif task_intent["intent"] == "ambiguous_complete":
-        db.save_message("user", user_msg)
+        db.save_message(user_id, "user", user_msg)
         c_names = ", ".join([f"'{c['title']}'" for c in task_intent["candidates"]])
         reply = f"I found a few matching tasks: {c_names}. Which one did you finish? 🌸"
-        db.save_message("assistant", reply)
+        db.save_message(user_id, "assistant", reply)
         return JSONResponse({"reply": reply, "proposal": None})
     elif task_intent["intent"] == "ambiguous_delete":
-        db.save_message("user", user_msg)
+        db.save_message(user_id, "user", user_msg)
         c_names = ", ".join([f"'{c['title']}'" for c in task_intent["candidates"]])
         reply = f"I found a few matching tasks: {c_names}. Which one would you like to delete? 🌸"
-        db.save_message("assistant", reply)
+        db.save_message(user_id, "assistant", reply)
         return JSONResponse({"reply": reply, "proposal": None})
 
     # 5. Check for memory forget request ("forget X", "forget that", "forget my name")
-    facts = db.get_all_facts()
+    facts = db.get_all_facts(user_id)
     if is_forget_intent(user_msg):
-        db.save_message("user", user_msg)
+        db.save_message(user_id, "user", user_msg)
         if not facts:
             reply = "I don't have anything saved in my memory to forget right now! 🌸"
-            db.save_message("assistant", reply)
+            db.save_message(user_id, "assistant", reply)
             return JSONResponse({"reply": reply, "proposal": None})
 
         target_fact = find_target_fact_to_forget(user_msg, facts)
-        db.set_pending_action("forget_fact", target_id=target_fact["id"], target_text=target_fact["fact"])
+        db.set_pending_action(user_id, "forget_fact", target_id=target_fact["id"], target_text=target_fact["fact"])
         
         reply = f"Are you sure you want me to forget that '{target_fact['fact']}'? Just reply \"yes\" or confirm to remove it 🌸"
-        db.save_message("assistant", reply)
+        db.save_message(user_id, "assistant", reply)
         return JSONResponse({
             "reply": reply,
             "proposal": {
@@ -288,20 +443,20 @@ async def chat_endpoint(payload: ChatRequest):
         })
 
     # 6. Check for fact correction ("my name is Ravi, not Rahul")
-    target_id, updated_text, old_text = detect_fact_correction(user_msg, facts)
+    target_id, updated_text, _old_text = detect_fact_correction(user_msg, facts)
     if target_id and updated_text:
-        db.save_message("user", user_msg)
-        db.update_fact(target_id, updated_text)  # Logs FACT_UPDATED in audit_log
+        db.save_message(user_id, "user", user_msg)
+        db.update_fact(user_id, target_id, updated_text)
         
-        updated_facts = db.get_all_facts()
-        recent_history = db.get_recent_messages(limit=20)
+        updated_facts = db.get_all_facts(user_id)
+        recent_history = db.get_recent_messages(user_id, limit=20)
         brain_result = await call_sinbha_brain(
             user_message=user_msg,
             chat_history=recent_history[:-1],
             remembered_facts=updated_facts
         )
         ai_reply = brain_result.get("reply", f"Got it! I've updated my memory: {updated_text} 🌸")
-        db.save_message("assistant", ai_reply)
+        db.save_message(user_id, "assistant", ai_reply)
         return JSONResponse({
             "reply": ai_reply,
             "proposal": None,
@@ -309,11 +464,11 @@ async def chat_endpoint(payload: ChatRequest):
         })
 
     # 7. Standard message flow: call SINBHA brain
-    db.save_message("user", user_msg)
-    db.log_audit("CHAT_MESSAGE", f"User sent: '{user_msg[:80]}...'")
+    db.save_message(user_id, "user", user_msg)
+    db.log_audit(user_id, "CHAT_MESSAGE", f"User sent: '{user_msg[:80]}...'")
 
-    recent_history = db.get_recent_messages(limit=20)
-    current_facts = db.get_all_facts()
+    recent_history = db.get_recent_messages(user_id, limit=20)
+    current_facts = db.get_all_facts(user_id)
 
     brain_result = await call_sinbha_brain(
         user_message=user_msg,
@@ -330,7 +485,6 @@ async def chat_endpoint(payload: ChatRequest):
         raw_due = raw_prop.get("due_date")
         notes = raw_prop.get("notes")
 
-        # Validate title (App-level validation)
         if len(title) >= 3 and title.lower() not in ("none", "task", "null"):
             client_now = datetime.datetime.now()
             if payload.tz_offset_minutes is not None:
@@ -340,7 +494,6 @@ async def chat_endpoint(payload: ChatRequest):
             dt_res = parse_relative_datetime(raw_due, base_dt=client_now)
             
             if dt_res["is_ambiguous"]:
-                # If date/time was ambiguous (e.g. "sometime", "soon", "later"), ask instead of guessing
                 if "when" not in ai_reply.lower() and "due" not in ai_reply.lower():
                     ai_reply += "\n\nWhen would you like to get this done by? Let me know so I can keep track of it accurately for you 🌸"
                 real_due = None
@@ -355,13 +508,12 @@ async def chat_endpoint(payload: ChatRequest):
                 display_due = dt_res["display"]
                 suggested_rems = dt_res["suggested_reminders"]
 
-                # Requirement 1: If time is unclear (user provided a date like 'tomorrow' but no time), SINBHA asks
                 if not dt_res["time_specified"] and real_due:
                     if "what time" not in ai_reply.lower() and "time" not in ai_reply.lower():
                         ai_reply += "\n\nWhat time are you aiming to get it done by? (I can also set a reminder whenever you like) 🌸"
 
-            # Save proposal requiring user confirmation (expires after 30 mins)
             prop_id = db.set_pending_proposal(
+                user_id=user_id,
                 title=title,
                 due_date=real_due,
                 notes=notes,
@@ -382,14 +534,14 @@ async def chat_endpoint(payload: ChatRequest):
                 "notes": notes
             }
 
-    db.save_message("assistant", ai_reply)
+    db.save_message(user_id, "assistant", ai_reply)
 
     # 9. Background fact extraction
     new_facts_saved = []
     try:
         extracted = await extract_explicit_facts(user_msg)
         for f in extracted:
-            res = db.update_or_add_fact(f)
+            res = db.update_or_add_fact(user_id, f)
             if res.get("action") in ("added", "updated"):
                 new_facts_saved.append(f)
     except Exception as e:
@@ -401,49 +553,53 @@ async def chat_endpoint(payload: ChatRequest):
         "new_facts": new_facts_saved
     })
 
-# ----------------- Task Management Endpoints (Step 5, 6 & 6B) -----------------
+# ----------------- Task Management Endpoints (Per-User) -----------------
 
 @app.get("/api/tasks")
-async def get_tasks_endpoint():
-    """Returns all tasks (sorted: overdue first, then by date, no date, completed) and pending count."""
-    tasks = db.get_all_tasks()
-    pending_count = db.get_pending_tasks_count()
+async def get_tasks_endpoint(user: dict = Depends(get_current_user)):
+    """Returns all tasks for the logged-in user."""
+    user_id = user["id"]
+    tasks = db.get_all_tasks(user_id)
+    pending_count = db.get_pending_tasks_count(user_id)
     return {"tasks": tasks, "pending_count": pending_count}
 
 @app.patch("/api/tasks/{task_id}")
-async def update_task_status_endpoint(task_id: int, payload: TaskStatusUpdateRequest):
-    """Updates task status ('completed' or 'pending')."""
+async def update_task_status_endpoint(task_id: int, payload: TaskStatusUpdateRequest, user: dict = Depends(get_current_user)):
+    """Updates task status for the logged-in user."""
+    user_id = user["id"]
     new_status = payload.status.strip().lower()
     if new_status not in ("pending", "completed"):
         raise HTTPException(status_code=400, detail="Status must be 'pending' or 'completed'")
     
-    ok = db.update_task_status(task_id, new_status)
+    ok = db.update_task_status(user_id, task_id, new_status)
     if not ok:
         raise HTTPException(status_code=404, detail="Task not found")
     
     return {
         "success": True,
-        "task": db.get_task_by_id(task_id),
-        "pending_count": db.get_pending_tasks_count()
+        "task": db.get_task_by_id(user_id, task_id),
+        "pending_count": db.get_pending_tasks_count(user_id)
     }
 
 @app.delete("/api/tasks/{task_id}")
-async def delete_task_endpoint(task_id: int):
-    """Deletes a task directly from the database."""
-    ok = db.delete_task(task_id)
+async def delete_task_endpoint(task_id: int, user: dict = Depends(get_current_user)):
+    """Deletes a task belonging to the logged-in user."""
+    user_id = user["id"]
+    ok = db.delete_task(user_id, task_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Task not found")
     
     return {
         "success": True,
-        "pending_count": db.get_pending_tasks_count()
+        "pending_count": db.get_pending_tasks_count(user_id)
     }
 
 @app.post("/api/tasks/confirm")
-async def confirm_task_endpoint(payload: TaskConfirmWithRemindersRequest = None):
-    """Confirms the pending task proposal and saves it to tasks table with chosen reminders."""
+async def confirm_task_endpoint(payload: TaskConfirmWithRemindersRequest = None, user: dict = Depends(get_current_user)):
+    """Confirms pending task proposal for the logged-in user."""
+    user_id = user["id"]
     reminders = payload.reminders if payload and payload.reminders is not None else []
-    confirmed = db.confirm_pending_proposal(chosen_reminders=reminders)
+    confirmed = db.confirm_pending_proposal(user_id, chosen_reminders=reminders)
     if not confirmed:
         return JSONResponse({
             "success": False,
@@ -451,42 +607,42 @@ async def confirm_task_endpoint(payload: TaskConfirmWithRemindersRequest = None)
         })
 
     reply_msg = f"Saved! I've added '{confirmed['title']}' to your tasks. You've got this! 🌸"
-    db.save_message("assistant", reply_msg)
+    db.save_message(user_id, "assistant", reply_msg)
     return JSONResponse({
         "success": True,
         "reply": reply_msg,
         "task": confirmed,
-        "pending_count": db.get_pending_tasks_count()
+        "pending_count": db.get_pending_tasks_count(user_id)
     })
 
 @app.post("/api/tasks/cancel")
-async def cancel_task_endpoint(payload: TaskActionRequest = None):
-    """Cancels the pending task proposal kindly without saving."""
-    db.cancel_pending_proposal(reason="User clicked Cancel")
+async def cancel_task_endpoint(user: dict = Depends(get_current_user)):
+    """Cancels pending task proposal for the logged-in user."""
+    user_id = user["id"]
+    db.cancel_pending_proposal(user_id, reason="User clicked Cancel")
     reply_msg = "No problem at all! I dropped that task proposal 🌸"
-    db.save_message("assistant", reply_msg)
+    db.save_message(user_id, "assistant", reply_msg)
     return JSONResponse({
         "success": True,
         "reply": reply_msg
     })
 
-# ----------------- Reminder & Bird Flight Endpoints (Step 6B) -----------------
+# ----------------- Reminder & Bird Flight Endpoints (Per-User) -----------------
 
 @app.get("/api/reminders/check")
-async def check_reminders_endpoint(tz_offset_minutes: Optional[int] = None):
-    """Returns tasks that need attention right now (missed, explicit reminder, or repeat bird visits)."""
-    global emergency_stop_triggered
-    if emergency_stop_triggered:
+async def check_reminders_endpoint(tz_offset_minutes: Optional[int] = None, user: dict = Depends(get_current_user)):
+    """Returns tasks that need attention right now for the logged-in user."""
+    user_id = user["id"]
+    if db.get_emergency_stopped(user_id):
         return {"reminder_needed": False, "task": None, "needing_bird": [], "count": 0, "emergency_stopped": True}
 
     now_dt = datetime.datetime.now()
     if tz_offset_minutes is not None:
-        # Client provided its local timezone offset from UTC
         utc_now = datetime.datetime.now(datetime.timezone.utc)
         client_now = utc_now - datetime.timedelta(minutes=tz_offset_minutes)
         now_dt = client_now.replace(tzinfo=None)
 
-    needing = db.check_due_reminders(now_dt)
+    needing = db.check_due_reminders(user_id, now_dt)
     if needing:
         first = needing[0]
         return {
@@ -507,74 +663,72 @@ async def check_reminders_endpoint(tz_offset_minutes: Optional[int] = None):
     }
 
 @app.post("/api/reminders/fired")
-async def reminder_fired_endpoint(payload: ReminderFiredRequest):
-    """Marks a reminder as fired and logs in audit log."""
-    ok = db.mark_reminder_fired(payload.task_id, payload.reminder_id)
+async def reminder_fired_endpoint(payload: ReminderFiredRequest, user: dict = Depends(get_current_user)):
+    """Marks a reminder as fired for the logged-in user."""
+    ok = db.mark_reminder_fired(user["id"], payload.task_id, payload.reminder_id)
     return {"success": ok}
 
 @app.post("/api/reminders/snooze")
-async def reminder_snooze_endpoint(payload: ReminderSnoozeRequest):
-    """Snoozes a task's reminder for N minutes."""
-    ok = db.snooze_task(payload.task_id, payload.minutes)
+async def reminder_snooze_endpoint(payload: ReminderSnoozeRequest, user: dict = Depends(get_current_user)):
+    """Snoozes a task's reminder for the logged-in user."""
+    ok = db.snooze_task(user["id"], payload.task_id, payload.minutes)
     return {"success": ok}
 
 @app.get("/api/settings")
-async def get_settings_endpoint():
-    """Returns current user settings."""
-    return {"settings": db.get_all_settings()}
+async def get_settings_endpoint(user: dict = Depends(get_current_user)):
+    """Returns settings for the logged-in user."""
+    return {"settings": db.get_all_settings(user["id"])}
 
 @app.post("/api/settings")
-async def update_settings_endpoint(payload: SettingsUpdateRequest):
-    """Updates user settings (persistence, quiet hours)."""
-    db.set_setting("persistence", payload.persistence)
-    db.set_setting("quiet_hours_enabled", payload.quiet_hours_enabled)
-    db.set_setting("quiet_hours_start", payload.quiet_hours_start)
-    db.set_setting("quiet_hours_end", payload.quiet_hours_end)
-    db.log_audit("SETTINGS_UPDATED", f"Persistence: {payload.persistence}, Quiet hours: {payload.quiet_hours_start}-{payload.quiet_hours_end}")
-    return {"success": True, "settings": db.get_all_settings()}
+async def update_settings_endpoint(payload: SettingsUpdateRequest, user: dict = Depends(get_current_user)):
+    """Updates settings for the logged-in user."""
+    user_id = user["id"]
+    db.set_setting(user_id, "persistence", payload.persistence)
+    db.set_setting(user_id, "quiet_hours_enabled", payload.quiet_hours_enabled)
+    db.set_setting(user_id, "quiet_hours_start", payload.quiet_hours_start)
+    db.set_setting(user_id, "quiet_hours_end", payload.quiet_hours_end)
+    if payload.country:
+        db.set_setting(user_id, "country", payload.country)
+    db.log_audit(user_id, "SETTINGS_UPDATED", f"Persistence: {payload.persistence}, Quiet hours: {payload.quiet_hours_start}-{payload.quiet_hours_end}")
+    return {"success": True, "settings": db.get_all_settings(user_id)}
 
-# Action confirmation endpoint (for clicking Confirm/Cancel on chat cards: complete, delete, memory)
 @app.post("/api/confirm-action")
-async def confirm_action_endpoint(payload: ActionConfirmRequest):
-    """Handles action confirmation (completing/deleting a task or memory deletion)."""
+async def confirm_action_endpoint(payload: ActionConfirmRequest, user: dict = Depends(get_current_user)):
+    """Handles action confirmation for the logged-in user."""
+    user_id = user["id"]
     action = payload.action.strip().lower()
 
-    # Check pending task action (complete or delete)
-    pending_task_act = db.get_pending_task_action()
+    pending_task_act = db.get_pending_task_action(user_id)
     if pending_task_act:
         if action == "confirm":
-            res = db.confirm_pending_task_action()
+            res = db.confirm_pending_task_action(user_id)
             if res:
-                if res["action_type"] == "task_complete":
-                    reply = f"Woohoo! 🎉 Marked '{res['task_title']}' as completed! Amazing job! 🌸"
-                else:
-                    reply = f"I've removed '{res['task_title']}' from your tasks 🌸"
-                db.save_message("assistant", reply)
+                reply = f"Woohoo! 🎉 Marked '{res['task_title']}' as completed! Amazing job! 🌸" if res["action_type"] == "task_complete" else f"I've removed '{res['task_title']}' from your tasks 🌸"
+                db.save_message(user_id, "assistant", reply)
                 return JSONResponse({
                     "success": True,
                     "reply": reply,
                     "action_performed": res["action_type"],
                     "task_id": res["task_id"],
-                    "pending_count": db.get_pending_tasks_count()
+                    "pending_count": db.get_pending_tasks_count(user_id)
                 })
         else:
-            db.cancel_pending_task_action(reason="User clicked Cancel")
+            db.cancel_pending_task_action(user_id, reason="User clicked Cancel")
             reply = "No problem at all! Kept it just as it is 🌸"
-            db.save_message("assistant", reply)
+            db.save_message(user_id, "assistant", reply)
             return JSONResponse({"success": True, "reply": reply, "action_performed": "cancelled"})
 
-    # Check pending memory fact deletion
-    pending = db.get_pending_action()
+    pending = db.get_pending_action(user_id)
     if not pending:
         return JSONResponse({"success": False, "reply": "No pending action found 🌸"})
 
     if action == "confirm":
         if pending["action_type"] == "forget_fact":
             target_id = pending["target_id"]
-            db.delete_fact(target_id)  # Logs FACT_DELETED
-            db.clear_pending_action()
+            db.delete_fact(user_id, target_id)
+            db.clear_pending_action(user_id)
             reply = "I've forgotten that for you! It's wiped from my memory 🌸"
-            db.save_message("assistant", reply)
+            db.save_message(user_id, "assistant", reply)
             return JSONResponse({
                 "success": True,
                 "reply": reply,
@@ -582,114 +736,122 @@ async def confirm_action_endpoint(payload: ActionConfirmRequest):
                 "deleted_fact_id": target_id
             })
     else:
-        db.clear_pending_action()
+        db.clear_pending_action(user_id)
         reply = "No problem at all! I'll keep remembering it 🌸"
-        db.save_message("assistant", reply)
+        db.save_message(user_id, "assistant", reply)
         return JSONResponse({"success": True, "reply": reply, "action_performed": "cancelled"})
 
-    db.clear_pending_action()
+    db.clear_pending_action(user_id)
     return JSONResponse({"success": True, "reply": "Action completed 🌸"})
 
-# Emergency STOP endpoint (hard killswitch)
+# ----------------- Emergency STOP / Resume Endpoints (Per-User) -----------------
+
 @app.post("/api/stop")
-async def stop_endpoint():
-    global emergency_stop_triggered
-    emergency_stop_triggered = True
-    
-    # Requirement 6 & 7: If STOP is triggered, cancel any pending proposal or task action
-    db.cancel_pending_proposal(reason="Emergency STOP button clicked in header")
-    db.cancel_pending_task_action(reason="Emergency STOP button clicked in header")
-    db.log_audit("STOP_TRIGGERED", "Emergency STOP button clicked in header.")
+async def stop_endpoint(user: dict = Depends(get_current_user)):
+    """Per-user emergency stop switch."""
+    user_id = user["id"]
+    db.set_emergency_stopped(user_id, True)
+    db.cancel_pending_proposal(user_id, reason="Emergency STOP button clicked in header")
+    db.cancel_pending_task_action(user_id, reason="Emergency STOP button clicked in header")
+    db.log_audit(user_id, "STOP_TRIGGERED", "Emergency STOP button clicked in header.")
     
     return JSONResponse({
         "status": "stopped",
         "message": "🛑 Emergency STOP triggered. All processing halted immediately."
     })
 
-# Resume endpoint
 @app.post("/api/resume")
-async def resume_endpoint():
-    global emergency_stop_triggered
-    emergency_stop_triggered = False
-    db.log_audit("STOP_RESUMED", "Resume button clicked.")
+async def resume_endpoint(user: dict = Depends(get_current_user)):
+    """Resumes companion for this user."""
+    user_id = user["id"]
+    db.set_emergency_stopped(user_id, False)
+    db.log_audit(user_id, "STOP_RESUMED", "Resume button clicked.")
     return JSONResponse({
         "status": "resumed",
         "message": "🌸 Welcome back! Everything is quiet and ready."
     })
 
-# ----------------- Memory & Dev Endpoints -----------------
-
-@app.get("/api/dev/facts")
-async def dev_facts_endpoint():
-    """Developer-only endpoint to inspect SQLite facts and audit logs when DEV_MODE=true."""
-    is_dev = os.getenv("DEV_MODE", "false").strip().lower() in ("true", "1", "yes")
-    if not is_dev:
-        raise HTTPException(status_code=403, detail="Developer mode is disabled. Set DEV_MODE=true in .env to enable.")
-    return {
-        "dev_mode": True,
-        "facts": db.get_all_facts(),
-        "audit_logs": db.get_audit_logs(limit=25)
-    }
+# ----------------- Memory & Admin/Dev Endpoints (Requirement 4) -----------------
 
 @app.get("/api/facts")
-async def get_facts_endpoint():
-    """Returns all remembered facts."""
-    return {"facts": db.get_all_facts()}
+async def get_facts_endpoint(user: dict = Depends(get_current_user)):
+    """Returns remembered facts for the logged-in user."""
+    return {"facts": db.get_all_facts(user["id"])}
 
 @app.post("/api/facts")
-async def add_fact_endpoint(payload: FactCreateRequest):
-    """Manually add a fact to memory."""
-    new_id = db.add_fact(payload.fact, payload.category or "general")
+async def add_fact_endpoint(payload: FactCreateRequest, user: dict = Depends(get_current_user)):
+    """Manually add a fact to memory for the logged-in user."""
+    new_id = db.add_fact(user["id"], payload.fact, payload.category or "general")
     if not new_id:
         raise HTTPException(status_code=400, detail="Fact cannot be empty.")
     return {"success": True, "id": new_id}
 
 @app.put("/api/facts/{fact_id}")
-async def update_fact_endpoint(fact_id: int, payload: FactUpdateRequest):
-    """Edit an existing remembered fact."""
-    ok = db.update_fact(fact_id, payload.fact)
+async def update_fact_endpoint(fact_id: int, payload: FactUpdateRequest, user: dict = Depends(get_current_user)):
+    """Edit an existing fact for the logged-in user."""
+    ok = db.update_fact(user["id"], fact_id, payload.fact)
     if not ok:
         raise HTTPException(status_code=404, detail="Fact not found.")
     return {"success": True}
 
 @app.delete("/api/facts/{fact_id}")
-async def delete_fact_endpoint(fact_id: int):
-    """Delete a remembered fact."""
-    ok = db.delete_fact(fact_id)
+async def delete_fact_endpoint(fact_id: int, user: dict = Depends(get_current_user)):
+    """Delete a fact for the logged-in user."""
+    ok = db.delete_fact(user["id"], fact_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Fact not found.")
     return {"success": True}
 
 @app.post("/api/purge")
-async def purge_data_endpoint():
-    """Wipes all user data (messages, facts, tasks) after confirmation."""
-    db.purge_all_data()
-    return {"success": True, "message": "All messages and memory have been wiped cleanly."}
+async def purge_data_endpoint(user: dict = Depends(get_current_user)):
+    """Wipes all data (messages, facts, tasks) for the logged-in user."""
+    db.purge_all_data(user["id"])
+    return {"success": True, "message": "All your messages, facts, and tasks have been wiped cleanly."}
 
-# ----------------- Audit Log Endpoint -----------------
+@app.get("/api/dev/facts")
+async def dev_facts_endpoint(user: dict = Depends(get_current_user)):
+    """
+    Requirement 4: Dev endpoints work only when DEV_MODE=true AND logged in as an admin.
+    """
+    if not user.get("is_admin") or not is_dev_mode_active():
+        raise HTTPException(status_code=403, detail="Developer access denied. Requires admin user and DEV_MODE=true.")
+    return {
+        "dev_mode": True,
+        "facts": db.get_all_facts(user["id"]),
+        "audit_logs": db.get_audit_logs(user["id"], limit=25)
+    }
 
 @app.get("/api/audit")
-async def get_audit_endpoint():
-    """Returns recent audit logs."""
-    return {"logs": db.get_audit_logs(limit=50)}
+async def get_audit_endpoint(user: dict = Depends(get_current_user)):
+    """
+    Requirement 4: Audit log endpoint works only when DEV_MODE=true AND logged in as an admin.
+    """
+    if not user.get("is_admin") or not is_dev_mode_active():
+        raise HTTPException(status_code=403, detail="Access denied. Audit logs require admin privileges and DEV_MODE=true.")
+    return {"logs": db.get_audit_logs(user["id"], limit=50)}
 
 # ----------------- Host Info & Static Files -----------------
 
 @app.get("/api/info")
-async def info_endpoint():
+async def info_endpoint(request: Request):
+    """Provides general host information and session state."""
     port = int(os.environ.get("PORT", 8080))
     model = os.getenv("OPENROUTER_MODEL", "google/gemini-2.5-flash")
-    is_dev = os.getenv("DEV_MODE", "false").strip().lower() in ("true", "1", "yes")
+    user = await get_current_user_optional(request)
+    is_stopped = db.get_emergency_stopped(user["id"]) if user else False
+
     return {
         "companion": "SINBHA",
         "local_ip": get_local_ip(),
         "port": port,
         "model": model,
-        "dev_mode": is_dev,
-        "emergency_stopped": emergency_stop_triggered
+        "dev_mode": is_dev_mode_active(),
+        "logged_in": bool(user),
+        "user": user,
+        "emergency_stopped": is_stopped
     }
 
-# Serve the static UI files
+# Serve static UI files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/")

@@ -5,18 +5,99 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
   <meta name="theme-color" content="#fff5f7">
   <title>SINBHA - Your Personal Companion</title>
+  <link rel="icon" type="image/png" href="/static/favicon.png">
+  <link rel="shortcut icon" href="/static/favicon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <div class="app-container">
+
+  <!-- ========================================================
+       AUTH SCREEN (SIGNUP / LOGIN) - PINK & WHITE THEME (STEP 9)
+       ======================================================== -->
+  <div id="authScreen" class="auth-screen-overlay" style="display: none;">
+    <!-- Top-Left Branding with Cute Elephant Logo -->
+    <div class="auth-topleft-branding">
+      <img src="/static/elephant_logo.png" alt="SINBHA Cute Elephant Logo" class="auth-elephant-logo" />
+      <span class="auth-branding-title">SINBHA</span>
+    </div>
+
+    <!-- Center Card -->
+    <div class="auth-card">
+      <div class="auth-card-header">
+        <div class="auth-logo-circle">
+          <img src="/static/elephant_logo.png" alt="SINBHA Elephant Mascot" class="auth-card-elephant" />
+        </div>
+        <h2 class="auth-card-title">Welcome to SINBHA</h2>
+        <p class="auth-card-subtitle">Your calm, mindful companion for tasks & habits</p>
+      </div>
+
+      <!-- Tab Buttons -->
+      <div class="auth-tabs">
+        <button id="tabLoginBtn" class="auth-tab-btn active" type="button">Log In</button>
+        <button id="tabSignupBtn" class="auth-tab-btn" type="button">Sign Up</button>
+      </div>
+
+      <!-- Error / Notification Alert -->
+      <div id="authAlert" class="auth-alert" style="display: none;"></div>
+
+      <!-- LOGIN FORM -->
+      <form id="loginForm" class="auth-form" autocomplete="on">
+        <div class="auth-field">
+          <label for="loginEmail">Email address</label>
+          <input type="email" id="loginEmail" placeholder="yourname@example.com" required autocomplete="email" />
+        </div>
+        <div class="auth-field">
+          <label for="loginPassword">Password</label>
+          <input type="password" id="loginPassword" placeholder="Enter your password" required autocomplete="current-password" />
+        </div>
+        <button type="submit" id="loginSubmitBtn" class="auth-submit-btn">
+          Log In 🌸
+        </button>
+      </form>
+
+      <!-- SIGNUP FORM -->
+      <form id="signupForm" class="auth-form" style="display: none;" autocomplete="on">
+        <div class="auth-field">
+          <label for="signupEmail">Email address</label>
+          <input type="email" id="signupEmail" placeholder="yourname@example.com" required autocomplete="email" />
+        </div>
+        <div class="auth-field">
+          <label for="signupPassword">Password (minimum 8 characters)</label>
+          <input type="password" id="signupPassword" minlength="8" placeholder="At least 8 characters" required autocomplete="new-password" />
+        </div>
+
+        <div class="auth-checkboxes">
+          <label class="auth-checkbox-label">
+            <input type="checkbox" id="signupAgeCheck" required />
+            <span>I am 18 years of age or older</span>
+          </label>
+          <label class="auth-checkbox-label">
+            <input type="checkbox" id="signupTermsCheck" required />
+            <span>I agree to the <button type="button" id="openTermsLink" class="text-link-btn">Terms of Service</button> and <button type="button" id="openPrivacyLink" class="text-link-btn">Privacy Policy</button></span>
+          </label>
+        </div>
+
+        <div class="auth-ai-disclaimer">
+          <span>🌸 <strong>Notice:</strong> Messages are processed by an AI provider to assist you with companion support, memory facts, and task scheduling.</span>
+        </div>
+
+        <button type="submit" id="signupSubmitBtn" class="auth-submit-btn">
+          Create Account 🌸
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- MAIN APP CONTAINER -->
+  <div class="app-container" id="appContainer">
     <!-- Top Header Bar (Full Desktop Width) -->
     <header class="app-header">
       <div class="header-left">
         <div class="avatar-container">
-          <div class="avatar">🌸</div>
+          <img src="/static/elephant_logo.png" alt="SINBHA Logo" class="header-elephant-avatar" />
           <span class="status-dot" id="statusDot" title="Online"></span>
         </div>
         <div class="companion-details">
@@ -26,7 +107,13 @@
       </div>
 
       <div class="header-actions">
-        <!-- Developer Memory Button (Hidden unless DEV_MODE=true) -->
+        <!-- User Pill with Email & Logout -->
+        <div id="userHeaderPill" class="user-header-pill" style="display: none;">
+          <span id="headerUserEmail" class="header-user-email">user</span>
+          <button id="headerLogoutBtn" class="header-logout-btn" title="Log Out">Log Out</button>
+        </div>
+
+        <!-- Developer Memory Button (Hidden unless DEV_MODE=true AND admin) -->
         <button id="devMemoryBtn" class="header-btn dev-btn" style="display: none;" title="Developer Memory Inspector (DEV_MODE=true)">
           <span class="btn-icon">🛠️</span>
           <span class="btn-text">Dev Memory</span>
@@ -94,7 +181,7 @@
   <!-- Shared Drawer Overlay Backdrop -->
   <div class="drawer-overlay" id="drawerOverlay"></div>
 
-  <!-- DEVELOPER-ONLY MEMORY VIEWER (Active only if DEV_MODE=true) -->
+  <!-- DEVELOPER-ONLY MEMORY VIEWER (Active only if DEV_MODE=true AND admin) -->
   <aside class="side-drawer dev-drawer" id="devMemoryDrawer" aria-hidden="true" style="display: none;">
     <div class="drawer-header dev-drawer-header">
       <div class="drawer-title-group">
@@ -109,7 +196,7 @@
     
     <div class="drawer-content">
       <div class="dev-info-card">
-        <p><strong>Developer Test Console:</strong> This panel is only accessible when <code>DEV_MODE=true</code> is set in <code>.env</code>. Regular users cannot see this.</p>
+        <p><strong>Developer Test Console:</strong> This panel is only accessible when <code>DEV_MODE=true</code> is set in <code>.env</code> AND you are logged in as an admin.</p>
         <button id="devRefreshBtn" class="dev-refresh-btn">🔄 Refresh Facts & Audit Log</button>
       </div>
 
@@ -142,10 +229,22 @@
         <button id="closeSettingsBtn" class="close-modal-btn" aria-label="Close settings">&times;</button>
       </div>
       <div class="settings-modal-body">
-        <div class="settings-info-section">
-          <h3>Local Storage</h3>
-          <p>SINBHA operates entirely on your computer. Chat messages, memories, and task records are kept private in your local SQLite database (<code>sinbha.db</code>).</p>
+        
+        <!-- User Account Card (Step 9) -->
+        <div class="settings-info-section" style="background: #fff0f3; border: 1.5px solid #fbcfe8; border-radius: 12px; padding: 14px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 1.2rem;">🌸</span>
+              <strong id="settingsUserEmail" style="color: #9d174d; font-size: 0.94rem;">user@example.com</strong>
+            </div>
+            <span id="settingsAdminBadge" class="count-tag" style="display: none; background: #f472b6; color: white;">Admin</span>
+          </div>
+          <p style="font-size: 0.78rem; color: #6b7280; margin: 0 0 10px 0;">All your chats, facts, tasks, and settings are strictly private to this account.</p>
+          <button id="settingsLogoutBtn" class="confirm-btn-secondary" style="padding: 6px 12px; font-size: 0.8rem;">
+            Log Out of SINBHA
+          </button>
         </div>
+
         <div class="settings-reminders-section">
           <h3>🕊️ Bird Reminders & Quiet Hours</h3>
           <p>Customize how your feathered companion delivers gentle check-ins.</p>
@@ -159,6 +258,21 @@
               <option value="gentle">Gentle (Once a day)</option>
               <option value="normal" selected>Normal (Every 30 minutes)</option>
               <option value="persistent">Persistent (Every 15 minutes)</option>
+            </select>
+          </div>
+
+          <!-- Country selector for helplines (Requirement 6) -->
+          <div class="setting-field-group">
+            <label for="countrySelect" class="setting-label">
+              <strong>Country (Support Helplines)</strong>
+              <span class="setting-desc">Provides localized crisis and wellness contacts if you ever ask for help</span>
+            </label>
+            <select id="countrySelect" class="setting-select">
+              <option value="US" selected>United States / International</option>
+              <option value="IN">India</option>
+              <option value="UK">United Kingdom</option>
+              <option value="CA">Canada</option>
+              <option value="AU">Australia</option>
             </select>
           </div>
 
@@ -222,11 +336,16 @@
         </div>
 
         <div class="settings-danger-section">
-          <h3>Data Management</h3>
-          <p>Need a fresh start? You can wipe all local companion data permanently.</p>
-          <button id="openPurgeConfirmBtn" class="purge-trigger-btn">
-            🗑️ Delete all my data
-          </button>
+          <h3>Data & Account Management</h3>
+          <p>You can erase all your tasks and chat history, or permanently delete your user account.</p>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <button id="openPurgeConfirmBtn" class="purge-trigger-btn">
+              🗑️ Clear all my messages & tasks
+            </button>
+            <button id="openDeleteAccountConfirmBtn" class="purge-trigger-btn" style="background: #fff1f2; border: 1.5px solid #fecdd3; color: #be123c;">
+              ⚠️ Delete my account and all my data
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -236,11 +355,62 @@
   <div class="confirm-modal-overlay" id="purgeConfirmModal" style="display: none;">
     <div class="confirm-modal-card">
       <div class="confirm-icon-box">⚠️</div>
-      <h3>Delete all your data?</h3>
-      <p>This will permanently erase all chat history, remembered facts, and tasks from your local computer. This cannot be undone.</p>
+      <h3>Clear your messages & tasks?</h3>
+      <p>This will erase your chat history, remembered facts, and tasks for this account. Your user login will be kept.</p>
       <div class="confirm-modal-actions">
         <button id="cancelPurgeBtn" class="confirm-btn-secondary">Cancel</button>
-        <button id="confirmPurgeBtn" class="confirm-btn-danger">Yes, Delete Everything</button>
+        <button id="confirmPurgeBtn" class="confirm-btn-danger">Yes, Delete Data</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- DELETE ACCOUNT CONFIRMATION MODAL (Requirement 8) -->
+  <div class="confirm-modal-overlay" id="deleteAccountConfirmModal" style="display: none;">
+    <div class="confirm-modal-card">
+      <div class="confirm-icon-box">🛑</div>
+      <h3>Delete account permanently?</h3>
+      <p>This will permanently erase your user account, login credentials, chat history, memories, tasks, and settings. This action cannot be reversed.</p>
+      <div class="confirm-modal-actions">
+        <button id="cancelDeleteAccountBtn" class="confirm-btn-secondary">Cancel</button>
+        <button id="confirmDeleteAccountBtn" class="confirm-btn-danger">Yes, Delete Account & All Data</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TERMS OF SERVICE MODAL (Requirement 7) -->
+  <div class="confirm-modal-overlay" id="termsModal" style="display: none;">
+    <div class="confirm-modal-card" style="max-width: 480px; text-align: left;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <h3 style="margin: 0; color: #db2777;">🌸 Terms of Service</h3>
+        <button id="closeTermsBtn" class="popup-close-btn" style="font-size: 1.4rem; background: none; border: none; cursor: pointer;">&times;</button>
+      </div>
+      <div style="font-size: 0.84rem; color: #4b5563; line-height: 1.5; max-height: 300px; overflow-y: auto; padding-right: 6px;">
+        <p>Welcome to SINBHA. By using this service, you agree to these simple terms:</p>
+        <p>1. <strong>Personal Companion:</strong> SINBHA is designed to help you organize daily tasks, habits, and gentle reminders with empathetic support.</p>
+        <p>2. <strong>AI Assistance:</strong> Responses are generated with AI. SINBHA is a supportive personal organizer and does not provide medical, clinical, or crisis healthcare.</p>
+        <p>3. <strong>Your Account:</strong> You are responsible for keeping your password secure and maintaining truthful account information.</p>
+      </div>
+      <div style="margin-top: 16px; text-align: right;">
+        <button id="confirmTermsCloseBtn" class="confirm-btn-secondary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PRIVACY POLICY MODAL (Requirement 7) -->
+  <div class="confirm-modal-overlay" id="privacyModal" style="display: none;">
+    <div class="confirm-modal-card" style="max-width: 480px; text-align: left;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <h3 style="margin: 0; color: #db2777;">🌸 Privacy Policy</h3>
+        <button id="closePrivacyBtn" class="popup-close-btn" style="font-size: 1.4rem; background: none; border: none; cursor: pointer;">&times;</button>
+      </div>
+      <div style="font-size: 0.84rem; color: #4b5563; line-height: 1.5; max-height: 300px; overflow-y: auto; padding-right: 6px;">
+        <p>Your privacy is protected with high care at SINBHA:</p>
+        <p>1. <strong>Strict User Isolation:</strong> Every message, fact, task, and reminder is bound to your user ID and never shared across accounts.</p>
+        <p>2. <strong>Secure Authentication:</strong> Passwords are protected using argon2 hashing and secure httpOnly sessions.</p>
+        <p>3. <strong>Complete Control:</strong> You can export or permanently delete your account and all associated data at any time in Settings.</p>
+      </div>
+      <div style="margin-top: 16px; text-align: right;">
+        <button id="confirmPrivacyCloseBtn" class="confirm-btn-secondary">Close</button>
       </div>
     </div>
   </div>

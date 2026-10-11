@@ -4,7 +4,7 @@
 // system tray, and quiet hours / DND controls.
 // ========================================================
 
-const { app, BrowserWindow, Tray, Menu, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, screen, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -21,6 +21,17 @@ let remindersPaused = false;
 let doNotDisturb = false;
 const BACKEND_PORT = 8000;
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
+
+// Helper to get active session cookie for authenticated background requests
+async function getSessionCookieHeader() {
+  try {
+    const cookies = await session.defaultSession.cookies.get({ url: BACKEND_URL, name: 'sinbha_session' });
+    if (cookies && cookies.length > 0) {
+      return `sinbha_session=${cookies[0].value}`;
+    }
+  } catch (e) {}
+  return null;
+}
 
 // ----------------- Python Environment Discovery -----------------
 function findPythonExecutable() {
@@ -276,10 +287,16 @@ async function checkDueRemindersLoop() {
   if (remindersPaused || isFullscreenAppActive() || isBirdShowingOnOverlay) return;
 
   try {
+    const cookieHeader = await getSessionCookieHeader();
+    if (!cookieHeader) {
+      // User is not logged in: overlay bird stays idle until user signs in
+      return;
+    }
+
     const tzOffset = new Date().getTimezoneOffset();
     const url = `${BACKEND_URL}/api/reminders/check?tz_offset_minutes=${tzOffset}`;
 
-    http.get(url, (res) => {
+    const req = http.get(url, { headers: { Cookie: cookieHeader } }, (res) => {
       let data = '';
       res.on('data', (chunk) => (data += chunk));
       res.on('end', () => {
@@ -307,7 +324,8 @@ async function checkDueRemindersLoop() {
                   method: 'POST',
                   headers: {
                     'Content-Type': 'application/json',
-                    'Content-Length': Buffer.byteLength(postData)
+                    'Content-Length': Buffer.byteLength(postData),
+                    'Cookie': cookieHeader
                   }
                 }
               );
@@ -318,7 +336,8 @@ async function checkDueRemindersLoop() {
           }
         } catch (e) {}
       });
-    }).on('error', () => {});
+    });
+    req.on('error', () => {});
   } catch (e) {}
 }
 
@@ -353,16 +372,20 @@ function setupIpcHandlers() {
 
   // Mark task done from bird popup
   ipcMain.handle('mark-task-done', async (_event, taskId) => {
+    const cookieHeader = await getSessionCookieHeader();
     return new Promise((resolve) => {
       const postData = JSON.stringify({ status: 'completed' });
+      const reqHeaders = {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData)
+      };
+      if (cookieHeader) reqHeaders['Cookie'] = cookieHeader;
+
       const req = http.request(
         `${BACKEND_URL}/api/tasks/${taskId}`,
         {
           method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            'Content-Length': Buffer.byteLength(postData)
-          }
+          headers: reqHeaders
         },
         (res) => {
           resolve(res.statusCode === 200);
@@ -379,16 +402,20 @@ function setupIpcHandlers() {
 
   // Snooze reminder from bird popup
   ipcMain.handle('snooze-reminder', async (_event, taskId, minutes) => {
+    const cookieHeader = await getSessionCookieHeader();
     return new Promise((resolve) => {
       const postData = JSON.stringify({ task_id: taskId, minutes: minutes });
+      const reqHeaders = {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData)
+      };
+      if (cookieHeader) reqHeaders['Cookie'] = cookieHeader;
+
       const req = http.request(
         `${BACKEND_URL}/api/reminders/snooze`,
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Content-Length': Buffer.byteLength(postData)
-          }
+          headers: reqHeaders
         },
         (res) => {
           resolve(res.statusCode === 200);
