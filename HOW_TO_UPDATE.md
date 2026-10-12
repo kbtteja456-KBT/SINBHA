@@ -69,41 +69,45 @@ git push origin main
 
 ### Step 3: Trigger the Cloud Build
 
-You have two easy ways:
+You can build **Android (`.apk`)**, **Windows (`.exe`)**, or both!
 
-#### Option A: One-Click in your Browser (Easiest)
-1. Go to your **SINBHA** repository on GitHub.
-2. Click **Actions** ➔ **Build and Release Android APK**.
+#### 📱 For Android APK (`SINBHA.apk`):
+1. In your **SINBHA** repo on GitHub, click **Actions**.
+2. Click **Build and Release Android APK** on the left menu.
 3. Click **Run workflow** ➔ **Run workflow**.
+*(Or via tag: `git tag android-v1.0.2; git push origin android-v1.0.2`)*
 
-#### Option B: Push a Git Tag from Terminal
-```powershell
-git tag android-v1.0.2
-git push origin android-v1.0.2
-```
+#### 💻 For Windows Installer (`SINBHA-Setup.exe`):
+1. In your **SINBHA** repo on GitHub, click **Actions**.
+2. Click **Build and Release Windows Desktop App** on the left menu.
+3. Click **Run workflow** ➔ **Run workflow**.
+*(Or via tag: `git tag windows-v1.0.2; git push origin windows-v1.0.2`)*
 
 ---
 
 ### Step 4: What Happens Automatically
-1. GitHub Actions spins up an Ubuntu cloud server with JDK 21 and Node 22.
-2. It verifies all security checks and confirms `versionCode` increased.
-3. It signs the APK using your secret keystore.
-4. It attaches `SINBHA.apk` and `SINBHA.apk.sha256` to your public `sinbha-releases` repo.
-5. All phones running SINBHA detect the new release and show the update button!
+* **Android**: GitHub Actions compiles the signed `SINBHA.apk` and publishes it with `SINBHA.apk.sha256`.
+* **Windows**: GitHub Actions compiles the Windows NSIS installer `SINBHA-Setup.exe` and publishes it with `SINBHA-Setup.exe.sha256`.
+* Both files appear in your public **`sinbha-releases`** repository!
 
 ---
 
-## 🔗 4. How to Share the APK Every Time
+## 🔗 4. How to Share the Apps Every Time
 
-You do **not** need to find new links every time you release an update! GitHub provides a **permanent direct download link** that automatically routes to the newest APK:
+GitHub provides **permanent direct download links** that never change. They always point to the newest version automatically:
 
-👉 **Permanent APK Download Link:**
+👉 **Android APK Permanent Download:**
 ```text
 https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA.apk
 ```
 
-* Send this exact link to your friends, family, or other devices on WhatsApp/Telegram/Email.
-* Whenever anyone clicks it, GitHub **always downloads the latest version** automatically!
+👉 **Windows .EXE Permanent Download:**
+```text
+https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA-Setup.exe
+```
+
+* Send either link to anyone or bookmark them.
+* Whenever you release an update, anyone who opens those links downloads the newest version immediately!
 * Public Releases Webpage:
   `https://github.com/kbtteja456-KBT/sinbha-releases/releases`
 
