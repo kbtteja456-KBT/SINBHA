@@ -1,8 +1,8 @@
 /**
  * Verification script:
- * 1. Verifies Android versionCode has increased compared to the previous git commit/release.
- * 2. Syncs versionName with package.json version.
- * 3. Fails the build immediately if versionCode did not increase.
+ * 1. Verifies Android versionCode has increased compared to previous release tags.
+ * 2. Syncs versionName in build.gradle with package.json version.
+ * 3. Fails the build immediately if versionCode did not increase over previous releases.
  */
 
 const fs = require('fs');
@@ -51,34 +51,60 @@ function main() {
     fs.writeFileSync(gradlePath, gradleContent, 'utf8');
   }
 
-  // 3. Compare with previous git commit (HEAD~1)
+  // 3. Compare versionCode with previous release tags
+  let previousMaxVersionCode = 0;
+  let comparisonSource = null;
+
   try {
-    const prevGradle = execSync('git show HEAD~1:android/app/build.gradle', {
+    const rawTags = execSync('git tag -l "android-v*" "v*"', {
       cwd: rootDir,
       stdio: ['pipe', 'pipe', 'ignore'],
       encoding: 'utf8'
-    });
+    }).trim();
 
-    const prevMatch = prevGradle.match(/versionCode\s+(\d+)/);
-    if (prevMatch) {
-      const prevVersionCode = parseInt(prevMatch[1], 10);
-      console.log(`ℹ️  Previous commit build.gradle: versionCode = ${prevVersionCode}`);
+    const currentRef = process.env.GITHUB_REF_NAME || '';
+    const tags = rawTags
+      ? rawTags.split('\n').map(t => t.trim()).filter(t => t && t !== currentRef)
+      : [];
 
-      if (currentVersionCode <= prevVersionCode) {
-        console.error('\n======================================================');
-        console.error('❌ BUILD ERROR: Android versionCode did NOT increase!');
-        console.error(`   Previous: ${prevVersionCode}`);
-        console.error(`   Current:  ${currentVersionCode}`);
-        console.error('   Each Android release must have a strictly higher versionCode');
-        console.error('   to prevent install errors and upgrade rejection on Android.');
-        console.error('   Please increment versionCode in android/app/build.gradle.');
-        console.error('======================================================\n');
-        process.exit(1);
+    for (const tag of tags) {
+      try {
+        const tagGradle = execSync(`git show "${tag}:android/app/build.gradle"`, {
+          cwd: rootDir,
+          stdio: ['pipe', 'pipe', 'ignore'],
+          encoding: 'utf8'
+        });
+        const match = tagGradle.match(/versionCode\s+(\d+)/);
+        if (match) {
+          const vc = parseInt(match[1], 10);
+          if (vc > previousMaxVersionCode) {
+            previousMaxVersionCode = vc;
+            comparisonSource = `tag ${tag}`;
+          }
+        }
+      } catch (err) {
+        // Tag doesn't have build.gradle
       }
     }
-  } catch (e) {
-    // Single commit repository or tag checkout where HEAD~1 is not available
-    console.log('ℹ️  No previous commit to compare against; versionCode check skipped for initial history.');
+  } catch (err) {
+    console.log('ℹ️  Could not fetch git tags.');
+  }
+
+  if (previousMaxVersionCode > 0) {
+    console.log(`ℹ️  Highest previous release versionCode: ${previousMaxVersionCode} (from ${comparisonSource})`);
+    if (currentVersionCode <= previousMaxVersionCode) {
+      console.error('\n======================================================');
+      console.error('❌ BUILD ERROR: Android versionCode did NOT increase!');
+      console.error(`   Previous release: ${previousMaxVersionCode} (${comparisonSource})`);
+      console.error(`   Current build:    ${currentVersionCode}`);
+      console.error('   Each Android release must have a strictly higher versionCode');
+      console.error('   to prevent install errors and upgrade rejection on Android.');
+      console.error('   Please increment versionCode in android/app/build.gradle.');
+      console.error('======================================================\n');
+      process.exit(1);
+    }
+  } else {
+    console.log(`ℹ️  No previous release tags found. Proceeding with initial release versionCode ${currentVersionCode}.`);
   }
 
   console.log(`✅ Android version check passed: versionCode ${currentVersionCode}, version ${targetVersion}`);
