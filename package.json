@@ -11,6 +11,7 @@
     "dist": "npm run build:win",
     "android:sync": "node scripts/check_secrets.js && npx cap sync android",
     "android:check-version": "node scripts/check_version_code.js",
+    "keystore:copy": "node scripts/copy_keystore.js",
     "android:open": "npx cap open android",
     "android:keystore": "node scripts/generate_keystore.js"
   },
