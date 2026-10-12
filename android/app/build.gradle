@@ -35,10 +35,11 @@ android {
                 keyAlias signingProps.getProperty('RELEASE_KEY_ALIAS')
                 keyPassword signingProps.getProperty('RELEASE_KEY_PASSWORD')
             } else if (System.getenv("KEYSTORE_FILE")) {
+                def storePass = System.getenv("KEYSTORE_PASSWORD")
                 storeFile file(System.getenv("KEYSTORE_FILE"))
-                storePassword System.getenv("KEYSTORE_PASSWORD")
+                storePassword storePass
                 keyAlias System.getenv("KEY_ALIAS")
-                keyPassword System.getenv("KEY_PASSWORD")
+                keyPassword storePass
             }
         }
     }
