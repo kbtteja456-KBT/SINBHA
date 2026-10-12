@@ -677,14 +677,17 @@
   <div class="confirm-modal-overlay" id="appUpdateGateModal" style="display: none; z-index: 99999;">
     <div class="confirm-modal-card" style="max-width: 440px; text-align: center;">
       <div class="confirm-icon-box" style="background: #fdf2f8; color: #db2777; font-size: 2.2rem;">🌸</div>
-      <h3 style="color: #0f172a; margin-bottom: 8px;">Update Required to Continue</h3>
+      <h3 id="appUpdateGateTitle" style="color: #0f172a; margin-bottom: 8px;">New Version Available!</h3>
       <p id="appUpdateGateDesc" style="color: #64748b; font-size: 0.9rem; line-height: 1.5; margin-bottom: 20px;">
         A new version of SINBHA is available with important companion enhancements and stability fixes.
       </p>
       <div style="display: flex; flex-direction: column; gap: 10px;">
-        <a id="appUpdateDownloadLink" href="https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest" target="_blank" class="confirm-btn-primary" style="text-decoration: none; justify-content: center; padding: 12px; font-weight: 700; font-size: 0.95rem;">
-          Download Update ⚡
+        <a id="appUpdateDownloadLink" href="https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA.apk" target="_blank" class="confirm-btn-primary" style="text-decoration: none; justify-content: center; padding: 12px; font-weight: 700; font-size: 0.95rem;">
+          Update Now ⚡
         </a>
+        <button id="appUpdateLaterBtn" type="button" class="confirm-btn-secondary" style="justify-content: center; padding: 10px; font-size: 0.88rem; display: none;">
+          Maybe Later
+        </button>
       </div>
     </div>
   </div>

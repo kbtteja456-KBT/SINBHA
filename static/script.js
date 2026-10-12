@@ -2197,17 +2197,36 @@ document.addEventListener("DOMContentLoaded", () => {
             const vInfo = await window.Capacitor.Plugins.SinbhaNative.getAppVersion();
             const current = vInfo.versionName || "1.0.0";
             const minRequired = data.min_version_android || "1.0.0";
-            if (isOlderVersion(current, minRequired)) {
+            const latestAvail = data.latest_version_android || minRequired;
+
+            const isMandatory = isOlderVersion(current, minRequired);
+            const isUpdateAvailable = isOlderVersion(current, latestAvail);
+
+            if (isMandatory || isUpdateAvailable) {
               const gateModal = document.getElementById("appUpdateGateModal");
+              const gateTitle = document.getElementById("appUpdateGateTitle");
               const gateDesc = document.getElementById("appUpdateGateDesc");
               const gateLink = document.getElementById("appUpdateDownloadLink");
+              const laterBtn = document.getElementById("appUpdateLaterBtn");
+
               if (gateModal) {
                 gateModal.style.display = "flex";
+                if (gateTitle) {
+                  gateTitle.textContent = isMandatory ? "Update Required to Continue" : "New Version Available! 🌸";
+                }
                 if (gateDesc) {
-                  gateDesc.innerHTML = `SINBHA v${minRequired} is required to continue.<br>Your installed app (v${current}) is outdated. Please update now.`;
+                  gateDesc.innerHTML = isMandatory
+                    ? `SINBHA v${minRequired} is required to continue.<br>Your installed app (v${current}) is outdated. Please update now.`
+                    : `A newer version of SINBHA (v${latestAvail}) is available.<br>You have v${current}. Tap "Update Now" to get the latest features and companion enhancements!`;
                 }
                 if (gateLink) {
-                  gateLink.href = data.download_url_android || "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest";
+                  gateLink.href = data.download_url_android || "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA.apk";
+                }
+                if (laterBtn) {
+                  laterBtn.style.display = isMandatory ? "none" : "block";
+                  laterBtn.onclick = () => {
+                    gateModal.style.display = "none";
+                  };
                 }
               }
             }
