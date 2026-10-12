@@ -10,6 +10,7 @@
     "build:win": "npm run prebuild && electron-builder --win",
     "dist": "npm run build:win",
     "android:sync": "node scripts/check_secrets.js && npx cap sync android",
+    "bump": "node scripts/bump_version.js",
     "android:check-version": "node scripts/check_version_code.js",
     "keystore:copy": "node scripts/copy_keystore.js",
     "android:open": "npx cap open android",

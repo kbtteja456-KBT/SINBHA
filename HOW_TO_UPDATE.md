@@ -38,15 +38,20 @@ You only need to publish a new APK or Windows installer when you change **native
 
 Whenever you want to release a new version for Android and Windows, follow these 4 simple steps:
 
-### Step 1: Update the Version Numbers on your PC
+### Step 1: Bump Version with One Command
 
-1. In **`package.json`**:
-   Change `"version": "1.0.1"` to `"version": "1.0.2"`.
-2. In **`android/app/build.gradle`**:
-   * Change `versionCode 2` to `versionCode 3` *(must always go up by 1)*.
-   * Change `versionName "1.0.1"` to `versionName "1.0.2"`.
+You don't need to manually edit files! Just run this single command in your terminal:
 
-*(Tip: Our automated script `npm run android:check-version` will ensure your version numbers are correct before building).*
+```powershell
+npm run bump
+```
+
+This single command automatically:
+* Increments the version in `package.json` (e.g. `1.0.1` ➔ `1.0.2`)
+* Increments `versionCode` by +1 in `android/app/build.gradle` (e.g. `2` ➔ `3`)
+* Synchronizes `versionName` in `android/app/build.gradle`
+
+*(Or if making a bigger update, you can run `npm run bump minor` for `1.1.0`)*
 
 ---
 
@@ -88,9 +93,26 @@ git push origin android-v1.0.2
 
 ---
 
+## 🔗 4. How to Share the APK Every Time
+
+You do **not** need to find new links every time you release an update! GitHub provides a **permanent direct download link** that automatically routes to the newest APK:
+
+👉 **Permanent APK Download Link:**
+```text
+https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA.apk
+```
+
+* Send this exact link to your friends, family, or other devices on WhatsApp/Telegram/Email.
+* Whenever anyone clicks it, GitHub **always downloads the latest version** automatically!
+* Public Releases Webpage:
+  `https://github.com/kbtteja456-KBT/sinbha-releases/releases`
+
+---
+
 ## 🔒 Important Security Rules
 
 1. **Never delete or regenerate your keystore file**:
    Android will **only** update an installed app if the new APK is signed with the exact same keystore key. Keep your `android/sinbha-release.keystore` backed up safely.
 2. **Always increment `versionCode`**:
-   Android ignores or rejects APKs if the `versionCode` is the same as or lower than the currently installed version.
+   Android ignores or rejects APKs if the `versionCode` is the same as or lower than the currently installed version (`npm run bump` does this automatically).
+
