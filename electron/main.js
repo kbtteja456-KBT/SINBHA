@@ -414,21 +414,30 @@ async function checkMinimumSupportedVersion() {
     }
 
     const currentVersion = app.getVersion();
-    if (data.min_version_desktop && isOlderVersion(currentVersion, data.min_version_desktop)) {
-      const downloadLink = data.download_url_desktop || 'https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest';
+    const minRequired = data.min_version_desktop || '1.0.0';
+    const latestAvail = data.latest_version_desktop || minRequired;
+    const isMandatory = isOlderVersion(currentVersion, minRequired);
+    const isUpdateAvailable = isOlderVersion(currentVersion, latestAvail);
+
+    if (isMandatory || isUpdateAvailable) {
+      const downloadLink = data.download_url_desktop || 'https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA-Setup.exe';
       const choice = await dialog.showMessageBox({
-        type: 'warning',
-        title: 'Update Required 🌸',
-        message: 'Please update SINBHA to continue.',
-        detail: `Your version (${currentVersion}) is no longer supported. Minimum required version is ${data.min_version_desktop}.`,
-        buttons: ['Download Update ⚡', 'Close SINBHA'],
+        type: isMandatory ? 'warning' : 'info',
+        title: isMandatory ? 'Update Required 🌸' : 'New Version Available! 🌸',
+        message: isMandatory ? 'Please update SINBHA to continue.' : `A newer version of SINBHA (v${latestAvail}) is available!`,
+        detail: isMandatory
+          ? `Your version (${currentVersion}) is no longer supported. Minimum required version is ${minRequired}.`
+          : `You are currently using v${currentVersion}. Click "Download Update" to install the newest update.`,
+        buttons: isMandatory ? ['Download Update ⚡', 'Close SINBHA'] : ['Download Update ⚡', 'Maybe Later'],
         defaultId: 0,
         cancelId: 1
       });
       if (choice.response === 0) {
         shell.openExternal(downloadLink);
       }
-      app.exit(0);
+      if (isMandatory) {
+        app.exit(0);
+      }
     }
   } catch (e) {
     // Graceful network timeout fallback

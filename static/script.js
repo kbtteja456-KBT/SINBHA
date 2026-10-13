@@ -2283,42 +2283,79 @@ document.addEventListener("DOMContentLoaded", () => {
           }
         }
 
-        if (window.Capacitor && window.Capacitor.isNativePlatform()) {
+        let isNative = false;
+        let current = "1.0.0";
+        let minRequired = "1.0.0";
+        let latestAvail = "1.0.0";
+        let downloadUrl = "";
+        let platformName = "App";
+
+        // 1. Android Platform (Capacitor)
+        if (window.Capacitor && (window.Capacitor.isNativePlatform() || (window.Capacitor.isPluginAvailable && window.Capacitor.isPluginAvailable("SinbhaNative")))) {
+          isNative = true;
+          platformName = "Android";
+          minRequired = data.min_version_android || "1.0.0";
+          latestAvail = data.latest_version_android || minRequired;
+          downloadUrl = data.download_url_android || "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA.apk";
+
           if (window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative) {
-            const vInfo = await window.Capacitor.Plugins.SinbhaNative.getAppVersion();
-            const current = vInfo.versionName || "1.0.0";
-            const minRequired = data.min_version_android || "1.0.0";
-            const latestAvail = data.latest_version_android || minRequired;
+            try {
+              const vInfo = await window.Capacitor.Plugins.SinbhaNative.getAppVersion();
+              current = vInfo.versionName || "1.0.0";
+            } catch (e) {
+              console.warn("Failed reading native Android version:", e);
+            }
+          } else {
+            // Native plugin still initializing, retry in a moment
+            setTimeout(checkAppVersionGate, 800);
+            return;
+          }
+        }
+        // 2. Windows Desktop Platform (Electron)
+        else if (window.electronAPI && window.electronAPI.getAppStatus) {
+          isNative = true;
+          platformName = "Windows";
+          minRequired = data.min_version_desktop || "1.0.0";
+          latestAvail = data.latest_version_desktop || minRequired;
+          downloadUrl = data.download_url_desktop || "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA-Setup.exe";
 
-            const isMandatory = isOlderVersion(current, minRequired);
-            const isUpdateAvailable = isOlderVersion(current, latestAvail);
+          try {
+            const st = await window.electronAPI.getAppStatus();
+            current = st.version || "1.0.0";
+          } catch (e) {
+            console.warn("Failed reading desktop status:", e);
+          }
+        }
 
-            if (isMandatory || isUpdateAvailable) {
-              const gateModal = document.getElementById("appUpdateGateModal");
-              const gateTitle = document.getElementById("appUpdateGateTitle");
-              const gateDesc = document.getElementById("appUpdateGateDesc");
-              const gateLink = document.getElementById("appUpdateDownloadLink");
-              const laterBtn = document.getElementById("appUpdateLaterBtn");
+        if (isNative) {
+          const isMandatory = isOlderVersion(current, minRequired);
+          const isUpdateAvailable = isOlderVersion(current, latestAvail);
 
-              if (gateModal) {
-                gateModal.style.display = "flex";
-                if (gateTitle) {
-                  gateTitle.textContent = isMandatory ? "Update Required to Continue" : "New Version Available! 🌸";
-                }
-                if (gateDesc) {
-                  gateDesc.innerHTML = isMandatory
-                    ? `SINBHA v${minRequired} is required to continue.<br>Your installed app (v${current}) is outdated. Please update now.`
-                    : `A newer version of SINBHA (v${latestAvail}) is available.<br>You have v${current}. Tap "Update Now" to get the latest features and companion enhancements!`;
-                }
-                if (gateLink) {
-                  gateLink.href = data.download_url_android || "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA.apk";
-                }
-                if (laterBtn) {
-                  laterBtn.style.display = isMandatory ? "none" : "block";
-                  laterBtn.onclick = () => {
-                    gateModal.style.display = "none";
-                  };
-                }
+          if (isMandatory || isUpdateAvailable) {
+            const gateModal = document.getElementById("appUpdateGateModal");
+            const gateTitle = document.getElementById("appUpdateGateTitle");
+            const gateDesc = document.getElementById("appUpdateGateDesc");
+            const gateLink = document.getElementById("appUpdateDownloadLink");
+            const laterBtn = document.getElementById("appUpdateLaterBtn");
+
+            if (gateModal) {
+              gateModal.style.display = "flex";
+              if (gateTitle) {
+                gateTitle.textContent = isMandatory ? `Update Required for ${platformName}` : `New ${platformName} Version Available! 🌸`;
+              }
+              if (gateDesc) {
+                gateDesc.innerHTML = isMandatory
+                  ? `SINBHA v${minRequired} is required to continue.<br>Your installed app (v${current}) is outdated. Please update now.`
+                  : `A newer version of SINBHA (v${latestAvail}) is available.<br>You have v${current}. Tap "Update Now" to get the latest features and companion enhancements!`;
+              }
+              if (gateLink) {
+                gateLink.href = downloadUrl;
+              }
+              if (laterBtn) {
+                laterBtn.style.display = isMandatory ? "none" : "block";
+                laterBtn.onclick = () => {
+                  gateModal.style.display = "none";
+                };
               }
             }
           }
@@ -3483,6 +3520,8 @@ document.addEventListener("DOMContentLoaded", () => {
     // Startup: Verify Authentication status first
     checkAuthStatus();
     checkAppVersionGate();
+    setTimeout(checkAppVersionGate, 1200);
+    setTimeout(checkAppVersionGate, 3000);
 
     // Hook session sync and device init after auth
     const origShowAppScreen = showAppScreen;
@@ -3492,6 +3531,7 @@ document.addEventListener("DOMContentLoaded", () => {
       checkNativeCompanionSettings();
       initDeviceChannel();
       loadDevices();
+      checkAppVersionGate();
     };
 
     // Periodic reminder checker every 60 seconds (only fires if logged in)
