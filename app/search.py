@@ -207,6 +207,8 @@ def sanitize_search_query(raw_query: str, user_facts: list = None, user_email: s
     filler_patterns = [
         r"(?i)^(can you\s+)?(please\s+)?(search\s+for|search\s+the\s+web\s+for|look\s+up|google|find\s+out|tell\s+me\s+about|what\s+is\s+the\s+latest\s+on|check\s+the\s+web\s+for|find\s+online)\s+",
         r"(?i)^(sinbha\s*,?\s*)",
+        r"(?i)^(bro+|dude|buddy|man|heyy*|hi|hello)\s*,?\s*",
+        r"(?i)^(can\s+you\s+)?(please\s+)?(check\s+the\s+|check\s+)\b",
         r"(?i)\b(can you please|could you|please)\b"
     ]
     for pattern in filler_patterns:
@@ -256,13 +258,19 @@ def detect_search_intent(message: str) -> Tuple[bool, Optional[str], Optional[st
     # Search trigger indicators
     search_triggers = [
         r"\b(search|look\s+up|google|browse\s+online)\b",
-        r"\b(latest|current|today's|recent)\s+(news|prices?|updates?|facts?|events?|scores?|weather|stock)\b",
+        r"\b(latest|current|today'?s?|recent)\s+(news|prices?|updates?|facts?|events?|scores?|weather|stock|matches?|games?)\b",
+        r"\b(cricket|football|sports?)\s+(matches?|games?|score|scores)\b",
+        r"\b(matches?|games?)\s+(today|tonight)\b",
+        r"\b(is\s+there\s+any|are\s+there\s+any)\s+(cricket\s+|football\s+|sports?\s+)?matches?\b",
         r"\b(price\s+of|cost\s+of|how\s+much\s+(is|does|are))\b",
         r"\b(who\s+won|score\s+of|weather\s+in|stock\s+price)\b",
         r"\b(check\s+this\s+(website|page|site|link))\b",
+        r"\b(check\s+(the\s+)?(price|cost|score|status)\b)",
         r"\b(verify\s+online|find\s+out\s+online)\b",
         r"\b(is\s+it\s+true\s+that)\b",
-        r"\b(who\s+is\s+currently\s+the|current\s+ceo\s+of|current\s+president\s+of)\b"
+        r"\b(who\s+is\s+(the\s+|currently\s+the\s+)?(captain|coach|ceo|president|prime\s+minister)\b)",
+        r"\b(current\s+ceo\s+of|current\s+president\s+of)\b",
+        r"\bcaptain\s+of\b"
     ]
 
     for trigger in search_triggers:

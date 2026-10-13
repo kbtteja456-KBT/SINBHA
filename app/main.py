@@ -789,7 +789,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
                     "sources": search_res.sources,
                     "cached": search_res.cached
                 }
-            elif search_res.error == "missing_api_key" and (d_url or "search" in user_msg.lower()):
+            elif search_res.error == "missing_api_key":
                 web_search_meta = {
                     "searched": False,
                     "error": "missing_api_key",
@@ -805,7 +805,10 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
     ai_reply = brain_result.get("reply", "I'm right here with you 🌸")
 
     if web_search_meta and not web_search_meta.get("searched") and web_search_meta.get("error") == "missing_api_key":
-        ai_reply = "I wanted to check the web for you, but my search key isn't configured yet in the .env file! 🌸"
+        ai_reply = (
+            "I tried to search the web for you, but my search key (`TAVILY_API_KEY`) isn't configured in the server environment yet! 🌸\n\n"
+            "If your backend is running on Render, please add `TAVILY_API_KEY` in your Render Dashboard under **Environment Variables**. Once added, I'll be able to look up live prices, news, and match updates for you right away!"
+        )
 
     # 8. Check if AI proposed a structured task
     task_proposal_obj = None
