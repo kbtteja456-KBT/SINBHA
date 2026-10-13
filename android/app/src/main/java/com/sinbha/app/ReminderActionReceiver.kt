@@ -18,6 +18,7 @@ class ReminderActionReceiver : BroadcastReceiver() {
         const val ACTION_MARK_DONE = "com.sinbha.app.ACTION_MARK_DONE"
         const val ACTION_SNOOZE = "com.sinbha.app.ACTION_SNOOZE"
         const val EXTRA_TASK_ID = "extra_task_id"
+        const val EXTRA_MINUTES = "extra_minutes"
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -37,8 +38,9 @@ class ReminderActionReceiver : BroadcastReceiver() {
                 }
             }
             ACTION_SNOOZE -> {
+                val minutes = intent.getIntExtra(EXTRA_MINUTES, 2)
                 scope.launch {
-                    apiClient.snoozeReminder(taskId, 15)
+                    apiClient.snoozeReminder(taskId, minutes)
                 }
             }
         }

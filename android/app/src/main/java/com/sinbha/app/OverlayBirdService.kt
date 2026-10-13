@@ -207,7 +207,7 @@ class OverlayBirdService : Service() {
             visibility = View.GONE
 
             layoutParams = FrameLayout.LayoutParams(
-                (220 * density).toInt(),
+                (245 * density).toInt(),
                 FrameLayout.LayoutParams.WRAP_CONTENT
             ).apply {
                 topMargin = (74 * density).toInt()
@@ -230,7 +230,7 @@ class OverlayBirdService : Service() {
             text = currentDueText
             textSize = 12f
             setTextColor(Color.parseColor("#EC4899"))
-            setPadding(0, (2 * density).toInt(), 0, (8 * density).toInt())
+            setPadding(0, (2 * density).toInt(), 0, (6 * density).toInt())
         }
         card.addView(dueTv)
 
@@ -243,8 +243,8 @@ class OverlayBirdService : Service() {
         val btnDone = createActionButton("✓ Done", "#10B981") {
             handleDoneAction()
         }
-        val btnSnooze = createActionButton("⏰ 15m", "#F59E0B") {
-            handleSnoozeAction()
+        val btnSnooze = createActionButton("⏰ Snooze ▾", "#F59E0B") {
+            // Toggled below
         }
         val btnChat = createActionButton("💬 Chat", "#EC4899") {
             handleOpenChatAction()
@@ -258,6 +258,121 @@ class OverlayBirdService : Service() {
         actionsRow.addView(btnChat)
         actionsRow.addView(btnDismiss)
         card.addView(actionsRow)
+
+        // Expandable Snooze Options Panel (1m, 2m, custom minutes)
+        var selectedSnoozeMins = 2
+        val snoozePanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setPadding(0, (8 * density).toInt(), 0, 0)
+        }
+
+        val snoozeHeaderTv = TextView(this).apply {
+            text = "⏰ Snooze for:"
+            textSize = 11f
+            setTextColor(Color.parseColor("#D97706"))
+            paint.isFakeBoldText = true
+            setPadding(0, 0, 0, (4 * density).toInt())
+        }
+        snoozePanel.addView(snoozeHeaderTv)
+
+        // Preset Chips Row: 1m, 2m, 5m, 15m, 30m
+        val quickChipsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, (6 * density).toInt())
+        }
+
+        val presets = listOf(1, 2, 5, 15, 30)
+        for (mins in presets) {
+            val chip = TextView(this).apply {
+                text = "${mins}m"
+                textSize = 11f
+                setTextColor(Color.parseColor("#92400E"))
+                paint.isFakeBoldText = true
+                setPadding((7 * density).toInt(), (4 * density).toInt(), (7 * density).toInt(), (4 * density).toInt())
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = 8 * density
+                    setColor(Color.parseColor("#FEF3C7"))
+                    setStroke((1 * density).toInt(), Color.parseColor("#FDE68A"))
+                }
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    marginEnd = (5 * density).toInt()
+                }
+                setOnClickListener {
+                    handleSnoozeAction(mins)
+                }
+            }
+            quickChipsRow.addView(chip)
+        }
+        snoozePanel.addView(quickChipsRow)
+
+        // Custom Stepper Row: [-] [ 2 min ] [+] [ Set ✓ ]
+        val customStepperRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        val customMinsTv = TextView(this).apply {
+            text = "$selectedSnoozeMins min"
+            textSize = 12f
+            setTextColor(Color.parseColor("#0F172A"))
+            paint.isFakeBoldText = true
+            gravity = Gravity.CENTER
+            setPadding((8 * density).toInt(), (2 * density).toInt(), (8 * density).toInt(), (2 * density).toInt())
+        }
+
+        val btnMinus = createSmallButton("－") {
+            if (selectedSnoozeMins > 1) {
+                selectedSnoozeMins--
+                customMinsTv.text = "$selectedSnoozeMins min"
+            }
+        }
+
+        val btnPlus = createSmallButton("＋") {
+            if (selectedSnoozeMins < 1440) {
+                selectedSnoozeMins++
+                customMinsTv.text = "$selectedSnoozeMins min"
+            }
+        }
+
+        val btnSetCustom = TextView(this).apply {
+            text = "Set ✓"
+            textSize = 11f
+            setTextColor(Color.WHITE)
+            paint.isFakeBoldText = true
+            setPadding((10 * density).toInt(), (4 * density).toInt(), (10 * density).toInt(), (4 * density).toInt())
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 8 * density
+                setColor(Color.parseColor("#F59E0B"))
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                marginStart = (6 * density).toInt()
+            }
+            setOnClickListener {
+                handleSnoozeAction(selectedSnoozeMins)
+            }
+        }
+
+        customStepperRow.addView(btnMinus)
+        customStepperRow.addView(customMinsTv)
+        customStepperRow.addView(btnPlus)
+        customStepperRow.addView(btnSetCustom)
+        snoozePanel.addView(customStepperRow)
+
+        card.addView(snoozePanel)
+
+        btnSnooze.setOnClickListener {
+            snoozePanel.visibility = if (snoozePanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+        }
 
         container.addView(card)
         container.addView(birdIv)
@@ -311,6 +426,26 @@ class OverlayBirdService : Service() {
             ).apply {
                 marginEnd = (6 * density).toInt()
             }
+            setOnClickListener { onClick() }
+        }
+    }
+
+    private fun createSmallButton(symbol: String, onClick: () -> Unit): TextView {
+        val density = resources.displayMetrics.density
+        return TextView(this).apply {
+            text = symbol
+            textSize = 13f
+            setTextColor(Color.parseColor("#475569"))
+            paint.isFakeBoldText = true
+            gravity = Gravity.CENTER
+            setPadding((8 * density).toInt(), (2 * density).toInt(), (8 * density).toInt(), (2 * density).toInt())
+            val bg = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 6 * density
+                setColor(Color.parseColor("#F1F5F9"))
+                setStroke((1 * density).toInt(), Color.parseColor("#CBD5E1"))
+            }
+            background = bg
             setOnClickListener { onClick() }
         }
     }
@@ -411,10 +546,10 @@ class OverlayBirdService : Service() {
         dismissBirdGracefully()
     }
 
-    private fun handleSnoozeAction() {
+    private fun handleSnoozeAction(minutes: Int = 15) {
         if (currentTaskId > 0) {
             serviceScope.launch {
-                apiClient.snoozeReminder(currentTaskId, 15)
+                apiClient.snoozeReminder(currentTaskId, minutes)
             }
         }
         dismissBirdGracefully()

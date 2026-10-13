@@ -114,15 +114,29 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // Action: Snooze 15m
-        val snoozeIntent = Intent(context, ReminderActionReceiver::class.java).apply {
+        // Action: Snooze 2m
+        val snooze2Intent = Intent(context, ReminderActionReceiver::class.java).apply {
             action = ReminderActionReceiver.ACTION_SNOOZE
             putExtra(ReminderActionReceiver.EXTRA_TASK_ID, taskId)
+            putExtra(ReminderActionReceiver.EXTRA_MINUTES, 2)
         }
-        val pSnooze = PendingIntent.getBroadcast(
+        val pSnooze2 = PendingIntent.getBroadcast(
+            context,
+            taskId * 10 + 4,
+            snooze2Intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // Action: Snooze 15m
+        val snooze15Intent = Intent(context, ReminderActionReceiver::class.java).apply {
+            action = ReminderActionReceiver.ACTION_SNOOZE
+            putExtra(ReminderActionReceiver.EXTRA_TASK_ID, taskId)
+            putExtra(ReminderActionReceiver.EXTRA_MINUTES, 15)
+        }
+        val pSnooze15 = PendingIntent.getBroadcast(
             context,
             taskId * 10 + 2,
-            snoozeIntent,
+            snooze15Intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -148,7 +162,8 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
             .setAutoCancel(true)
             .setContentIntent(pOpen)
             .addAction(R.drawable.ic_sinbha, "✓ Done", pDone)
-            .addAction(R.drawable.ic_sinbha, "⏰ Snooze 15m", pSnooze)
+            .addAction(R.drawable.ic_sinbha, "⏰ 2m", pSnooze2)
+            .addAction(R.drawable.ic_sinbha, "⏰ 15m", pSnooze15)
             .build()
 
         manager.notify(taskId, notif)

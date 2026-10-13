@@ -1627,8 +1627,9 @@ document.addEventListener("DOMContentLoaded", () => {
   if (birdSnoozeSubmitBtn) {
     birdSnoozeSubmitBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      const mins = birdSnoozeMinsInput ? parseInt(birdSnoozeMinsInput.value, 10) : 15;
-      executeWebSnooze(mins || 15);
+      const rawVal = birdSnoozeMinsInput ? parseInt(birdSnoozeMinsInput.value, 10) : 2;
+      const mins = (!isNaN(rawVal) && rawVal > 0) ? rawVal : 2;
+      executeWebSnooze(mins);
     });
   }
 
@@ -1637,8 +1638,9 @@ document.addEventListener("DOMContentLoaded", () => {
       if (e.key === "Enter") {
         e.preventDefault();
         e.stopPropagation();
-        const mins = parseInt(birdSnoozeMinsInput.value, 10);
-        executeWebSnooze(mins || 15);
+        const rawVal = parseInt(birdSnoozeMinsInput.value, 10);
+        const mins = (!isNaN(rawVal) && rawVal > 0) ? rawVal : 2;
+        executeWebSnooze(mins);
       }
     });
   }
