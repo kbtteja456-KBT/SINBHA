@@ -1,4 +1,5 @@
 import os
+import json
 import socket
 import re
 import datetime
@@ -1032,12 +1033,12 @@ async def app_version_check_endpoint():
     than the latest published version, ignores it, clamps to latest, and logs a warning.
     """
     # Read current package.json version dynamically as fallback
-    pkg_version = "1.0.2"
+    pkg_version = "1.0.4"
     pkg_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "package.json")
     if os.path.exists(pkg_file):
         try:
             with open(pkg_file, "r", encoding="utf-8") as f:
-                pkg_version = json.load(f).get("version", "1.0.2")
+                pkg_version = json.load(f).get("version", "1.0.4")
         except Exception:
             pass
 
