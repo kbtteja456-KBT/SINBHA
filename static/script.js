@@ -325,6 +325,8 @@ document.addEventListener("DOMContentLoaded", () => {
           </div>
         `;
       }
+    }
+
     let webSearchHtml = "";
     if (webSearch && webSearch.searched) {
       let sourcesHtml = "";
@@ -2290,40 +2292,31 @@ document.addEventListener("DOMContentLoaded", () => {
         let downloadUrl = "";
         let platformName = "App";
 
-        // 1. Android Platform (Capacitor)
-        if (window.Capacitor && (window.Capacitor.isNativePlatform() || (window.Capacitor.isPluginAvailable && window.Capacitor.isPluginAvailable("SinbhaNative")))) {
-          isNative = true;
-          platformName = "Android";
-          minRequired = data.min_version_android || "1.0.0";
-          latestAvail = data.latest_version_android || minRequired;
-          downloadUrl = data.download_url_android || "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA.apk";
-
-          if (window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative) {
-            try {
-              const vInfo = await window.Capacitor.Plugins.SinbhaNative.getAppVersion();
-              current = vInfo.versionName || "1.0.0";
-            } catch (e) {
-              console.warn("Failed reading native Android version:", e);
-            }
-          } else {
-            // Native plugin still initializing, retry in a moment
-            setTimeout(checkAppVersionGate, 800);
-            return;
-          }
-        }
-        // 2. Windows Desktop Platform (Electron)
-        else if (window.electronAPI && window.electronAPI.getAppStatus) {
+        if (window.electronAPI && typeof window.electronAPI.getAppStatus === "function") {
           isNative = true;
           platformName = "Windows";
           minRequired = data.min_version_desktop || "1.0.0";
-          latestAvail = data.latest_version_desktop || minRequired;
+          latestAvail = data.latest_version_desktop || "1.0.6";
           downloadUrl = data.download_url_desktop || "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA-Setup.exe";
-
           try {
             const st = await window.electronAPI.getAppStatus();
-            current = st.version || "1.0.0";
+            current = (st && st.version) ? st.version : "1.0.0";
           } catch (e) {
-            console.warn("Failed reading desktop status:", e);
+            current = "1.0.0";
+          }
+        } else if (window.Capacitor && (window.Capacitor.isNativePlatform() || (typeof window.Capacitor.isPluginAvailable === "function" && window.Capacitor.isPluginAvailable("SinbhaNative")))) {
+          isNative = true;
+          platformName = "Android";
+          minRequired = data.min_version_android || "1.0.0";
+          latestAvail = data.latest_version_android || "1.0.6";
+          downloadUrl = data.download_url_android || "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA.apk";
+          try {
+            if (window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative && typeof window.Capacitor.Plugins.SinbhaNative.getAppVersion === "function") {
+              const vInfo = await window.Capacitor.Plugins.SinbhaNative.getAppVersion();
+              current = (vInfo && vInfo.versionName) ? vInfo.versionName : "1.0.0";
+            }
+          } catch (e) {
+            current = "1.0.0";
           }
         }
 
@@ -3520,8 +3513,6 @@ document.addEventListener("DOMContentLoaded", () => {
     // Startup: Verify Authentication status first
     checkAuthStatus();
     checkAppVersionGate();
-    setTimeout(checkAppVersionGate, 1200);
-    setTimeout(checkAppVersionGate, 3000);
 
     // Hook session sync and device init after auth
     const origShowAppScreen = showAppScreen;
@@ -3531,7 +3522,6 @@ document.addEventListener("DOMContentLoaded", () => {
       checkNativeCompanionSettings();
       initDeviceChannel();
       loadDevices();
-      checkAppVersionGate();
     };
 
     // Periodic reminder checker every 60 seconds (only fires if logged in)
