@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="theme-color" content="#fff5f7">
   <title>SINBHA - Your Personal Companion</title>
   <link rel="icon" type="image/png" href="/static/favicon.png">
@@ -471,25 +471,27 @@
   <!-- CHANGE PASSWORD MODAL (Requirement 9) -->
   <div class="confirm-modal-overlay" id="changePasswordModal" style="display: none;">
     <div class="confirm-modal-card" style="max-width: 420px; text-align: left;">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+      <div class="modal-sticky-header">
         <h3 style="margin: 0; color: #db2777;">🔑 Change Password</h3>
-        <button id="closeChangePasswordBtn" class="popup-close-btn" style="font-size: 1.4rem; background: none; border: none; cursor: pointer;">&times;</button>
+        <button id="closeChangePasswordBtn" class="popup-close-btn" aria-label="Close change password">&times;</button>
       </div>
-      <p style="font-size: 0.82rem; color: #6b7280; margin-bottom: 14px;">Updating your password will immediately invalidate all other active sessions across your devices.</p>
-      <form id="changePasswordForm">
-        <div style="margin-bottom: 12px;">
-          <label style="display: block; font-size: 0.82rem; font-weight: 600; margin-bottom: 4px; color: #374151;">Current Password</label>
-          <input type="password" id="currentPasswordInput" required style="width: 100%; padding: 8px 12px; border: 1.5px solid #e5e7eb; border-radius: 8px; font-size: 0.9rem;">
-        </div>
-        <div style="margin-bottom: 16px;">
-          <label style="display: block; font-size: 0.82rem; font-weight: 600; margin-bottom: 4px; color: #374151;">New Password (min 8 chars)</label>
-          <input type="password" id="newPasswordInput" required minlength="8" style="width: 100%; padding: 8px 12px; border: 1.5px solid #e5e7eb; border-radius: 8px; font-size: 0.9rem;">
-        </div>
-        <div style="display: flex; justify-content: flex-end; gap: 8px;">
-          <button type="button" id="cancelChangePasswordBtn" class="confirm-btn-secondary">Cancel</button>
-          <button type="submit" id="submitChangePasswordBtn" class="confirm-btn-primary">Update Password</button>
-        </div>
-      </form>
+      <div class="modal-scroll-body">
+        <p style="font-size: 0.82rem; color: #6b7280; margin-bottom: 14px;">Updating your password will immediately invalidate all other active sessions across your devices.</p>
+        <form id="changePasswordForm">
+          <div style="margin-bottom: 12px;">
+            <label style="display: block; font-size: 0.82rem; font-weight: 600; margin-bottom: 4px; color: #374151;">Current Password</label>
+            <input type="password" id="currentPasswordInput" required style="width: 100%; padding: 8px 12px; border: 1.5px solid #e5e7eb; border-radius: 8px; font-size: 0.9rem;">
+          </div>
+          <div style="margin-bottom: 16px;">
+            <label style="display: block; font-size: 0.82rem; font-weight: 600; margin-bottom: 4px; color: #374151;">New Password (min 8 chars)</label>
+            <input type="password" id="newPasswordInput" required minlength="8" style="width: 100%; padding: 8px 12px; border: 1.5px solid #e5e7eb; border-radius: 8px; font-size: 0.9rem;">
+          </div>
+          <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px;">
+            <button type="button" id="cancelChangePasswordBtn" class="confirm-btn-secondary">Cancel</button>
+            <button type="submit" id="submitChangePasswordBtn" class="confirm-btn-primary">Update Password</button>
+          </div>
+        </form>
+      </div>
     </div>
   </div>
 
@@ -522,17 +524,17 @@
   <!-- TERMS OF SERVICE MODAL (Requirement 14: Marked Needs Legal Review) -->
   <div class="confirm-modal-overlay" id="termsModal" style="display: none;">
     <div class="confirm-modal-card" style="max-width: 520px; text-align: left;">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+      <div class="modal-sticky-header">
         <h3 style="margin: 0; color: #db2777;">🌸 Terms of Service <span style="font-size: 0.7rem; background: #fef08a; color: #854d0e; padding: 2px 6px; border-radius: 4px; font-weight: normal;">Needs Legal Review</span></h3>
-        <button id="closeTermsBtn" class="popup-close-btn" style="font-size: 1.4rem; background: none; border: none; cursor: pointer;">&times;</button>
+        <button id="closeTermsBtn" class="popup-close-btn" aria-label="Close terms of service">&times;</button>
       </div>
-      <div style="font-size: 0.84rem; color: #4b5563; line-height: 1.5; max-height: 320px; overflow-y: auto; padding-right: 6px;">
+      <div class="modal-scroll-body modal-text-content">
         <p><strong>1. AI Companion & Boundaries:</strong> SINBHA is an automated AI personal assistant designed to help you organize daily tasks, habits, and gentle reminders. <em>SINBHA is NOT a licensed therapist, healthcare professional, or emergency crisis service.</em> If you are experiencing a mental health emergency, please immediately call 988 or your local emergency services.</p>
         <p><strong>2. Age Requirement (18+):</strong> You must be at least 18 years of age to register and use SINBHA.</p>
         <p><strong>3. AI Provider Processing:</strong> Your chat messages are processed by an AI provider (e.g. OpenRouter / Google Gemini) to generate conversational responses and extract schedule details.</p>
         <p><strong>4. Account Security:</strong> You are responsible for safeguarding your credentials with a strong password (minimum 8 characters).</p>
       </div>
-      <div style="margin-top: 16px; text-align: right;">
+      <div class="modal-sticky-footer" style="margin-top: 16px; text-align: right;">
         <button id="confirmTermsCloseBtn" class="confirm-btn-secondary">Close</button>
       </div>
     </div>
@@ -541,17 +543,17 @@
   <!-- PRIVACY POLICY MODAL (Requirement 14: Marked Needs Legal Review) -->
   <div class="confirm-modal-overlay" id="privacyModal" style="display: none;">
     <div class="confirm-modal-card" style="max-width: 520px; text-align: left;">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+      <div class="modal-sticky-header">
         <h3 style="margin: 0; color: #db2777;">🌸 Privacy Policy <span style="font-size: 0.7rem; background: #fef08a; color: #854d0e; padding: 2px 6px; border-radius: 4px; font-weight: normal;">Needs Legal Review</span></h3>
-        <button id="closePrivacyBtn" class="popup-close-btn" style="font-size: 1.4rem; background: none; border: none; cursor: pointer;">&times;</button>
+        <button id="closePrivacyBtn" class="popup-close-btn" aria-label="Close privacy policy">&times;</button>
       </div>
-      <div style="font-size: 0.84rem; color: #4b5563; line-height: 1.5; max-height: 320px; overflow-y: auto; padding-right: 6px;">
+      <div class="modal-scroll-body modal-text-content">
         <p><strong>1. Strict User Isolation:</strong> Every message, fact, task, and reminder is bound to your user account and never shared with other users. Admins cannot read your chat contents.</p>
         <p><strong>2. Encryption at Rest:</strong> Sensitive message contents and memory facts are stored encrypted at rest in our database using Fernet symmetric encryption.</p>
         <p><strong>3. AI Processing:</strong> Messages are processed by third-party AI models to interpret tasks and reply warmly. Plain passwords and tokens are never logged.</p>
         <p><strong>4. Data Rights:</strong> You can download a complete JSON archive of all your data (Settings → Download My Data) or permanently delete your account and all associated data at any time.</p>
       </div>
-      <div style="margin-top: 16px; text-align: right;">
+      <div class="modal-sticky-footer" style="margin-top: 16px; text-align: right;">
         <button id="confirmPrivacyCloseBtn" class="confirm-btn-secondary">Close</button>
       </div>
     </div>

@@ -3,6 +3,34 @@
 // ========================================================
 
 document.addEventListener("DOMContentLoaded", () => {
+  // Dynamic Viewport & Keyboard Adaptation (Mobile & Capacitor)
+  function syncViewportMetrics() {
+    const vv = window.visualViewport;
+    const viewportHeight = vv ? vv.height : window.innerHeight;
+    const keyboardHeight = Math.max(0, window.innerHeight - viewportHeight);
+    document.documentElement.style.setProperty("--app-viewport-height", `${viewportHeight}px`);
+    document.documentElement.style.setProperty("--keyboard-height", `${keyboardHeight}px`);
+  }
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", syncViewportMetrics);
+    window.visualViewport.addEventListener("scroll", syncViewportMetrics);
+  }
+  window.addEventListener("resize", syncViewportMetrics);
+  window.addEventListener("orientationchange", () => setTimeout(syncViewportMetrics, 150));
+  syncViewportMetrics();
+
+  document.addEventListener("focusin", (e) => {
+    if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.target.tagName === "TEXTAREA")) {
+      const parentModal = e.target.closest(".settings-modal-card, .confirm-modal-card, .side-drawer");
+      if (parentModal) {
+        setTimeout(() => {
+          e.target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        }, 220);
+      }
+    }
+  });
+
   const messageInput = document.getElementById("messageInput");
   const sendBtn = document.getElementById("sendBtn");
   const chatMessages = document.getElementById("chatMessages");
@@ -1045,7 +1073,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Settings & Purge handling
   openSettingsBtn.addEventListener("click", () => {
+    syncViewportMetrics();
     settingsModal.style.display = "flex";
+    const modalBody = settingsModal.querySelector(".settings-modal-body");
+    if (modalBody) modalBody.scrollTop = 0;
   });
 
   closeSettingsBtn.addEventListener("click", () => {
@@ -1053,6 +1084,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   openPurgeConfirmBtn.addEventListener("click", () => {
+    syncViewportMetrics();
     purgeConfirmModal.style.display = "flex";
   });
 
@@ -1102,20 +1134,26 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Drawer toggles
   function openTaskDrawer() {
+    syncViewportMetrics();
     closeDrawers();
     taskDrawer.classList.add("open");
     drawerOverlay.classList.add("active");
     taskDrawer.setAttribute("aria-hidden", "false");
+    const drawerContent = taskDrawer.querySelector(".drawer-content");
+    if (drawerContent) drawerContent.scrollTop = 0;
     loadTasks();
   }
 
   function openDevDrawer() {
     if (!isDevMode) return;
+    syncViewportMetrics();
     closeDrawers();
     devMemoryDrawer.style.display = "block";
     devMemoryDrawer.classList.add("open");
     drawerOverlay.classList.add("active");
     devMemoryDrawer.setAttribute("aria-hidden", "false");
+    const devContent = devMemoryDrawer.querySelector(".drawer-content");
+    if (devContent) devContent.scrollTop = 0;
     loadDevData();
   }
 
