@@ -49,6 +49,7 @@ class User(Base):
     facts = relationship("Fact", back_populates="user", cascade="all, delete-orphan")
     pending_actions = relationship("PendingAction", back_populates="user", cascade="all, delete-orphan")
     device_tokens = relationship("DeviceToken", back_populates="user", cascade="all, delete-orphan")
+    devices = relationship("Device", back_populates="user", cascade="all, delete-orphan")
 
 class Session(Base):
     __tablename__ = "sessions"
@@ -182,3 +183,30 @@ class PendingAction(Base):
     created_at = Column(DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False)
 
     user = relationship("User", back_populates="pending_actions")
+
+class Device(Base):
+    """
+    Step 16: Device pairing and secure command channel.
+    Tracks user devices, pairing status, permissions, and capabilities.
+    """
+    __tablename__ = "devices"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    device_id = Column(String(64), unique=True, nullable=False, index=True)
+    name = Column(String(128), nullable=False)
+    platform = Column(String(64), default="web", nullable=False)
+    status = Column(String(32), default="pending", nullable=False)  # "trusted", "pending", "revoked"
+    permission_level = Column(Integer, default=1, nullable=False)  # 0=read-only, 1=safe, 2=confirm, 3=sensitive, 4=never automatic
+    capabilities_json = Column(Text, default='{"note": true, "open_link": true, "ring": true, "sync": true}', nullable=False)
+    pairing_code = Column(String(16), nullable=True, index=True)
+    pairing_expires_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False)
+    last_seen_at = Column(DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False)
+
+    user = relationship("User", back_populates="devices")
+
+    __table_args__ = (
+        Index("ix_devices_user_status", "user_id", "status"),
+    )
+

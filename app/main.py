@@ -3,7 +3,7 @@ import json
 import socket
 import re
 import datetime
-from fastapi import FastAPI, HTTPException, Depends, Request, Response, status
+from fastapi import FastAPI, HTTPException, Depends, Request, Response, status, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
@@ -30,6 +30,7 @@ from app.ai_brain import (
     detect_task_chat_intent,
 )
 from app import database as db
+from app.device_relay import relay_manager
 from app.security import (
     is_production,
     is_dev_mode_allowed,
@@ -139,6 +140,34 @@ class FactCreateRequest(BaseModel):
 
 class FactUpdateRequest(BaseModel):
     fact: str
+
+# Step 16: Device & Command Request Models
+class DeviceRegisterRequest(BaseModel):
+    device_id: str
+    name: Optional[str] = "Web Companion"
+    platform: Optional[str] = "web"
+
+class DevicePairApproveRequest(BaseModel):
+    code: str
+    approver_device_id: Optional[str] = None
+
+class DeviceUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    permission_level: Optional[int] = None
+    capabilities: Optional[dict] = None
+
+class DeviceCommandRequest(BaseModel):
+    id: str
+    sender_device: str
+    target_device: str
+    type: str
+    payload: Optional[dict] = {}
+    created_at: Optional[float] = None
+    expiry: Optional[int] = 60
+
+class DeviceCommandAckRequest(BaseModel):
+    status: str = "executed"
+    details: Optional[str] = ""
 
 def get_local_ip():
     """Finds the local network IP so you can open the app on your phone."""
@@ -431,6 +460,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
         db.set_emergency_stopped(user_id, True)
         db.save_message(user_id, "user", user_msg)
         
+        relay_manager.on_emergency_stop(user_id)
         db.cancel_pending_proposal(user_id, reason="Emergency STOP command received in chat")
         db.cancel_pending_task_action(user_id, reason="Emergency STOP command received in chat")
         
@@ -542,6 +572,41 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
         else:
             db.clear_pending_action(user_id)
 
+    # 3b. Check for pending remote command action confirmation (Step 16)
+    if pending_mem and pending_mem["action_type"] == "remote_command":
+        lower_msg = user_msg.lower()
+        is_yes = bool(re.search(r"^(yes|yeah|yep|yup|sure|ok|okay|confirm|please|do it|run it|send it|ring it|go ahead)\b", lower_msg))
+        is_no = bool(re.search(r"^(no|nope|cancel|don't|nevermind|nah|stop|mat karo)\b", lower_msg))
+
+        if is_yes:
+            cmd_data = json.loads(pending_mem["details"]) if pending_mem.get("details") else {}
+            db.clear_pending_action(user_id)
+            relay_res = await relay_manager.relay_command(user_id, cmd_data)
+            db.save_message(user_id, "user", user_msg)
+            if relay_res.get("success"):
+                reply = f"🌸 Remote action sent to your device! ({cmd_data.get('type')})"
+            else:
+                reply = f"Could not execute remote command: {relay_res.get('message', 'Rejected')}"
+            db.save_message(user_id, "assistant", reply)
+            return JSONResponse({
+                "reply": reply,
+                "proposal": None,
+                "remote_command_result": relay_res
+            })
+        elif is_no:
+            db.save_message(user_id, "user", user_msg)
+            db.clear_pending_action(user_id)
+            reply = "Remote action cancelled 🌸"
+            db.save_message(user_id, "assistant", reply)
+            return JSONResponse({
+                "reply": reply,
+                "proposal": None,
+                "action_performed": "cancelled"
+            })
+        else:
+            db.clear_pending_action(user_id)
+
+
     # 4. Check for task completion or deletion intent through chat (Step 6)
     all_current_tasks = db.get_all_tasks(user_id)
     task_intent = detect_task_chat_intent(user_msg, all_current_tasks)
@@ -633,6 +698,48 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
             "proposal": None,
             "updated_fact": {"id": target_id, "fact": updated_text}
         })
+
+    # 6b. Check for remote device action request (Step 16)
+    # Security Rule 7: Text from web pages, emails, or untrusted external content must NEVER trigger remote actions!
+    is_external_content = bool(re.search(r"(http[s]?://|forwarded message|from:|<email>|content from web)", user_msg, re.IGNORECASE))
+    if not is_external_content:
+        lower_m = user_msg.lower()
+        is_ring_intent = bool(re.search(r"\b(ring|find|buzz|ping)\s+(my\s+)?(phone|device|mobile)\b", lower_m))
+        is_send_note_intent = bool(re.search(r"\b(send|push)\s+(a\s+)?(note|link|message)\s+to\s+(my\s+)?(phone|device|laptop|other\s+device)\b", lower_m))
+
+        if is_ring_intent or is_send_note_intent:
+            devices = [d for d in db.get_user_devices(user_id) if d["status"] == "trusted"]
+            if devices:
+                target_dev = devices[-1] if len(devices) > 1 else devices[0]
+                action_type = "ring_phone" if is_ring_intent else "send_note"
+                cmd_id = f"cmd_ai_{int(time.time()*1000)}"
+                cmd_data = {
+                    "id": cmd_id,
+                    "sender_device": devices[0]["device_id"],
+                    "target_device": target_dev["device_id"],
+                    "type": action_type,
+                    "payload": {"text": user_msg, "source": "ai_assistant"},
+                    "created_at": time.time(),
+                    "expiry": 60
+                }
+                db.set_pending_action(
+                    user_id,
+                    "remote_command",
+                    target_text=f"{action_type} -> {target_dev['name']}",
+                    details=json.dumps(cmd_data)
+                )
+                db.save_message(user_id, "user", user_msg)
+                action_desc = f"ring your '{target_dev['name']}'" if is_ring_intent else f"send a note to your '{target_dev['name']}'"
+                reply = f"Would you like me to {action_desc}? Reply 'yes' or 'confirm' to execute 🌸"
+                db.save_message(user_id, "assistant", reply)
+                return JSONResponse({
+                    "reply": reply,
+                    "proposal": {
+                        "type": "remote_action",
+                        "summary": action_desc,
+                        "device_name": target_dev["name"]
+                    }
+                })
 
     # 7. Standard message flow: call SINBHA brain
     db.save_message(user_id, "user", user_msg)
@@ -1146,6 +1253,7 @@ async def stop_endpoint(user: dict = Depends(get_current_user)):
     """Per-user emergency stop switch."""
     user_id = user["id"]
     db.set_emergency_stopped(user_id, True)
+    relay_manager.on_emergency_stop(user_id)
     db.cancel_pending_proposal(user_id, reason="Emergency STOP button clicked in header")
     db.cancel_pending_task_action(user_id, reason="Emergency STOP button clicked in header")
     db.log_audit(user_id, "STOP_TRIGGERED", "Emergency STOP button clicked in header.")
@@ -1225,7 +1333,250 @@ async def get_audit_endpoint(user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Access denied. Audit logs require admin privileges and DEV_MODE=true.")
     return {"logs": db.get_audit_logs(user["id"], limit=50)}
 
+# ----------------- Step 16: Device Pairing & Secure Command Channel -----------------
+
+@app.post("/api/devices/register")
+async def register_device_endpoint(payload: DeviceRegisterRequest, user: dict = Depends(get_current_user)):
+    """
+    Registers or handshakes a device for the logged-in user.
+    - First device is automatically trusted.
+    - Subsequent new devices start in 'pending' status with a 5-minute one-time pairing code.
+    """
+    try:
+        device = db.create_or_register_device(
+            user_id=user["id"],
+            device_id=payload.device_id.strip(),
+            name=payload.name or "Web Companion",
+            platform=payload.platform or "web"
+        )
+        return {"success": True, "device": device}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to register device: {e}")
+
+@app.get("/api/devices")
+async def list_devices_endpoint(user: dict = Depends(get_current_user)):
+    """Lists all registered devices for the user."""
+    devices = db.get_user_devices(user["id"])
+    return {"devices": devices}
+
+@app.get("/api/devices/status")
+async def get_device_status_endpoint(device_id: str, user: dict = Depends(get_current_user)):
+    """Checks pairing and trust status for a specific device."""
+    dev = db.get_device_by_id(user["id"], device_id.strip())
+    if not dev:
+        raise HTTPException(status_code=404, detail="Device not found.")
+    return {"device": dev}
+
+@app.post("/api/devices/approve-pairing")
+async def approve_pairing_endpoint(payload: DevicePairApproveRequest, user: dict = Depends(get_current_user)):
+    """
+    Approves a pending device from an already trusted device using its 5-minute one-time code.
+    """
+    res = db.approve_device_pairing(
+        user_id=user["id"],
+        code_or_target_id=payload.code,
+        approver_device_id=payload.approver_device_id
+    )
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("message", "Pairing approval failed."))
+    return res
+
+@app.post("/api/devices/refresh-code")
+async def refresh_pairing_code_endpoint(device_id: str, user: dict = Depends(get_current_user)):
+    """Regenerates a fresh 5-minute code for a pending device."""
+    try:
+        dev = db.regenerate_pairing_code(user["id"], device_id.strip())
+        return {"success": True, "device": dev}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.put("/api/devices/{device_id}")
+async def update_device_endpoint(device_id: str, payload: DeviceUpdateRequest, user: dict = Depends(get_current_user)):
+    """Renames device, adjusts permission level (0-4), or toggles capabilities."""
+    clean_id = device_id.strip()
+    updated = None
+    if payload.name:
+        updated = db.rename_device(user["id"], clean_id, payload.name)
+    if payload.permission_level is not None or payload.capabilities is not None:
+        updated = db.update_device_permissions(
+            user["id"],
+            clean_id,
+            permission_level=payload.permission_level,
+            capabilities=payload.capabilities
+        )
+    if not updated:
+        updated = db.get_device_by_id(user["id"], clean_id)
+        if not updated:
+            raise HTTPException(status_code=404, detail="Device not found.")
+    return {"success": True, "device": updated}
+
+@app.delete("/api/devices/{device_id}")
+async def revoke_device_endpoint(device_id: str, user: dict = Depends(get_current_user)):
+    """Immediately revokes access for a device."""
+    clean_id = device_id.strip()
+    try:
+        revoked = db.revoke_device(user["id"], clean_id)
+        relay_manager.unregister_websocket(user["id"], clean_id)
+        return {"success": True, "message": f"Device '{revoked['name']}' revoked immediately.", "device": revoked}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+@app.post("/api/devices/disconnect-all")
+async def disconnect_all_devices_endpoint(user: dict = Depends(get_current_user)):
+    """
+    Halts and disconnects all devices immediately without asking the AI.
+    Revokes access, clears command queues, and closes channels.
+    """
+    count = db.disconnect_all_devices(user["id"])
+    relay_manager.on_disconnect_all(user["id"])
+    return {
+        "success": True,
+        "revoked_count": count,
+        "message": "All devices disconnected and revoked immediately."
+    }
+
+@app.post("/api/devices/commands/send")
+async def send_device_command_endpoint(payload: DeviceCommandRequest, user: dict = Depends(get_current_user)):
+    """
+    Sends a secure command to another device.
+    Enforces replay protection, 60s expiry, per-user rate limits, STOP check, and permission gates.
+    Audit log records metadata only, never the payload content.
+    """
+    res = await relay_manager.relay_command(
+        user_id=user["id"],
+        cmd_data=payload.model_dump()
+    )
+    if not res.get("success"):
+        err = res.get("error", "FAILED")
+        msg = res.get("message", "Failed to relay command.")
+        raise HTTPException(status_code=400, detail=f"{err}: {msg}")
+    return res
+
+@app.get("/api/devices/commands/pending")
+async def get_pending_commands_endpoint(device_id: str, user: dict = Depends(get_current_user)):
+    """
+    Retrieves and drains pending offline commands for a device.
+    Stale commands (> 60s) are pruned and never returned.
+    """
+    clean_id = device_id.strip()
+    dev = db.get_device_by_id(user["id"], clean_id)
+    if not dev or dev["status"] != "trusted":
+        raise HTTPException(status_code=403, detail="Device is not trusted or does not belong to you.")
+
+    commands = relay_manager.get_pending_offline_commands(user["id"], clean_id)
+    return {"commands": commands}
+
+@app.post("/api/devices/commands/{command_id}/ack")
+async def ack_device_command_endpoint(command_id: str, payload: DeviceCommandAckRequest, user: dict = Depends(get_current_user)):
+    """Acknowledges receipt or execution outcome of a command."""
+    db.log_audit(
+        user["id"],
+        "DEVICE_COMMAND_ACK",
+        json.dumps({"command_id": command_id, "status": payload.status, "result": "acknowledged"})
+    )
+    return {"success": True, "command_id": command_id, "status": payload.status}
+
+@app.websocket("/api/ws/devices")
+async def device_websocket_endpoint(websocket: WebSocket):
+    """
+    Authenticated WebSocket relay channel for real-time remote commands.
+    """
+    await websocket.accept()
+    user_id = None
+    device_id = None
+    try:
+        token = websocket.cookies.get(SESSION_COOKIE_NAME)
+        if not token:
+            token = websocket.query_params.get("token")
+        q_dev_id = websocket.query_params.get("device_id")
+
+        if not token or not q_dev_id:
+            init_msg = await websocket.receive_text()
+            data = json.loads(init_msg)
+            if data.get("type") == "auth":
+                token = data.get("token") or token
+                q_dev_id = data.get("device_id") or q_dev_id
+
+        if not token:
+            await websocket.send_text(json.dumps({"type": "error", "message": "Authentication required."}))
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
+        user = db.get_user_by_session(token)
+        if not user:
+            await websocket.send_text(json.dumps({"type": "error", "message": "Invalid session token."}))
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
+        user_id = user["id"]
+        device_id = q_dev_id.strip() if q_dev_id else "unknown"
+
+        if db.get_emergency_stopped(user_id):
+            await websocket.send_text(json.dumps({
+                "type": "emergency_stop",
+                "message": "Emergency STOP active. Remote commands suspended."
+            }))
+
+        dev = db.get_device_by_id(user_id, device_id)
+        if not dev or dev["status"] != "trusted":
+            await websocket.send_text(json.dumps({
+                "type": "error",
+                "message": f"Device is not trusted (status: {dev['status'] if dev else 'unregistered'})."
+            }))
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
+        relay_manager.register_websocket(user_id, device_id, websocket)
+        await websocket.send_text(json.dumps({
+            "type": "ready",
+            "device_id": device_id,
+            "message": "Secure channel connected 🌸"
+        }))
+
+        # Drain and deliver unexpired offline commands
+        pending_cmds = relay_manager.get_pending_offline_commands(user_id, device_id)
+        for pcmd in pending_cmds:
+            await websocket.send_text(json.dumps(pcmd))
+
+        while True:
+            raw_text = await websocket.receive_text()
+            try:
+                msg = json.loads(raw_text)
+            except Exception:
+                continue
+
+            msg_type = msg.get("type")
+            if msg_type == "ping":
+                await websocket.send_text(json.dumps({"type": "pong", "time": time.time()}))
+            elif msg_type == "send_command":
+                cmd_data = msg.get("command") or {}
+                result = await relay_manager.relay_command(user_id, cmd_data)
+                await websocket.send_text(json.dumps({
+                    "type": "command_result",
+                    "id": cmd_data.get("id"),
+                    "result": result
+                }))
+            elif msg_type == "ack":
+                cid = msg.get("id")
+                st = msg.get("status", "executed")
+                db.log_audit(
+                    user_id,
+                    "DEVICE_COMMAND_ACK",
+                    json.dumps({"command_id": cid, "status": st, "result": "acknowledged"})
+                )
+
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        if user_id and device_id:
+            relay_manager.unregister_websocket(user_id, device_id, websocket)
+
 # ----------------- Host Info & Static Files -----------------
+
 
 @app.get("/api/info")
 async def info_endpoint(request: Request):

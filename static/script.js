@@ -2437,6 +2437,767 @@ document.addEventListener("DOMContentLoaded", () => {
       openSettingsBtn.addEventListener("click", () => {
         checkNativeCompanionSettings();
         loadCompanionDiagnostics();
+        loadDevices();
+      });
+    }
+
+    // ========================================================
+    // STEP 16: DEVICE PAIRING & SECURE CHANNEL LOGIC
+    // ========================================================
+    let currentDeviceData = null;
+    let deviceWs = null;
+    let pairingPollTimer = null;
+    let ringAudioCtx = null;
+    let ringInterval = null;
+    let activePendingRemoteCmd = null;
+
+    function getOrCreateDeviceId() {
+      let devId = localStorage.getItem("sinbha_device_id");
+      if (!devId) {
+        devId = "dev_" + Math.random().toString(36).substring(2, 9) + "_" + Date.now().toString(36);
+        localStorage.setItem("sinbha_device_id", devId);
+      }
+      return devId;
+    }
+
+    function getDevicePlatformAndName() {
+      const ua = navigator.userAgent || "";
+      let platform = "web";
+      let name = "Web Browser";
+
+      if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) {
+        platform = "android";
+        name = "Android Companion";
+      } else if (/Android/i.test(ua)) {
+        platform = "android";
+        name = "Android Phone";
+      } else if (/Windows/i.test(ua)) {
+        platform = "windows";
+        name = "Windows PC";
+      } else if (/iPhone|iPad|iPod/i.test(ua)) {
+        platform = "ios";
+        name = "iPhone / iPad";
+      } else if (/Mac/i.test(ua)) {
+        platform = "macos";
+        name = "Mac";
+      } else if (/Linux/i.test(ua)) {
+        platform = "linux";
+        name = "Linux PC";
+      }
+      return { platform, name };
+    }
+
+    function getPlatformIcon(platform) {
+      const p = (platform || "").toLowerCase();
+      if (p === "android") return "📱";
+      if (p === "windows") return "💻";
+      if (p === "ios") return "🍏";
+      if (p === "macos") return "🍎";
+      if (p === "linux") return "🐧";
+      return "🌐";
+    }
+
+    // Audio synthesizer ringtone for "ring my phone"
+    function startRingtone() {
+      try {
+        stopRingtone();
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContext) return;
+        ringAudioCtx = new AudioContext();
+
+        const playBurst = () => {
+          if (!ringAudioCtx || ringAudioCtx.state === "closed") return;
+          const osc1 = ringAudioCtx.createOscillator();
+          const osc2 = ringAudioCtx.createOscillator();
+          osc1.type = "sine";
+          osc2.type = "sine";
+          osc1.frequency.setValueAtTime(520, ringAudioCtx.currentTime);
+          osc2.frequency.setValueAtTime(660, ringAudioCtx.currentTime);
+          const burstGain = ringAudioCtx.createGain();
+          burstGain.gain.setValueAtTime(0.35, ringAudioCtx.currentTime);
+          burstGain.gain.exponentialRampToValueAtTime(0.001, ringAudioCtx.currentTime + 0.7);
+          osc1.connect(burstGain);
+          osc2.connect(burstGain);
+          burstGain.connect(ringAudioCtx.destination);
+          osc1.start();
+          osc2.start();
+          osc1.stop(ringAudioCtx.currentTime + 0.75);
+          osc2.stop(ringAudioCtx.currentTime + 0.75);
+        };
+
+        playBurst();
+        ringInterval = setInterval(playBurst, 1400);
+      } catch (e) {
+        console.warn("AudioContext failed:", e);
+      }
+    }
+
+    function stopRingtone() {
+      if (ringInterval) {
+        clearInterval(ringInterval);
+        ringInterval = null;
+      }
+      if (ringAudioCtx) {
+        try { ringAudioCtx.close(); } catch (e) {}
+        ringAudioCtx = null;
+      }
+    }
+
+    // Register or handshake this device on server
+    async function initDeviceChannel() {
+      if (!currentUser) return;
+      const deviceId = getOrCreateDeviceId();
+      const { platform, name } = getDevicePlatformAndName();
+
+      try {
+        const res = await fetch("/api/devices/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            device_id: deviceId,
+            name: name,
+            platform: platform
+          })
+        });
+        const data = await res.json();
+        if (data.success && data.device) {
+          currentDeviceData = data.device;
+          updateCurrentDeviceUI(currentDeviceData);
+
+          if (currentDeviceData.status === "trusted") {
+            connectDeviceWebSocket(deviceId);
+            pollPendingCommands(deviceId);
+          } else if (currentDeviceData.status === "pending") {
+            showPendingPairingUI(currentDeviceData);
+            startPairingPolling(deviceId);
+          }
+        }
+      } catch (e) {
+        console.warn("Device registration error:", e);
+      }
+    }
+
+    function updateCurrentDeviceUI(device) {
+      const nameEl = document.getElementById("currentDeviceName");
+      const badgeEl = document.getElementById("currentDeviceStatusBadge");
+      const pendingBanner = document.getElementById("pendingPairingBanner");
+
+      if (nameEl) nameEl.textContent = `${getPlatformIcon(device.platform)} ${device.name}`;
+      if (badgeEl) {
+        if (device.status === "trusted") {
+          badgeEl.textContent = "● Trusted";
+          badgeEl.style.color = "#059669";
+          if (pendingBanner) pendingBanner.style.display = "none";
+        } else if (device.status === "pending") {
+          badgeEl.textContent = "⏳ Pending Pairing Approval";
+          badgeEl.style.color = "#b45309";
+        } else {
+          badgeEl.textContent = "🛑 Revoked";
+          badgeEl.style.color = "#dc2626";
+        }
+      }
+    }
+
+    function showPendingPairingUI(device) {
+      const pendingBanner = document.getElementById("pendingPairingBanner");
+      const codeDisplay = document.getElementById("pairingCodeDisplay");
+      const countdownText = document.getElementById("pairingCountdownText");
+
+      if (!pendingBanner) return;
+      pendingBanner.style.display = "block";
+
+      if (codeDisplay) {
+        const c = device.pairing_code || "------";
+        codeDisplay.textContent = c.length === 6 ? `${c.slice(0, 3)} ${c.slice(3)}` : c;
+      }
+
+      if (countdownText) {
+        let sec = device.expires_in_seconds || 300;
+        const updateText = () => {
+          const m = Math.floor(sec / 60);
+          const s = sec % 60;
+          countdownText.textContent = `Expires in ${m}:${s < 10 ? "0" : ""}${s}`;
+          if (sec > 0) sec--;
+        };
+        updateText();
+      }
+    }
+
+    function startPairingPolling(deviceId) {
+      if (pairingPollTimer) clearInterval(pairingPollTimer);
+      pairingPollTimer = setInterval(async () => {
+        try {
+          const res = await fetch(`/api/devices/status?device_id=${encodeURIComponent(deviceId)}`);
+          if (!res.ok) return;
+          const data = await res.json();
+          if (data.device && data.device.status === "trusted") {
+            clearInterval(pairingPollTimer);
+            pairingPollTimer = null;
+            currentDeviceData = data.device;
+            updateCurrentDeviceUI(currentDeviceData);
+            showToast("🌸 Device paired and approved successfully!");
+            connectDeviceWebSocket(deviceId);
+            loadDevices();
+          }
+        } catch (e) {}
+      }, 3000);
+    }
+
+    // Connect authenticated WebSocket relay channel
+    function connectDeviceWebSocket(deviceId) {
+      if (deviceWs && (deviceWs.readyState === WebSocket.OPEN || deviceWs.readyState === WebSocket.CONNECTING)) {
+        return;
+      }
+
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const wsUrl = `${protocol}//${window.location.host}/api/ws/devices?device_id=${encodeURIComponent(deviceId)}`;
+
+      try {
+        deviceWs = new WebSocket(wsUrl);
+
+        deviceWs.onopen = () => {
+          console.log("🌸 Secure device channel connected");
+        };
+
+        deviceWs.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            handleIncomingDeviceMessage(msg);
+          } catch (e) {
+            console.error("Device WS message parse error:", e);
+          }
+        };
+
+        deviceWs.onclose = () => {
+          deviceWs = null;
+          // Reconnect after 5s if trusted
+          setTimeout(() => {
+            if (currentUser && currentDeviceData && currentDeviceData.status === "trusted") {
+              connectDeviceWebSocket(deviceId);
+            }
+          }, 5000);
+        };
+      } catch (e) {
+        console.warn("WebSocket init error:", e);
+      }
+    }
+
+    // Fallback/offline pending command draining
+    async function pollPendingCommands(deviceId) {
+      try {
+        const res = await fetch(`/api/devices/commands/pending?device_id=${encodeURIComponent(deviceId)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.commands && Array.isArray(data.commands)) {
+          for (const cmd of data.commands) {
+            handleIncomingDeviceMessage(cmd);
+          }
+        }
+      } catch (e) {}
+    }
+
+    // Dispatcher for incoming remote commands
+    function handleIncomingDeviceMessage(msg) {
+      if (msg.type === "remote_command") {
+        if (msg.requires_confirmation) {
+          showRemoteConfirmModal(msg);
+        } else {
+          executeRemoteCommand(msg);
+        }
+      } else if (msg.type === "emergency_stop") {
+        setStopUiState(true);
+        showToast("🛑 Remote channel halted by emergency STOP");
+      }
+    }
+
+    // Confirmation modal for Level > 1 or open_link
+    function showRemoteConfirmModal(cmd) {
+      activePendingRemoteCmd = cmd;
+      const modal = document.getElementById("remoteConfirmModal");
+      const desc = document.getElementById("remoteConfirmDesc");
+      const details = document.getElementById("remoteConfirmDetails");
+
+      if (!modal) return;
+      if (desc) {
+        desc.textContent = `Device '${cmd.sender_name || "Paired Companion"}' requested to execute: ${cmd.command_type}`;
+      }
+      if (details) {
+        let text = "";
+        if (cmd.command_type === "open_link") {
+          text = `URL: ${cmd.payload && cmd.payload.url ? cmd.payload.url : "(No URL specified)"}`;
+        } else if (cmd.command_type === "send_note") {
+          text = `Note: ${cmd.payload && cmd.payload.text ? cmd.payload.text : ""}`;
+        } else if (cmd.command_type === "ring_phone") {
+          text = "Action: Audible ring phone alert";
+        } else {
+          text = JSON.stringify(cmd.payload || {});
+        }
+        details.textContent = text;
+      }
+      modal.style.display = "flex";
+    }
+
+    // Execute remote command on this target device
+    async function executeRemoteCommand(cmd) {
+      const type = cmd.command_type;
+      const payload = cmd.payload || {};
+      const sender = cmd.sender_name || "Paired Device";
+
+      try {
+        if (type === "send_note") {
+          const noteText = payload.text || "(empty note)";
+          showToast(`💌 Note from ${sender}: ${noteText.slice(0, 60)}`);
+          appendMessage("assistant", `💌 **Remote Note from ${sender}:**\n${noteText}`);
+          if (window.Notification && Notification.permission === "granted") {
+            new Notification(`Note from ${sender}`, { body: noteText, icon: "/static/favicon.png" });
+          }
+        } else if (type === "open_link") {
+          const url = payload.url || "";
+          if (url && (url.startsWith("http://") || url.startsWith("https://"))) {
+            window.open(url, "_blank");
+            showToast(`🌐 Opened link from ${sender}`);
+          }
+        } else if (type === "ring_phone") {
+          const ringModal = document.getElementById("ringAlertModal");
+          const ringSender = document.getElementById("ringAlertSender");
+          if (ringSender) ringSender.textContent = `Ringing triggered by ${sender}`;
+          if (ringModal) ringModal.style.display = "flex";
+          startRingtone();
+        } else if (type === "sync_tasks") {
+          await loadTasks();
+          await loadUpcomingReminders();
+          await loadFacts();
+          showToast(`🔄 Instant sync from ${sender}`);
+        }
+
+        // Send ACK back to server
+        await fetch(`/api/devices/commands/${encodeURIComponent(cmd.id)}/ack`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "executed" })
+        });
+      } catch (e) {
+        console.error("Error executing remote command:", e);
+      }
+    }
+
+    // Load and render devices list in Settings
+    async function loadDevices() {
+      const container = document.getElementById("devicesList");
+      const badge = document.getElementById("devicesCountBadge");
+      if (!container) return;
+
+      try {
+        const res = await fetch("/api/devices");
+        if (!res.ok) return;
+        const data = await res.json();
+        const devices = data.devices || [];
+
+        if (badge) badge.textContent = devices.length;
+        container.innerHTML = "";
+
+        if (devices.length === 0) {
+          container.innerHTML = `<div style="font-size: 0.82rem; color: #9ca3af; text-align: center; padding: 12px;">No paired devices found.</div>`;
+          return;
+        }
+
+        const currentId = getOrCreateDeviceId();
+
+        devices.forEach(d => {
+          const isThisDevice = (d.device_id === currentId);
+          const icon = getPlatformIcon(d.platform);
+
+          const card = document.createElement("div");
+          card.className = "device-item-card";
+
+          let statusClass = "trusted";
+          let statusLabel = "Trusted";
+          if (d.status === "pending") {
+            statusClass = "pending";
+            statusLabel = "Pending Code";
+          } else if (d.status === "revoked") {
+            statusClass = "revoked";
+            statusLabel = "Revoked";
+          }
+
+          const lastActiveStr = d.last_seen_at ? new Date(d.last_seen_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Just now";
+
+          card.innerHTML = `
+            <div class="device-item-left">
+              <div class="device-platform-icon">${icon}</div>
+              <div class="device-item-info">
+                <div class="device-item-name-row">
+                  <span class="device-item-title">${escapeHtml(d.name)}</span>
+                  ${isThisDevice ? `<span class="device-current-badge">This device</span>` : ""}
+                  <span class="device-status-pill ${statusClass}">${statusLabel}</span>
+                </div>
+                <div class="device-item-meta">
+                  <span>Level ${d.permission_level}</span>
+                  <span>•</span>
+                  <span>Active: ${lastActiveStr}</span>
+                </div>
+              </div>
+            </div>
+            <div class="device-item-actions">
+              ${d.status === "trusted" ? `
+                <button type="button" class="device-action-icon-btn manage-dev-btn" data-id="${d.device_id}" title="Device Settings & Capabilities">⚙️ Settings</button>
+              ` : ""}
+              ${d.status === "pending" ? `
+                <button type="button" class="device-action-icon-btn approve-dev-btn" data-code="${d.pairing_code || ""}" title="Approve Pending Device" style="color: #059669; border-color: #a7f3d0; background: #ecfdf5;">✓ Approve</button>
+              ` : ""}
+              <button type="button" class="device-action-icon-btn revoke-dev-btn" data-id="${d.device_id}" title="Revoke Device" style="color: #be123c;">🗑️</button>
+            </div>
+          `;
+
+          // Hook manage button
+          const mBtn = card.querySelector(".manage-dev-btn");
+          if (mBtn) {
+            mBtn.addEventListener("click", () => openDeviceDetailsModal(d));
+          }
+
+          // Hook approve button
+          const aBtn = card.querySelector(".approve-dev-btn");
+          if (aBtn) {
+            aBtn.addEventListener("click", () => {
+              const codeInput = document.getElementById("pairCodeInput");
+              if (codeInput && d.pairing_code) codeInput.value = d.pairing_code;
+              const modal = document.getElementById("pairDeviceModal");
+              if (modal) modal.style.display = "flex";
+            });
+          }
+
+          // Hook revoke button
+          const rBtn = card.querySelector(".revoke-dev-btn");
+          if (rBtn) {
+            rBtn.addEventListener("click", async () => {
+              if (confirm(`Revoke access for '${d.name}' immediately?`)) {
+                await revokeDevice(d.device_id);
+              }
+            });
+          }
+
+          container.appendChild(card);
+        });
+      } catch (e) {
+        container.innerHTML = `<div style="font-size: 0.82rem; color: #ef4444; text-align: center;">Error loading devices.</div>`;
+      }
+    }
+
+    // Modal: Device Details & Permissions
+    function openDeviceDetailsModal(device) {
+      const modal = document.getElementById("deviceDetailsModal");
+      const title = document.getElementById("devModalTitle");
+      const idInput = document.getElementById("editDeviceId");
+      const nameInput = document.getElementById("editDeviceNameInput");
+      const permSelect = document.getElementById("editDevicePermLevel");
+      const capNote = document.getElementById("capNoteToggle");
+      const capOpenLink = document.getElementById("capOpenLinkToggle");
+      const capRing = document.getElementById("capRingToggle");
+      const capSync = document.getElementById("capSyncToggle");
+
+      if (!modal) return;
+      if (title) title.textContent = `⚙️ ${device.name}`;
+      if (idInput) idInput.value = device.device_id;
+      if (nameInput) nameInput.value = device.name;
+      if (permSelect) permSelect.value = String(device.permission_level ?? 1);
+
+      const caps = device.capabilities || {};
+      if (capNote) capNote.checked = caps.note !== false;
+      if (capOpenLink) capOpenLink.checked = caps.open_link !== false;
+      if (capRing) capRing.checked = caps.ring !== false;
+      if (capSync) capSync.checked = caps.sync !== false;
+
+      modal.style.display = "flex";
+    }
+
+    async function revokeDevice(deviceId) {
+      try {
+        const res = await fetch(`/api/devices/${encodeURIComponent(deviceId)}`, {
+          method: "DELETE"
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast("🗑️ Device revoked immediately.");
+          await loadDevices();
+        } else {
+          showToast(data.detail || "Failed to revoke device.");
+        }
+      } catch (e) {
+        showToast("Error revoking device: " + e.message);
+      }
+    }
+
+    // Send a remote command helper
+    async function sendRemoteCommand(targetDeviceId, type, payload) {
+      const myId = getOrCreateDeviceId();
+      const cmdId = "cmd_" + Math.random().toString(36).substring(2, 9) + "_" + Date.now();
+      try {
+        const res = await fetch("/api/devices/commands/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: cmdId,
+            sender_device: myId,
+            target_device: targetDeviceId,
+            type: type,
+            payload: payload,
+            created_at: Date.now() / 1000,
+            expiry: 60
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast(`⚡ Command '${type}' dispatched! (${data.result})`);
+        } else {
+          showToast(`❌ ${data.detail || "Command failed"}`);
+        }
+      } catch (e) {
+        showToast("Error sending command: " + e.message);
+      }
+    }
+
+    // UI Event Listeners for Step 16
+    const refreshDevBtn = document.getElementById("refreshDevicesBtn");
+    if (refreshDevBtn) {
+      refreshDevBtn.addEventListener("click", loadDevices);
+    }
+
+    const openPairBtn = document.getElementById("openPairModalBtn");
+    const pairModal = document.getElementById("pairDeviceModal");
+    const closePairBtn = document.getElementById("closePairModalBtn");
+    const cancelPairBtn = document.getElementById("cancelPairCodeBtn");
+    const submitPairBtn = document.getElementById("submitPairCodeBtn");
+    const pairCodeInput = document.getElementById("pairCodeInput");
+
+    if (openPairBtn && pairModal) {
+      openPairBtn.addEventListener("click", () => {
+        if (pairCodeInput) pairCodeInput.value = "";
+        pairModal.style.display = "flex";
+      });
+    }
+
+    if (closePairBtn && pairModal) {
+      closePairBtn.addEventListener("click", () => pairModal.style.display = "none");
+    }
+    if (cancelPairBtn && pairModal) {
+      cancelPairBtn.addEventListener("click", () => pairModal.style.display = "none");
+    }
+
+    if (submitPairBtn && pairCodeInput) {
+      submitPairBtn.addEventListener("click", async () => {
+        const code = pairCodeInput.value.trim();
+        if (!code || code.length < 6) {
+          showToast("Please enter a valid 6-digit pairing code.");
+          return;
+        }
+        try {
+          const res = await fetch("/api/devices/approve-pairing", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              code: code,
+              approver_device_id: getOrCreateDeviceId()
+            })
+          });
+          const data = await res.json();
+          if (data.success) {
+            showToast("🌸 Device approved and paired successfully!");
+            if (pairModal) pairModal.style.display = "none";
+            await loadDevices();
+          } else {
+            showToast(data.detail || data.message || "Pairing approval failed.");
+          }
+        } catch (e) {
+          showToast("Error approving device: " + e.message);
+        }
+      });
+    }
+
+    // Refresh pairing code button for pending device
+    const refreshCodeBtn = document.getElementById("refreshPairCodeBtn");
+    if (refreshCodeBtn) {
+      refreshCodeBtn.addEventListener("click", async () => {
+        const myId = getOrCreateDeviceId();
+        try {
+          const res = await fetch(`/api/devices/refresh-code?device_id=${encodeURIComponent(myId)}`, {
+            method: "POST"
+          });
+          const data = await res.json();
+          if (data.success && data.device) {
+            currentDeviceData = data.device;
+            showPendingPairingUI(currentDeviceData);
+            showToast("Fresh pairing code generated 🌸");
+          }
+        } catch (e) {}
+      });
+    }
+
+    // Disconnect all devices button
+    const disconnAllBtn = document.getElementById("disconnectAllDevicesBtn");
+    if (disconnAllBtn) {
+      disconnAllBtn.addEventListener("click", async () => {
+        if (confirm("Disconnect and revoke all devices immediately? Remote commands will be halted immediately.")) {
+          try {
+            const res = await fetch("/api/devices/disconnect-all", { method: "POST" });
+            const data = await res.json();
+            if (data.success) {
+              showToast("🔌 All devices disconnected and revoked immediately.");
+              if (deviceWs) {
+                try { deviceWs.close(); } catch (e) {}
+                deviceWs = null;
+              }
+              await loadDevices();
+              await initDeviceChannel();
+            }
+          } catch (e) {
+            showToast("Error disconnecting devices: " + e.message);
+          }
+        }
+      });
+    }
+
+    // Device Details Modal events
+    const closeDevModalBtn = document.getElementById("closeDeviceDetailsBtn");
+    const cancelDevModalBtn = document.getElementById("cancelDeviceDetailsBtn");
+    const devModal = document.getElementById("deviceDetailsModal");
+
+    if (closeDevModalBtn && devModal) {
+      closeDevModalBtn.addEventListener("click", () => devModal.style.display = "none");
+    }
+    if (cancelDevModalBtn && devModal) {
+      cancelDevModalBtn.addEventListener("click", () => devModal.style.display = "none");
+    }
+
+    const saveDevNameBtn = document.getElementById("saveDeviceNameBtn");
+    if (saveDevNameBtn) {
+      saveDevNameBtn.addEventListener("click", async () => {
+        const id = document.getElementById("editDeviceId").value;
+        const name = document.getElementById("editDeviceNameInput").value.trim();
+        if (!name) return;
+        try {
+          const res = await fetch(`/api/devices/${encodeURIComponent(id)}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: name })
+          });
+          const data = await res.json();
+          if (data.success) {
+            showToast("Device renamed 🌸");
+            loadDevices();
+          }
+        } catch (e) {}
+      });
+    }
+
+    const saveDevPermsBtn = document.getElementById("saveDevicePermissionsBtn");
+    if (saveDevPermsBtn) {
+      saveDevPermsBtn.addEventListener("click", async () => {
+        const id = document.getElementById("editDeviceId").value;
+        const permLevel = parseInt(document.getElementById("editDevicePermLevel").value, 10);
+        const caps = {
+          note: document.getElementById("capNoteToggle").checked,
+          open_link: document.getElementById("capOpenLinkToggle").checked,
+          ring: document.getElementById("capRingToggle").checked,
+          sync: document.getElementById("capSyncToggle").checked
+        };
+        try {
+          const res = await fetch(`/api/devices/${encodeURIComponent(id)}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              permission_level: permLevel,
+              capabilities: caps
+            })
+          });
+          const data = await res.json();
+          if (data.success) {
+            showToast("Device settings saved 🌸");
+            if (devModal) devModal.style.display = "none";
+            loadDevices();
+          }
+        } catch (e) {
+          showToast("Error saving device settings: " + e.message);
+        }
+      });
+    }
+
+    const revokeModalBtn = document.getElementById("revokeDeviceBtn");
+    if (revokeModalBtn) {
+      revokeModalBtn.addEventListener("click", async () => {
+        const id = document.getElementById("editDeviceId").value;
+        if (confirm("Revoke this device immediately?")) {
+          await revokeDevice(id);
+          if (devModal) devModal.style.display = "none";
+        }
+      });
+    }
+
+    // Quick remote test buttons
+    const testRingBtn = document.getElementById("testRingDeviceBtn");
+    if (testRingBtn) {
+      testRingBtn.addEventListener("click", () => {
+        const id = document.getElementById("editDeviceId").value;
+        sendRemoteCommand(id, "ring_phone", { duration: 10 });
+      });
+    }
+
+    const testNoteBtn = document.getElementById("testSendNoteBtn");
+    if (testNoteBtn) {
+      testNoteBtn.addEventListener("click", () => {
+        const id = document.getElementById("editDeviceId").value;
+        const text = prompt("Enter note to send to device:", "Hello from SINBHA! 🌸");
+        if (text) {
+          sendRemoteCommand(id, "send_note", { text: text });
+        }
+      });
+    }
+
+    const testSyncBtn = document.getElementById("testSyncDeviceBtn");
+    if (testSyncBtn) {
+      testSyncBtn.addEventListener("click", () => {
+        const id = document.getElementById("editDeviceId").value;
+        sendRemoteCommand(id, "sync_tasks", { reason: "manual_sync" });
+      });
+    }
+
+    // Incoming Remote Confirmation Modal actions
+    const allowRemoteBtn = document.getElementById("allowRemoteCmdBtn");
+    const denyRemoteBtn = document.getElementById("denyRemoteCmdBtn");
+    const remoteModal = document.getElementById("remoteConfirmModal");
+
+    if (allowRemoteBtn && remoteModal) {
+      allowRemoteBtn.addEventListener("click", async () => {
+        remoteModal.style.display = "none";
+        if (activePendingRemoteCmd) {
+          await executeRemoteCommand(activePendingRemoteCmd);
+          activePendingRemoteCmd = null;
+        }
+      });
+    }
+
+    if (denyRemoteBtn && remoteModal) {
+      denyRemoteBtn.addEventListener("click", async () => {
+        remoteModal.style.display = "none";
+        if (activePendingRemoteCmd) {
+          try {
+            await fetch(`/api/devices/commands/${encodeURIComponent(activePendingRemoteCmd.id)}/ack`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ status: "denied" })
+            });
+          } catch (e) {}
+          activePendingRemoteCmd = null;
+        }
+      });
+    }
+
+    // Dismiss ringing button
+    const dismissRingBtn = document.getElementById("dismissRingBtn");
+    const ringModal = document.getElementById("ringAlertModal");
+    if (dismissRingBtn && ringModal) {
+      dismissRingBtn.addEventListener("click", () => {
+        stopRingtone();
+        ringModal.style.display = "none";
       });
     }
 
@@ -2444,12 +3205,14 @@ document.addEventListener("DOMContentLoaded", () => {
     checkAuthStatus();
     checkAppVersionGate();
 
-    // Hook session sync after auth
+    // Hook session sync and device init after auth
     const origShowAppScreen = showAppScreen;
     showAppScreen = function(user) {
       origShowAppScreen(user);
       syncSessionWithNativeApp();
       checkNativeCompanionSettings();
+      initDeviceChannel();
+      loadDevices();
     };
 
     // Periodic reminder checker every 60 seconds (only fires if logged in)
@@ -2460,3 +3223,4 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }, 60000);
   });
+

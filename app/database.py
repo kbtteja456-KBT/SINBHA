@@ -32,6 +32,7 @@ from app.models import (
     AuditLog,
     PendingAction,
     DeviceToken,
+    Device,
     utc_now,
 )
 from app.crypto import encrypt_text, decrypt_text
@@ -1250,3 +1251,291 @@ def purge_all_data(user_id: int):
         session.execute(delete(Fact).where(Fact.user_id == user_id))
         session.execute(delete(PendingAction).where(PendingAction.user_id == user_id))
         log_audit(user_id, "USER_DATA_PURGED", "User cleared all chat history, memory facts, and tasks.", session=session)
+
+# ----------------- Step 16: Device Pairing & Management -----------------
+
+def _device_to_dict(dev: Device) -> dict:
+    capabilities = {"note": True, "open_link": True, "ring": True, "sync": True}
+    if dev.capabilities_json:
+        try:
+            capabilities = json.loads(dev.capabilities_json)
+        except Exception:
+            pass
+
+    expires_in_seconds = 0
+    if dev.pairing_expires_at:
+        now = utc_now()
+        exp = dev.pairing_expires_at
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        diff = int((exp - now).total_seconds())
+        expires_in_seconds = max(0, diff)
+
+    return {
+        "id": dev.id,
+        "device_id": dev.device_id,
+        "name": dev.name,
+        "platform": dev.platform,
+        "status": dev.status,
+        "permission_level": dev.permission_level,
+        "capabilities": capabilities,
+        "pairing_code": dev.pairing_code if (dev.status == "pending" and expires_in_seconds > 0) else None,
+        "expires_in_seconds": expires_in_seconds if dev.status == "pending" else 0,
+        "created_at": dev.created_at.isoformat() if dev.created_at else "",
+        "last_seen_at": dev.last_seen_at.isoformat() if dev.last_seen_at else "",
+    }
+
+def create_or_register_device(
+    user_id: int,
+    device_id: str,
+    name: str = "Unknown Device",
+    platform: str = "web",
+) -> dict:
+    """
+    Registers a device for the user.
+    Step 16 Rules:
+    - The first device for a user is automatically marked 'trusted'.
+    - Subsequent new devices are marked 'pending' and given a 6-digit one-time pairing code
+      that expires in 5 minutes (300s).
+    - If device already exists and belongs to this user: updates last_seen_at, name, platform.
+    """
+    with get_db_session() as session:
+        dev = session.scalar(select(Device).where(Device.device_id == device_id))
+        if dev:
+            if dev.user_id != user_id:
+                raise ValueError("Device is already registered to another user account.")
+            dev.last_seen_at = utc_now()
+            if name and name != "Unknown Device":
+                dev.name = name
+            if platform:
+                dev.platform = platform
+            # If still pending and code expired, auto-refresh code
+            if dev.status == "pending" and dev.pairing_expires_at:
+                now = utc_now()
+                exp = dev.pairing_expires_at
+                if exp.tzinfo is None:
+                    exp = exp.replace(tzinfo=timezone.utc)
+                if now > exp:
+                    dev.pairing_code = f"{secrets.randbelow(900000) + 100000}"
+                    dev.pairing_expires_at = now + timedelta(minutes=5)
+            session.flush()
+            return _device_to_dict(dev)
+
+        # New device registration
+        trusted_count = session.scalar(
+            select(func.count(Device.id))
+            .where(and_(Device.user_id == user_id, Device.status == "trusted"))
+        ) or 0
+
+        now = utc_now()
+        if trusted_count == 0:
+            status = "trusted"
+            pairing_code = None
+            pairing_expires_at = None
+            log_audit(
+                user_id,
+                "DEVICE_REGISTERED_TRUSTED",
+                f"First device '{name}' ({device_id}) registered as trusted.",
+                session=session
+            )
+        else:
+            status = "pending"
+            pairing_code = f"{secrets.randbelow(900000) + 100000}"
+            pairing_expires_at = now + timedelta(minutes=5)
+            log_audit(
+                user_id,
+                "DEVICE_REGISTERED_PENDING",
+                f"New device '{name}' ({device_id}) registered pending pairing approval.",
+                session=session
+            )
+
+        new_dev = Device(
+            user_id=user_id,
+            device_id=device_id,
+            name=name,
+            platform=platform,
+            status=status,
+            permission_level=1,
+            capabilities_json=json.dumps({"note": True, "open_link": True, "ring": True, "sync": True}),
+            pairing_code=pairing_code,
+            pairing_expires_at=pairing_expires_at,
+            created_at=now,
+            last_seen_at=now,
+        )
+        session.add(new_dev)
+        session.flush()
+        return _device_to_dict(new_dev)
+
+def get_user_devices(user_id: int) -> List[dict]:
+    """Lists all devices belonging to the user."""
+    with get_db_session() as session:
+        devices = session.scalars(
+            select(Device).where(Device.user_id == user_id).order_by(Device.created_at.asc())
+        ).all()
+        return [_device_to_dict(d) for d in devices]
+
+def get_device_by_id(user_id: int, device_id: str) -> Optional[dict]:
+    """Retrieves a single device by device_id belonging to user_id."""
+    with get_db_session() as session:
+        dev = session.scalar(
+            select(Device).where(and_(Device.user_id == user_id, Device.device_id == device_id))
+        )
+        return _device_to_dict(dev) if dev else None
+
+def approve_device_pairing(user_id: int, code_or_target_id: str, approver_device_id: Optional[str] = None) -> dict:
+    """
+    Approves a pending device pairing using its 5-minute one-time code or device_id.
+    Ensures approval is initiated from an authorized context.
+    """
+    clean_target = code_or_target_id.strip()
+    with get_db_session() as session:
+        if approver_device_id:
+            approver = session.scalar(
+                select(Device).where(and_(Device.user_id == user_id, Device.device_id == approver_device_id))
+            )
+            if not approver or approver.status != "trusted":
+                return {"success": False, "message": "Approver device is not trusted."}
+
+        target = session.scalar(
+            select(Device).where(
+                and_(
+                    Device.user_id == user_id,
+                    or_(
+                        Device.pairing_code == clean_target,
+                        Device.device_id == clean_target,
+                    )
+                )
+            )
+        )
+        if not target:
+            return {"success": False, "message": "Device not found or invalid pairing code."}
+
+        if target.status == "trusted":
+            return {"success": True, "message": "Device is already trusted.", "device": _device_to_dict(target)}
+
+        if target.status == "revoked":
+            return {"success": False, "message": "Device is revoked. Re-registration required."}
+
+        if target.pairing_expires_at:
+            now = utc_now()
+            exp = target.pairing_expires_at
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            if now > exp:
+                return {"success": False, "message": "Pairing code expired (5-minute limit). Please refresh pairing on the new device."}
+
+        target.status = "trusted"
+        target.pairing_code = None
+        target.pairing_expires_at = None
+        target.last_seen_at = utc_now()
+        log_audit(
+            user_id,
+            "DEVICE_PAIRING_APPROVED",
+            f"Device '{target.name}' ({target.device_id}) approved and trusted.",
+            session=session
+        )
+        return {"success": True, "message": f"Device '{target.name}' is now paired and trusted! 🌸", "device": _device_to_dict(target)}
+
+def regenerate_pairing_code(user_id: int, device_id: str) -> dict:
+    """Regenerates a fresh 5-minute pairing code for a pending device."""
+    with get_db_session() as session:
+        dev = session.scalar(
+            select(Device).where(and_(Device.user_id == user_id, Device.device_id == device_id))
+        )
+        if not dev:
+            raise ValueError("Device not found.")
+        if dev.status != "pending":
+            return _device_to_dict(dev)
+
+        now = utc_now()
+        dev.pairing_code = f"{secrets.randbelow(900000) + 100000}"
+        dev.pairing_expires_at = now + timedelta(minutes=5)
+        dev.last_seen_at = now
+        session.flush()
+        return _device_to_dict(dev)
+
+def rename_device(user_id: int, device_id: str, new_name: str) -> dict:
+    """Renames an existing device."""
+    with get_db_session() as session:
+        dev = session.scalar(
+            select(Device).where(and_(Device.user_id == user_id, Device.device_id == device_id))
+        )
+        if not dev:
+            raise ValueError("Device not found.")
+        old_name = dev.name
+        dev.name = new_name.strip()[:128]
+        log_audit(
+            user_id,
+            "DEVICE_RENAMED",
+            f"Renamed device '{old_name}' -> '{dev.name}' ({device_id})",
+            session=session
+        )
+        return _device_to_dict(dev)
+
+def update_device_permissions(
+    user_id: int,
+    device_id: str,
+    permission_level: Optional[int] = None,
+    capabilities: Optional[dict] = None
+) -> dict:
+    """Updates permission level (0-4) and capabilities for a device."""
+    with get_db_session() as session:
+        dev = session.scalar(
+            select(Device).where(and_(Device.user_id == user_id, Device.device_id == device_id))
+        )
+        if not dev:
+            raise ValueError("Device not found.")
+        if permission_level is not None:
+            dev.permission_level = max(0, min(4, int(permission_level)))
+        if capabilities is not None:
+            dev.capabilities_json = json.dumps(capabilities)
+        log_audit(
+            user_id,
+            "DEVICE_PERMISSIONS_UPDATED",
+            f"Updated permissions for '{dev.name}' ({device_id}): Level {dev.permission_level}",
+            session=session
+        )
+        return _device_to_dict(dev)
+
+def revoke_device(user_id: int, device_id: str) -> dict:
+    """Revokes access for a device immediately."""
+    with get_db_session() as session:
+        dev = session.scalar(
+            select(Device).where(and_(Device.user_id == user_id, Device.device_id == device_id))
+        )
+        if not dev:
+            raise ValueError("Device not found.")
+        dev.status = "revoked"
+        log_audit(
+            user_id,
+            "DEVICE_REVOKED",
+            f"Device '{dev.name}' ({device_id}) revoked immediately.",
+            session=session
+        )
+        return _device_to_dict(dev)
+
+def disconnect_all_devices(user_id: int) -> int:
+    """Revokes access for all devices belonging to the user."""
+    with get_db_session() as session:
+        result = session.execute(
+            update(Device).where(Device.user_id == user_id).values(status="revoked")
+        )
+        count = result.rowcount
+        log_audit(
+            user_id,
+            "DEVICES_DISCONNECT_ALL",
+            f"Disconnected and revoked all {count} devices immediately.",
+            session=session
+        )
+        return count
+
+def update_device_last_seen(device_id: str):
+    """Updates device last_seen_at timestamp."""
+    try:
+        with get_db_session() as session:
+            session.execute(
+                update(Device).where(Device.device_id == device_id).values(last_seen_at=utc_now())
+            )
+    except Exception:
+        pass
+
