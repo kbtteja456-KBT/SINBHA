@@ -258,10 +258,11 @@ def detect_search_intent(message: str) -> Tuple[bool, Optional[str], Optional[st
     # Search trigger indicators
     search_triggers = [
         r"\b(search|look\s+up|google|browse\s+online)\b",
-        r"\b(latest|current|today'?s?|recent)\s+(news|prices?|updates?|facts?|events?|scores?|weather|stock|matches?|games?)\b",
-        r"\b(cricket|football|sports?)\s+(matches?|games?|score|scores)\b",
-        r"\b(matches?|games?)\s+(today|tonight)\b",
-        r"\b(is\s+there\s+any|are\s+there\s+any)\s+(cricket\s+|football\s+|sports?\s+)?matches?\b",
+        r"\b(latest|current|today'?s?|recent)\s+(news|prices?|updates?|facts?|events?|scores?|weather|stock|match(es)?|games?)\b",
+        r"\b(cricket|football|sports?)\s+(match(es)?|games?|scores?)\b",
+        r"\b(match(es)?|games?)\s+(today|tonight|tomorrow|tommorow|upcoming)\b",
+        r"\b(is\s+there\s+(is\s+)?any|are\s+there\s+any)\s+(cricket\s+|football\s+|sports?\s+|india\s+)?match(es)?\b",
+        r"\b(ind(ia)?\s+vs\s+\w+|vs\s+ind(ia)?|\w+\s+vs\s+\w+\s+match)\b",
         r"\b(price\s+of|cost\s+of|how\s+much\s+(is|does|are))\b",
         r"\b(who\s+won|score\s+of|weather\s+in|stock\s+price)\b",
         r"\b(check\s+this\s+(website|page|site|link))\b",
@@ -270,7 +271,8 @@ def detect_search_intent(message: str) -> Tuple[bool, Optional[str], Optional[st
         r"\b(is\s+it\s+true\s+that)\b",
         r"\b(who\s+is\s+(the\s+|currently\s+the\s+)?(captain|coach|ceo|president|prime\s+minister)\b)",
         r"\b(current\s+ceo\s+of|current\s+president\s+of)\b",
-        r"\bcaptain\s+of\b"
+        r"\bcaptain\s+of\b",
+        r"\b(search\s+and\s+tell|check\s+and\s+tell)\b"
     ]
 
     for trigger in search_triggers:

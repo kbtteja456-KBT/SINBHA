@@ -716,14 +716,26 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
         is_send_note_intent = bool(re.search(r"\b(send|push)\s+(a\s+)?(note|link|message)\s+to\s+(my\s+)?(phone|device|laptop|other\s+device)\b", lower_m))
 
         if is_ring_intent or is_send_note_intent:
-            devices = [d for d in db.get_user_devices(user_id) if d["status"] == "trusted"]
-            if devices:
-                target_dev = devices[-1] if len(devices) > 1 else devices[0]
+            all_user_devices = db.get_user_devices(user_id)
+            trusted_devices = [d for d in all_user_devices if d.get("status") == "trusted"]
+            pending_devices = [d for d in all_user_devices if d.get("status") == "pending"]
+
+            if trusted_devices:
+                # Prioritize mobile/android device if ringing phone
+                target_dev = None
+                if is_ring_intent:
+                    for d in trusted_devices:
+                        if d.get("platform", "").lower() in ("android", "mobile", "ios"):
+                            target_dev = d
+                            break
+                if not target_dev:
+                    target_dev = trusted_devices[-1] if len(trusted_devices) > 1 else trusted_devices[0]
+
                 action_type = "ring_phone" if is_ring_intent else "send_note"
                 cmd_id = f"cmd_ai_{int(time.time()*1000)}"
                 cmd_data = {
                     "id": cmd_id,
-                    "sender_device": devices[0]["device_id"],
+                    "sender_device": trusted_devices[0]["device_id"],
                     "target_device": target_dev["device_id"],
                     "type": action_type,
                     "payload": {"text": user_msg, "source": "ai_assistant"},
@@ -748,6 +760,28 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
                         "device_name": target_dev["name"]
                     }
                 })
+            elif pending_devices:
+                p_dev = pending_devices[0]
+                action_word = "ring" if is_ring_intent else "send a note to"
+                reply = (
+                    f"I'd love to {action_word} your phone, but your '{p_dev['name']}' is still waiting to be approved in Settings! 🌸\n\n"
+                    f"1. Check the 6-digit code shown on your phone screen.\n"
+                    f"2. In Settings ⚙️ -> My Devices on your laptop, click the green '[🔑 Enter Code]' button next to '{p_dev['name']}'.\n"
+                    f"3. Type the 6 digits to approve and trust the phone.\n\n"
+                    f"Once it's trusted, ask me to {action_word} your phone again and it will work right away!"
+                )
+                db.save_message(user_id, "user", user_msg)
+                db.save_message(user_id, "assistant", reply)
+                return JSONResponse({"reply": reply, "proposal": None})
+            else:
+                action_word = "ring" if is_ring_intent else "send a note to"
+                reply = (
+                    f"I'd love to {action_word} your phone, but you don't have any devices paired yet! 🌸\n\n"
+                    f"To pair your phone, open the SINBHA Android app, log in, then approve the pairing in Settings ⚙️ -> My Devices on your laptop."
+                )
+                db.save_message(user_id, "user", user_msg)
+                db.save_message(user_id, "assistant", reply)
+                return JSONResponse({"reply": reply, "proposal": None})
 
     # 7. Standard message flow: call SINBHA brain
     db.save_message(user_id, "user", user_msg)
@@ -764,6 +798,15 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
     if web_search_setting == "true":
         needs_search, s_query, d_url = detect_search_intent(user_msg)
         if needs_search:
+            # Handle contextual follow-up phrases like "search and tell me" or "check it"
+            if s_query and len(s_query.split()) <= 4 and re.search(r"^(search|check|look\s*up|tell\s*me|yeah|yes)", s_query, re.IGNORECASE):
+                for prev in reversed(recent_history[:-1]):
+                    if prev.get("role") == "user":
+                        prev_text = prev.get("content", "")
+                        if len(prev_text) > 4 and not re.search(r"^(hi|hello|hey|yes|no|ok|okay)\b", prev_text, re.IGNORECASE):
+                            s_query = f"{prev_text} {s_query}".strip()
+                            break
+
             search_res = await execute_web_search(
                 user_id=user_id,
                 raw_query=s_query,
