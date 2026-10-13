@@ -527,6 +527,57 @@ function setupIpcHandlers() {
     updateTrayMenu();
     return { startWithWindows: enabled };
   });
+
+  // Step 16b: Native Device Commands
+  ipcMain.on('show-device-notification', (_event, data) => {
+    if (Notification.isSupported()) {
+      new Notification({
+        title: data.title || 'SINBHA Note',
+        body: data.body || '',
+        icon: path.join(__dirname, 'icon.png')
+      }).show();
+    }
+  });
+
+  ipcMain.handle('show-confirm-dialog', async (_event, options) => {
+    const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    const res = await dialog.showMessageBox(parent, {
+      type: 'question',
+      buttons: ['Allow', 'Deny'],
+      defaultId: 0,
+      cancelId: 1,
+      title: options.title || 'Incoming Remote Action',
+      message: options.message || 'A paired device requested an action:',
+      detail: options.detail || ''
+    });
+    return res.response === 0;
+  });
+
+  let activeDesktopRingNotification = null;
+  ipcMain.on('start-alarm-ring', (_event, sender) => {
+    if (Notification.isSupported()) {
+      activeDesktopRingNotification = new Notification({
+        title: '🔔 Ringing Desktop Alert',
+        body: `Remote ring triggered by ${sender || 'Paired Companion'}. Open SINBHA to stop.`,
+        icon: path.join(__dirname, 'icon.png'),
+        urgency: 'critical'
+      });
+      activeDesktopRingNotification.on('click', () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.show();
+          mainWindow.focus();
+        }
+      });
+      activeDesktopRingNotification.show();
+    }
+  });
+
+  ipcMain.on('stop-alarm-ring', () => {
+    if (activeDesktopRingNotification) {
+      try { activeDesktopRingNotification.close(); } catch (e) {}
+      activeDesktopRingNotification = null;
+    }
+  });
 }
 
 // ----------------- App Lifecycle -----------------

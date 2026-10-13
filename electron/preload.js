@@ -24,5 +24,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Settings & Status
   getAppStatus: () => ipcRenderer.invoke('get-app-status'),
   setDnd: (enabled) => ipcRenderer.invoke('set-dnd', enabled),
-  setStartWithWindows: (enabled) => ipcRenderer.invoke('set-start-with-windows', enabled)
+  setStartWithWindows: (enabled) => ipcRenderer.invoke('set-start-with-windows', enabled),
+
+  // Step 16b: Native Device Commands
+  showNotification: (title, body) => ipcRenderer.send('show-device-notification', { title, body }),
+  showConfirmDialog: (options) => ipcRenderer.invoke('show-confirm-dialog', options),
+  startAlarmRing: (sender) => ipcRenderer.send('start-alarm-ring', sender),
+  stopAlarmRing: () => ipcRenderer.send('stop-alarm-ring')
 });

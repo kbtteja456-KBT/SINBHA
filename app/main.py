@@ -141,11 +141,13 @@ class FactCreateRequest(BaseModel):
 class FactUpdateRequest(BaseModel):
     fact: str
 
-# Step 16: Device & Command Request Models
+# Step 16 / 16b: Device & Command Request Models
 class DeviceRegisterRequest(BaseModel):
     device_id: str
     name: Optional[str] = "Web Companion"
     platform: Optional[str] = "web"
+    password: Optional[str] = None
+    is_signup: Optional[bool] = False
 
 class DevicePairApproveRequest(BaseModel):
     code: str
@@ -155,6 +157,7 @@ class DeviceUpdateRequest(BaseModel):
     name: Optional[str] = None
     permission_level: Optional[int] = None
     capabilities: Optional[dict] = None
+    password: Optional[str] = None
 
 class DeviceCommandRequest(BaseModel):
     id: str
@@ -1339,16 +1342,22 @@ async def get_audit_endpoint(user: dict = Depends(get_current_user)):
 async def register_device_endpoint(payload: DeviceRegisterRequest, user: dict = Depends(get_current_user)):
     """
     Registers or handshakes a device for the logged-in user.
-    - First device is automatically trusted.
+    - New accounts may trust their first device at signup.
+    - For existing accounts, first device must not become trusted automatically; requires password verification.
     - Subsequent new devices start in 'pending' status with a 5-minute one-time pairing code.
+    - Broadcasts pairing_requested event to connected trusted devices if pending.
     """
     try:
         device = db.create_or_register_device(
             user_id=user["id"],
             device_id=payload.device_id.strip(),
             name=payload.name or "Web Companion",
-            platform=payload.platform or "web"
+            platform=payload.platform or "web",
+            password=payload.password,
+            is_signup=payload.is_signup or False,
         )
+        if device.get("status") == "pending":
+            await relay_manager.notify_pairing_requested(user["id"], device)
         return {"success": True, "device": device}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1397,20 +1406,26 @@ async def update_device_endpoint(device_id: str, payload: DeviceUpdateRequest, u
     """Renames device, adjusts permission level (0-4), or toggles capabilities."""
     clean_id = device_id.strip()
     updated = None
-    if payload.name:
-        updated = db.rename_device(user["id"], clean_id, payload.name)
-    if payload.permission_level is not None or payload.capabilities is not None:
-        updated = db.update_device_permissions(
-            user["id"],
-            clean_id,
-            permission_level=payload.permission_level,
-            capabilities=payload.capabilities
-        )
-    if not updated:
-        updated = db.get_device_by_id(user["id"], clean_id)
+    try:
+        if payload.name:
+            updated = db.rename_device(user["id"], clean_id, payload.name)
+        if payload.permission_level is not None or payload.capabilities is not None:
+            updated = db.update_device_permissions(
+                user["id"],
+                clean_id,
+                permission_level=payload.permission_level,
+                capabilities=payload.capabilities,
+                password=payload.password,
+            )
         if not updated:
-            raise HTTPException(status_code=404, detail="Device not found.")
-    return {"success": True, "device": updated}
+            updated = db.get_device_by_id(user["id"], clean_id)
+            if not updated:
+                raise HTTPException(status_code=404, detail="Device not found.")
+        return {"success": True, "device": updated}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update device: {e}")
 
 @app.delete("/api/devices/{device_id}")
 async def revoke_device_endpoint(device_id: str, user: dict = Depends(get_current_user)):

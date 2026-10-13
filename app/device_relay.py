@@ -1,9 +1,12 @@
 """
-Secure Device Command Relay & WebSocket Channel (Step 16)
-Provides authenticated, end-to-end device messaging, replay protection,
-60-second command expiry, rate limiting, and permission gates.
-Audit logging strictly records metadata (command type, sender, target, result),
-and NEVER the command content/payload.
+Secure Device Command Relay & WebSocket Channel (Step 16 / 16b)
+The command channel uses HTTPS/TLS encryption in transit, and the server
+relays readable payloads to authenticated devices. Offline queued commands
+are held strictly in volatile memory (never written to disk or database)
+and deleted immediately upon expiry (60 seconds).
+Replay protection, rate limiting, and permission gates are strictly enforced.
+Audit logging records only metadata (command type, sender, target, result),
+and NEVER the command content or payload.
 """
 
 import time
@@ -25,7 +28,7 @@ class CommandRelayManager:
         # Sliding window per-user rate limiting: user_id -> List[timestamp] (max 30 / min)
         self.user_command_history: Dict[int, List[float]] = {}
 
-        # Offline queues: (user_id, device_id) -> List[dict] (max 10, expiry 60s)
+        # Offline queues: (user_id, device_id) -> List[dict] (max 10, expiry 60s, in-memory only)
         self.offline_queues: Dict[Tuple[int, str], List[dict]] = {}
 
     def _cleanup_old_records(self, now: float):
@@ -63,6 +66,29 @@ class CommandRelayManager:
     def is_device_connected(self, user_id: int, device_id: str) -> bool:
         """Checks if device has an active WebSocket."""
         return (user_id, device_id) in self.active_websockets
+
+    async def notify_pairing_requested(self, user_id: int, device_info: dict):
+        """
+        Step 16b Rule 3: Broadcasts pairing_requested notification to all
+        currently connected trusted device WebSockets for this user.
+        """
+        packet = {
+            "type": "pairing_requested",
+            "device": {
+                "device_id": device_info.get("device_id"),
+                "name": device_info.get("name"),
+                "platform": device_info.get("platform"),
+                "created_at": str(device_info.get("created_at") or ""),
+            },
+            "timestamp": time.time(),
+        }
+        msg = json.dumps(packet)
+        for (uid, dev_id), ws in list(self.active_websockets.items()):
+            if uid == user_id:
+                try:
+                    await ws.send_text(msg)
+                except Exception:
+                    pass
 
     def get_pending_offline_commands(self, user_id: int, device_id: str) -> List[dict]:
         """

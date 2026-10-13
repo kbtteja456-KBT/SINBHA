@@ -1,13 +1,20 @@
 package com.sinbha.app
 
 import android.app.AlarmManager
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.MediaPlayer
+import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
@@ -21,6 +28,24 @@ import kotlinx.coroutines.launch
 
 @CapacitorPlugin(name = "SinbhaNative")
 class SinbhaPlugin : Plugin() {
+
+    companion object {
+        const val DEVICE_COMMANDS_CHANNEL_ID = "sinbha_device_commands_channel"
+        const val RING_NOTIFICATION_ID = 8888
+        private var activeRingPlayer: MediaPlayer? = null
+
+        fun stopCurrentAlarmRing(context: Context) {
+            try {
+                activeRingPlayer?.stop()
+                activeRingPlayer?.release()
+                activeRingPlayer = null
+                val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                nm.cancel(RING_NOTIFICATION_ID)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
 
     private lateinit var prefs: PreferencesManager
 
@@ -267,6 +292,135 @@ class SinbhaPlugin : Plugin() {
                 call.reject("Sync failed: ${e.message}")
             }
         }
+    }
+
+    /**
+     * Step 16b: Shows a native heads-up notification for an incoming remote note.
+     */
+    @PluginMethod
+    fun showNoteNotification(call: PluginCall) {
+        val title = call.getString("title") ?: "Note from Paired Device"
+        val text = call.getString("text") ?: ""
+        val ctx = context
+        val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                DEVICE_COMMANDS_CHANNEL_ID,
+                "SINBHA Device Commands",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Notifications from paired companion devices"
+            }
+            nm.createNotificationChannel(channel)
+        }
+
+        val intent = Intent(ctx, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pi = PendingIntent.getActivity(
+            ctx,
+            (System.currentTimeMillis() % 10000).toInt(),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notif = NotificationCompat.Builder(ctx, DEVICE_COMMANDS_CHANNEL_ID)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pi)
+            .build()
+
+        nm.notify((System.currentTimeMillis() % 10000).toInt() + 1000, notif)
+        call.resolve(JSObject().put("success", true))
+    }
+
+    /**
+     * Step 16b: Rings device using Alarm stream with Stop action button.
+     */
+    @PluginMethod
+    fun startAlarmRing(call: PluginCall) {
+        val ctx = context
+        val sender = call.getString("sender") ?: "Paired Companion"
+
+        stopCurrentAlarmRing(ctx)
+
+        try {
+            val alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+
+            val player = MediaPlayer().apply {
+                setDataSource(ctx, alarmUri)
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+                isLooping = true
+                prepare()
+                start()
+            }
+            activeRingPlayer = player
+
+            val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(
+                    DEVICE_COMMANDS_CHANNEL_ID,
+                    "SINBHA Device Commands",
+                    NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = "Notifications from paired companion devices"
+                }
+                nm.createNotificationChannel(channel)
+            }
+
+            val stopIntent = Intent(ctx, ReminderActionReceiver::class.java).apply {
+                action = ReminderActionReceiver.ACTION_STOP_RING
+            }
+            val stopPi = PendingIntent.getBroadcast(
+                ctx,
+                8888,
+                stopIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val openIntent = Intent(ctx, MainActivity::class.java)
+            val openPi = PendingIntent.getActivity(
+                ctx,
+                8889,
+                openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val notif = NotificationCompat.Builder(ctx, DEVICE_COMMANDS_CHANNEL_ID)
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setContentTitle("🔔 Ringing this Device")
+                .setContentText("Triggered by $sender")
+                .setOngoing(true)
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setContentIntent(openPi)
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop Ringing", stopPi)
+                .build()
+
+            nm.notify(RING_NOTIFICATION_ID, notif)
+            call.resolve(JSObject().put("success", true))
+        } catch (e: Exception) {
+            call.reject("Failed to play alarm ring: ${e.message}")
+        }
+    }
+
+    /**
+     * Step 16b: Stops alarm ring audio.
+     */
+    @PluginMethod
+    fun stopAlarmRing(call: PluginCall) {
+        stopCurrentAlarmRing(context)
+        call.resolve(JSObject().put("success", true))
     }
 
     /**

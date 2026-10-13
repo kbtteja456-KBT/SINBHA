@@ -482,6 +482,17 @@
               <span id="pairingCountdownText">Expires in 5:00</span>
               <button type="button" id="refreshPairCodeBtn" style="background: none; border: none; color: #b45309; cursor: pointer; font-size: 0.78rem; text-decoration: underline;">New Code</button>
             </div>
+
+            <!-- Existing Account First Device: Trust with Password (Step 16b Rule 2) -->
+            <div id="firstDevicePasswordSection" style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed #fcd34d;">
+              <p style="font-size: 0.78rem; color: #92400e; margin: 0 0 6px 0;">
+                <strong>Existing account?</strong> Enter your password to trust this device as your first trusted device:
+              </p>
+              <div style="display: flex; gap: 6px;">
+                <input type="password" id="firstDevicePasswordInput" placeholder="Account password" style="flex: 1; padding: 6px 10px; border: 1.5px solid #fcd34d; border-radius: 6px; font-size: 0.85rem;" />
+                <button type="button" id="trustFirstDeviceBtn" class="confirm-btn-primary" style="padding: 6px 12px; font-size: 0.8rem; white-space: nowrap;">Trust Device 🌸</button>
+              </div>
+            </div>
           </div>
 
           <!-- Devices List -->
@@ -498,6 +509,9 @@
               🔌 Disconnect All
             </button>
           </div>
+          <p style="font-size: 0.74rem; color: #6b7280; margin: 8px 0 0 0; line-height: 1.35;">
+            💡 <strong>STOP switch vs Disconnect All:</strong> "STOP" pauses all remote commands (resumable anytime; devices stay paired). "Disconnect All" completely revokes all devices.
+          </p>
         </div>
 
         <div class="settings-danger-section">
@@ -752,18 +766,25 @@
 
   <!-- PAIR DEVICE MODAL (For approving a new device) -->
   <div class="confirm-modal-overlay" id="pairDeviceModal" style="display: none; z-index: 9999;">
-    <div class="confirm-modal-card" style="max-width: 420px; text-align: left;">
+    <div class="confirm-modal-card" style="max-width: 440px; text-align: left;">
       <div class="modal-sticky-header">
         <h3 style="margin: 0; color: #db2777;">🔗 Pair New Device</h3>
         <button id="closePairModalBtn" class="popup-close-btn" aria-label="Close">&times;</button>
       </div>
       <div class="modal-scroll-body">
-        <p style="font-size: 0.85rem; color: #6b7280; margin-bottom: 14px;">
-          Enter the 6-digit one-time code shown on the screen of your new device. Pairing codes expire in 5 minutes.
+        <p style="font-size: 0.85rem; color: #6b7280; margin-bottom: 12px;">
+          To approve a new device, you must type the 6-digit code displayed on its screen. Code locks after 5 wrong attempts.
         </p>
+
+        <!-- Dynamic pending device info card (Step 16b Rule 3: Name, Platform, Time) -->
+        <div id="pendingDeviceCardContainer" style="margin-bottom: 14px;">
+          <!-- Populated dynamically -->
+        </div>
+
         <div style="margin-bottom: 16px;">
-          <label style="display: block; font-size: 0.82rem; font-weight: 600; margin-bottom: 6px; color: #374151;">6-Digit Pairing Code</label>
-          <input type="text" id="pairCodeInput" maxlength="6" placeholder="e.g. 481920" style="width: 100%; padding: 12px; text-align: center; font-size: 1.4rem; letter-spacing: 4px; font-weight: 700; border: 2px solid #fbcfe8; border-radius: 8px; font-family: monospace;" />
+          <label for="pairCodeInput" style="display: block; font-size: 0.82rem; font-weight: 600; margin-bottom: 6px; color: #374151;">Type 6-Digit Pairing Code</label>
+          <input type="text" id="pairCodeInput" maxlength="6" placeholder="e.g. 481920" autocomplete="off" style="width: 100%; padding: 12px; text-align: center; font-size: 1.4rem; letter-spacing: 4px; font-weight: 700; border: 2px solid #fbcfe8; border-radius: 8px; font-family: monospace;" />
+          <div id="pairAttemptsWarning" style="display: none; font-size: 0.76rem; color: #dc2626; margin-top: 5px;"></div>
         </div>
         <div style="display: flex; justify-content: flex-end; gap: 8px;">
           <button type="button" id="cancelPairCodeBtn" class="confirm-btn-secondary">Cancel</button>
@@ -823,6 +844,17 @@
               <span>🔄 Instant Task & Reminder Sync</span>
             </label>
           </div>
+        </div>
+
+        <!-- Elevate Permission Password Group (Step 16b Rule 4) -->
+        <div id="elevatePasswordGroup" style="display: none; margin-bottom: 16px; background: #fff1f2; border: 1.5px solid #fecdd3; border-radius: 8px; padding: 10px;">
+          <label for="elevatePasswordInput" style="display: block; font-size: 0.82rem; font-weight: 700; margin-bottom: 4px; color: #9f1239;">
+            🔑 Password Verification Required
+          </label>
+          <p style="font-size: 0.76rem; color: #be123c; margin: 0 0 6px 0;">
+            Raising permission to Level 2 or higher, or enabling "Open Link", requires re-entering your account password.
+          </p>
+          <input type="password" id="elevatePasswordInput" placeholder="Enter account password" style="width: 100%; padding: 8px 12px; border: 1.5px solid #fda4af; border-radius: 6px; font-size: 0.88rem;" />
         </div>
 
         <!-- Quick Remote Testing Actions -->

@@ -201,6 +201,7 @@ class Device(Base):
     capabilities_json = Column(Text, default='{"note": true, "open_link": true, "ring": true, "sync": true}', nullable=False)
     pairing_code = Column(String(16), nullable=True, index=True)
     pairing_expires_at = Column(DateTime(timezone=True), nullable=True)
+    pairing_attempts = Column(Integer, default=0, nullable=False)
     created_at = Column(DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False)
     last_seen_at = Column(DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False)
 

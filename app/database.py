@@ -1252,7 +1252,7 @@ def purge_all_data(user_id: int):
         session.execute(delete(PendingAction).where(PendingAction.user_id == user_id))
         log_audit(user_id, "USER_DATA_PURGED", "User cleared all chat history, memory facts, and tasks.", session=session)
 
-# ----------------- Step 16: Device Pairing & Management -----------------
+# ----------------- Step 16 & 16b: Device Pairing & Management -----------------
 
 def _device_to_dict(dev: Device) -> dict:
     capabilities = {"note": True, "open_link": True, "ring": True, "sync": True}
@@ -1271,6 +1271,9 @@ def _device_to_dict(dev: Device) -> dict:
         diff = int((exp - now).total_seconds())
         expires_in_seconds = max(0, diff)
 
+    attempts = getattr(dev, "pairing_attempts", 0) or 0
+    is_locked = attempts >= 5
+
     return {
         "id": dev.id,
         "device_id": dev.device_id,
@@ -1279,27 +1282,45 @@ def _device_to_dict(dev: Device) -> dict:
         "status": dev.status,
         "permission_level": dev.permission_level,
         "capabilities": capabilities,
-        "pairing_code": dev.pairing_code if (dev.status == "pending" and expires_in_seconds > 0) else None,
-        "expires_in_seconds": expires_in_seconds if dev.status == "pending" else 0,
+        "pairing_code": dev.pairing_code if (dev.status == "pending" and expires_in_seconds > 0 and not is_locked) else None,
+        "expires_in_seconds": expires_in_seconds if dev.status == "pending" and not is_locked else 0,
+        "pairing_attempts": attempts,
+        "is_locked": is_locked,
         "created_at": dev.created_at.isoformat() if dev.created_at else "",
         "last_seen_at": dev.last_seen_at.isoformat() if dev.last_seen_at else "",
     }
+
+def verify_user_password(user_id: int, password: str) -> bool:
+    """Verifies plain password against user's argon2 hash."""
+    with get_db_session() as session:
+        user = session.scalar(select(User).where(User.id == user_id))
+        if not user:
+            return False
+        return verify_password(user.password_hash, password)
 
 def create_or_register_device(
     user_id: int,
     device_id: str,
     name: str = "Unknown Device",
     platform: str = "web",
+    is_signup: bool = False,
+    password: Optional[str] = None,
 ) -> dict:
     """
     Registers a device for the user.
-    Step 16 Rules:
-    - The first device for a user is automatically marked 'trusted'.
-    - Subsequent new devices are marked 'pending' and given a 6-digit one-time pairing code
-      that expires in 5 minutes (300s).
+    Step 16b Rules:
+    - New accounts at signup (is_signup=True or user created < 120s ago) may trust their first device automatically.
+    - For an account that already exists:
+      the first device must NOT become trusted automatically.
+      It requires re-entering the password to become trusted.
+    - Subsequent new devices (trusted_count > 0) are marked 'pending' and given a 6-digit one-time code expiring in 5 min.
     - If device already exists and belongs to this user: updates last_seen_at, name, platform.
     """
     with get_db_session() as session:
+        user = session.scalar(select(User).where(User.id == user_id))
+        if not user:
+            raise ValueError("User not found.")
+
         dev = session.scalar(select(Device).where(Device.device_id == device_id))
         if dev:
             if dev.user_id != user_id:
@@ -1309,8 +1330,25 @@ def create_or_register_device(
                 dev.name = name
             if platform:
                 dev.platform = platform
-            # If still pending and code expired, auto-refresh code
-            if dev.status == "pending" and dev.pairing_expires_at:
+
+            # If pending and user provides password for existing account verification
+            if dev.status == "pending" and password:
+                if verify_password(user.password_hash, password):
+                    dev.status = "trusted"
+                    dev.pairing_code = None
+                    dev.pairing_expires_at = None
+                    dev.pairing_attempts = 0
+                    log_audit(
+                        user_id,
+                        "DEVICE_REGISTERED_TRUSTED",
+                        f"Device '{dev.name}' ({device_id}) verified with password and trusted.",
+                        session=session
+                    )
+                else:
+                    raise ValueError("Incorrect password. Re-entering your password is required to trust this device on an existing account.")
+
+            # If still pending and code expired, auto-refresh code if not locked
+            elif dev.status == "pending" and dev.pairing_expires_at and (getattr(dev, "pairing_attempts", 0) or 0) < 5:
                 now = utc_now()
                 exp = dev.pairing_expires_at
                 if exp.tzinfo is None:
@@ -1318,6 +1356,7 @@ def create_or_register_device(
                 if now > exp:
                     dev.pairing_code = f"{secrets.randbelow(900000) + 100000}"
                     dev.pairing_expires_at = now + timedelta(minutes=5)
+
             session.flush()
             return _device_to_dict(dev)
 
@@ -1328,16 +1367,49 @@ def create_or_register_device(
         ) or 0
 
         now = utc_now()
+        user_created = user.created_at
+        if user_created and user_created.tzinfo is None:
+            user_created = user_created.replace(tzinfo=timezone.utc)
+        is_recent_signup = is_signup or (user_created and (now - user_created).total_seconds() < 120)
+
         if trusted_count == 0:
-            status = "trusted"
-            pairing_code = None
-            pairing_expires_at = None
-            log_audit(
-                user_id,
-                "DEVICE_REGISTERED_TRUSTED",
-                f"First device '{name}' ({device_id}) registered as trusted.",
-                session=session
-            )
+            if is_recent_signup:
+                # New account at signup: trust first device
+                status = "trusted"
+                pairing_code = None
+                pairing_expires_at = None
+                log_audit(
+                    user_id,
+                    "DEVICE_REGISTERED_TRUSTED",
+                    f"First device on new signup '{name}' ({device_id}) registered as trusted.",
+                    session=session
+                )
+            else:
+                # Account already exists! Must NOT become trusted automatically.
+                # Requires re-entering the password.
+                if password:
+                    if verify_password(user.password_hash, password):
+                        status = "trusted"
+                        pairing_code = None
+                        pairing_expires_at = None
+                        log_audit(
+                            user_id,
+                            "DEVICE_REGISTERED_TRUSTED",
+                            f"First device for existing account '{name}' ({device_id}) verified with password and trusted.",
+                            session=session
+                        )
+                    else:
+                        raise ValueError("Incorrect password. Re-entering your password is required to trust this device on an existing account.")
+                else:
+                    status = "pending"
+                    pairing_code = f"{secrets.randbelow(900000) + 100000}"
+                    pairing_expires_at = now + timedelta(minutes=5)
+                    log_audit(
+                        user_id,
+                        "DEVICE_REGISTERED_PENDING",
+                        f"First device for existing account '{name}' ({device_id}) pending password verification.",
+                        session=session
+                    )
         else:
             status = "pending"
             pairing_code = f"{secrets.randbelow(900000) + 100000}"
@@ -1359,6 +1431,7 @@ def create_or_register_device(
             capabilities_json=json.dumps({"note": True, "open_link": True, "ring": True, "sync": True}),
             pairing_code=pairing_code,
             pairing_expires_at=pairing_expires_at,
+            pairing_attempts=0,
             created_at=now,
             last_seen_at=now,
         )
@@ -1382,62 +1455,107 @@ def get_device_by_id(user_id: int, device_id: str) -> Optional[dict]:
         )
         return _device_to_dict(dev) if dev else None
 
-def approve_device_pairing(user_id: int, code_or_target_id: str, approver_device_id: Optional[str] = None) -> dict:
+def approve_device_pairing(user_id: int, code: str, approver_device_id: Optional[str] = None) -> dict:
     """
-    Approves a pending device pairing using its 5-minute one-time code or device_id.
-    Ensures approval is initiated from an authorized context.
+    Approves a pending device pairing using its 6-digit one-time code.
+    Step 16b Rules:
+    - Pairing approval always requires typing the 6-digit code.
+    - Locks the code after 5 wrong attempts.
     """
-    clean_target = code_or_target_id.strip()
+    clean_code = str(code).strip()
     with get_db_session() as session:
         if approver_device_id:
             approver = session.scalar(
                 select(Device).where(and_(Device.user_id == user_id, Device.device_id == approver_device_id))
             )
             if not approver or approver.status != "trusted":
-                return {"success": False, "message": "Approver device is not trusted."}
+                return {"success": False, "error": "APPROVER_NOT_TRUSTED", "message": "Approver device is not trusted."}
 
-        target = session.scalar(
-            select(Device).where(
-                and_(
-                    Device.user_id == user_id,
-                    or_(
-                        Device.pairing_code == clean_target,
-                        Device.device_id == clean_target,
+        # Find pending device(s) for this user
+        pending_devices = session.scalars(
+            select(Device).where(and_(Device.user_id == user_id, Device.status == "pending"))
+        ).all()
+
+        if not pending_devices:
+            return {"success": False, "error": "NO_PENDING_DEVICE", "message": "No pending device found awaiting pairing approval."}
+
+        # Check if code matches any pending device
+        matched_target = None
+        for dev in pending_devices:
+            if dev.pairing_code and dev.pairing_code == clean_code:
+                matched_target = dev
+                break
+
+        if not matched_target:
+            # Code mismatch: increment failed attempts on pending devices
+            for dev in pending_devices:
+                dev.pairing_attempts = (getattr(dev, "pairing_attempts", 0) or 0) + 1
+                if dev.pairing_attempts >= 5:
+                    dev.pairing_code = None
+                    dev.pairing_expires_at = None
+                    log_audit(
+                        user_id,
+                        "DEVICE_PAIRING_LOCKED",
+                        f"Pairing code locked after 5 failed attempts for device '{dev.name}' ({dev.device_id}).",
+                        session=session
                     )
-                )
-            )
-        )
-        if not target:
-            return {"success": False, "message": "Device not found or invalid pairing code."}
+            session.flush()
 
-        if target.status == "trusted":
-            return {"success": True, "message": "Device is already trusted.", "device": _device_to_dict(target)}
+            locked_devs = [d for d in pending_devices if d.pairing_attempts >= 5]
+            if locked_devs:
+                return {
+                    "success": False,
+                    "error": "CODE_LOCKED",
+                    "message": "Too many failed attempts. Pairing code is locked. Please generate a new code on the device."
+                }
+            remaining = 5 - pending_devices[0].pairing_attempts
+            return {
+                "success": False,
+                "error": "INVALID_CODE",
+                "message": f"Invalid pairing code. {remaining} attempt(s) remaining before lock."
+            }
 
-        if target.status == "revoked":
-            return {"success": False, "message": "Device is revoked. Re-registration required."}
+        # Check if already locked
+        if (getattr(matched_target, "pairing_attempts", 0) or 0) >= 5:
+            return {
+                "success": False,
+                "error": "CODE_LOCKED",
+                "message": "Pairing code is locked after 5 failed attempts. Please generate a new code on the device."
+            }
 
-        if target.pairing_expires_at:
+        # Check expiry
+        if matched_target.pairing_expires_at:
             now = utc_now()
-            exp = target.pairing_expires_at
+            exp = matched_target.pairing_expires_at
             if exp.tzinfo is None:
                 exp = exp.replace(tzinfo=timezone.utc)
             if now > exp:
-                return {"success": False, "message": "Pairing code expired (5-minute limit). Please refresh pairing on the new device."}
+                return {
+                    "success": False,
+                    "error": "EXPIRED",
+                    "message": "Pairing code expired (5-minute limit). Please refresh code on the new device."
+                }
 
-        target.status = "trusted"
-        target.pairing_code = None
-        target.pairing_expires_at = None
-        target.last_seen_at = utc_now()
+        # Approval succeeds
+        matched_target.status = "trusted"
+        matched_target.pairing_code = None
+        matched_target.pairing_expires_at = None
+        matched_target.pairing_attempts = 0
+        matched_target.last_seen_at = utc_now()
         log_audit(
             user_id,
             "DEVICE_PAIRING_APPROVED",
-            f"Device '{target.name}' ({target.device_id}) approved and trusted.",
+            f"Device '{matched_target.name}' ({matched_target.device_id}) approved and trusted.",
             session=session
         )
-        return {"success": True, "message": f"Device '{target.name}' is now paired and trusted! 🌸", "device": _device_to_dict(target)}
+        return {
+            "success": True,
+            "message": f"Device '{matched_target.name}' is now paired and trusted! 🌸",
+            "device": _device_to_dict(matched_target)
+        }
 
 def regenerate_pairing_code(user_id: int, device_id: str) -> dict:
-    """Regenerates a fresh 5-minute pairing code for a pending device."""
+    """Regenerates a fresh 5-minute pairing code for a pending device and resets failed attempts."""
     with get_db_session() as session:
         dev = session.scalar(
             select(Device).where(and_(Device.user_id == user_id, Device.device_id == device_id))
@@ -1450,6 +1568,7 @@ def regenerate_pairing_code(user_id: int, device_id: str) -> dict:
         now = utc_now()
         dev.pairing_code = f"{secrets.randbelow(900000) + 100000}"
         dev.pairing_expires_at = now + timedelta(minutes=5)
+        dev.pairing_attempts = 0
         dev.last_seen_at = now
         session.flush()
         return _device_to_dict(dev)
@@ -1476,19 +1595,49 @@ def update_device_permissions(
     user_id: int,
     device_id: str,
     permission_level: Optional[int] = None,
-    capabilities: Optional[dict] = None
+    capabilities: Optional[dict] = None,
+    password: Optional[str] = None,
 ) -> dict:
-    """Updates permission level (0-4) and capabilities for a device."""
+    """
+    Updates permission level (0-4) and capabilities for a device.
+    Step 16b Rule 4: Raising permission to Level 2 or higher, or enabling 'open link',
+    strictly requires re-entering the account password.
+    """
     with get_db_session() as session:
+        user = session.scalar(select(User).where(User.id == user_id))
+        if not user:
+            raise ValueError("User not found.")
+
         dev = session.scalar(
             select(Device).where(and_(Device.user_id == user_id, Device.device_id == device_id))
         )
         if not dev:
             raise ValueError("Device not found.")
+
+        # Check if raising permission level to >= 2
+        is_raising_level = (
+            permission_level is not None
+            and int(permission_level) >= 2
+            and int(permission_level) > dev.permission_level
+        )
+
+        # Check if enabling "open_link"
+        current_caps = json.loads(dev.capabilities_json) if dev.capabilities_json else {}
+        is_enabling_open_link = (
+            capabilities is not None
+            and capabilities.get("open_link") is True
+            and not current_caps.get("open_link", False)
+        )
+
+        if is_raising_level or is_enabling_open_link:
+            if not password or not verify_password(user.password_hash, password):
+                raise ValueError("PASSWORD_REQUIRED: Re-entering your password is required to raise permission to Level 2+ or enable open link.")
+
         if permission_level is not None:
             dev.permission_level = max(0, min(4, int(permission_level)))
         if capabilities is not None:
             dev.capabilities_json = json.dumps(capabilities)
+
         log_audit(
             user_id,
             "DEVICE_PERMISSIONS_UPDATED",
@@ -1538,4 +1687,5 @@ def update_device_last_seen(device_id: str):
             )
     except Exception:
         pass
+
 

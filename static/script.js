@@ -2497,10 +2497,23 @@ document.addEventListener("DOMContentLoaded", () => {
       return "🌐";
     }
 
-    // Audio synthesizer ringtone for "ring my phone"
-    function startRingtone() {
+    // Audio synthesizer & native alarm ring for "ring my phone" (Step 16b Rule 6)
+    function startRingtone(sender = "Paired Device") {
       try {
         stopRingtone();
+        // Native Android alarm stream (STREAM_ALARM)
+        if (window.Capacitor && window.Capacitor.isPluginAvailable && window.Capacitor.isPluginAvailable("SinbhaNative")) {
+          try {
+            window.Capacitor.Plugins.SinbhaNative.startAlarmRing({ sender: sender });
+          } catch (e) {}
+        }
+        // Native Windows Electron
+        if (window.electronAPI && window.electronAPI.startAlarmRing) {
+          try {
+            window.electronAPI.startAlarmRing(sender);
+          } catch (e) {}
+        }
+
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         if (!AudioContext) return;
         ringAudioCtx = new AudioContext();
@@ -2533,6 +2546,18 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function stopRingtone() {
+      // Native Android alarm stop
+      if (window.Capacitor && window.Capacitor.isPluginAvailable && window.Capacitor.isPluginAvailable("SinbhaNative")) {
+        try {
+          window.Capacitor.Plugins.SinbhaNative.stopAlarmRing({});
+        } catch (e) {}
+      }
+      // Native Windows Electron stop
+      if (window.electronAPI && window.electronAPI.stopAlarmRing) {
+        try {
+          window.electronAPI.stopAlarmRing();
+        } catch (e) {}
+      }
       if (ringInterval) {
         clearInterval(ringInterval);
         ringInterval = null;
@@ -2696,21 +2721,47 @@ document.addEventListener("DOMContentLoaded", () => {
       } catch (e) {}
     }
 
-    // Dispatcher for incoming remote commands
+    // Dispatcher for incoming remote commands and pairing events (Step 16 / 16b)
     function handleIncomingDeviceMessage(msg) {
       if (msg.type === "remote_command") {
-        if (msg.requires_confirmation) {
+        if (msg.requires_confirmation || msg.command_type === "open_link") {
           showRemoteConfirmModal(msg);
         } else {
           executeRemoteCommand(msg);
         }
+      } else if (msg.type === "pairing_requested") {
+        // Step 16b Rule 3: Notify all trusted devices when a pairing is requested
+        const d = msg.device || {};
+        const reqTime = d.created_at ? new Date(d.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Just now";
+        showToast(`🔔 New device pairing requested: ${d.name || "Device"} (${d.platform || "unknown"}) at ${reqTime}`);
+        if (window.Capacitor && window.Capacitor.isPluginAvailable && window.Capacitor.isPluginAvailable("SinbhaNative")) {
+          try {
+            window.Capacitor.Plugins.SinbhaNative.showNoteNotification({
+              title: "New Device Pairing Requested",
+              text: `${d.name || "Device"} (${d.platform || "unknown"}) requested to pair at ${reqTime}. Approve in Settings.`
+            });
+          } catch (e) {}
+        } else if (window.electronAPI && window.electronAPI.showNotification) {
+          try {
+            window.electronAPI.showNotification(
+              "New Device Pairing Requested",
+              `${d.name || "Device"} (${d.platform || "unknown"}) requested to pair at ${reqTime}. Approve in Settings.`
+            );
+          } catch (e) {}
+        } else if (window.Notification && Notification.permission === "granted") {
+          new Notification("New Device Pairing Requested", {
+            body: `${d.name || "Device"} (${d.platform || "unknown"}) requested to pair at ${reqTime}. Open Settings to approve.`,
+            icon: "/static/favicon.png"
+          });
+        }
+        loadDevices();
       } else if (msg.type === "emergency_stop") {
         setStopUiState(true);
-        showToast("🛑 Remote channel halted by emergency STOP");
+        showToast("🛑 Remote channel paused by emergency STOP");
       }
     }
 
-    // Confirmation modal for Level > 1 or open_link
+    // Confirmation modal for Level > 1 or open_link (Step 16b Rule 6)
     function showRemoteConfirmModal(cmd) {
       activePendingRemoteCmd = cmd;
       const modal = document.getElementById("remoteConfirmModal");
@@ -2724,7 +2775,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (details) {
         let text = "";
         if (cmd.command_type === "open_link") {
-          text = `URL: ${cmd.payload && cmd.payload.url ? cmd.payload.url : "(No URL specified)"}`;
+          text = `URL: ${cmd.payload && cmd.payload.url ? cmd.payload.url : "(No URL specified)"}\n\nTap 'Allow' to open in browser.`;
         } else if (cmd.command_type === "send_note") {
           text = `Note: ${cmd.payload && cmd.payload.text ? cmd.payload.text : ""}`;
         } else if (cmd.command_type === "ring_phone") {
@@ -2737,7 +2788,7 @@ document.addEventListener("DOMContentLoaded", () => {
       modal.style.display = "flex";
     }
 
-    // Execute remote command on this target device
+    // Execute remote command on this target device (Step 16b Rule 6)
     async function executeRemoteCommand(cmd) {
       const type = cmd.command_type;
       const payload = cmd.payload || {};
@@ -2748,21 +2799,49 @@ document.addEventListener("DOMContentLoaded", () => {
           const noteText = payload.text || "(empty note)";
           showToast(`💌 Note from ${sender}: ${noteText.slice(0, 60)}`);
           appendMessage("assistant", `💌 **Remote Note from ${sender}:**\n${noteText}`);
-          if (window.Notification && Notification.permission === "granted") {
+
+          // Native Android Notification
+          if (window.Capacitor && window.Capacitor.isPluginAvailable && window.Capacitor.isPluginAvailable("SinbhaNative")) {
+            try {
+              window.Capacitor.Plugins.SinbhaNative.showNoteNotification({
+                title: `Note from ${sender}`,
+                text: noteText
+              });
+            } catch (e) {}
+          } else if (window.electronAPI && window.electronAPI.showNotification) {
+            try {
+              window.electronAPI.showNotification(`Note from ${sender}`, noteText);
+            } catch (e) {}
+          } else if (window.Notification && Notification.permission === "granted") {
             new Notification(`Note from ${sender}`, { body: noteText, icon: "/static/favicon.png" });
           }
         } else if (type === "open_link") {
           const url = payload.url || "";
           if (url && (url.startsWith("http://") || url.startsWith("https://"))) {
-            window.open(url, "_blank");
-            showToast(`🌐 Opened link from ${sender}`);
+            // Native Windows Electron confirmation dialog if available
+            if (window.electronAPI && window.electronAPI.showConfirmDialog) {
+              const allowed = await window.electronAPI.showConfirmDialog({
+                title: "Open Link from Paired Device?",
+                message: `Open link from '${sender}':`,
+                detail: url
+              });
+              if (allowed) {
+                window.open(url, "_blank");
+                showToast(`🌐 Opened link from ${sender}`);
+              } else {
+                showToast("Link open canceled.");
+              }
+            } else {
+              window.open(url, "_blank");
+              showToast(`🌐 Opened link from ${sender}`);
+            }
           }
         } else if (type === "ring_phone") {
           const ringModal = document.getElementById("ringAlertModal");
           const ringSender = document.getElementById("ringAlertSender");
           if (ringSender) ringSender.textContent = `Ringing triggered by ${sender}`;
           if (ringModal) ringModal.style.display = "flex";
-          startRingtone();
+          startRingtone(sender);
         } else if (type === "sync_tasks") {
           await loadTasks();
           await loadUpcomingReminders();
@@ -2779,6 +2858,54 @@ document.addEventListener("DOMContentLoaded", () => {
       } catch (e) {
         console.error("Error executing remote command:", e);
       }
+    }
+
+    // Open pair approval modal showing device name, platform, and request time (Step 16b Rule 3)
+    function openPairingApprovalModal(targetDev) {
+      const modal = document.getElementById("pairDeviceModal");
+      const cardContainer = document.getElementById("pendingDeviceCardContainer");
+      const input = document.getElementById("pairCodeInput");
+      const warn = document.getElementById("pairAttemptsWarning");
+
+      if (!modal) return;
+      if (input) input.value = "";
+      if (warn) {
+        warn.style.display = "none";
+        warn.textContent = "";
+      }
+
+      if (cardContainer) {
+        if (targetDev) {
+          const reqTime = targetDev.created_at ? new Date(targetDev.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Recently";
+          const attempts = targetDev.pairing_attempts || 0;
+          const isLocked = targetDev.is_locked || (attempts >= 5);
+
+          cardContainer.innerHTML = `
+            <div style="background: #fdf2f8; border: 1.5px solid #fbcfe8; border-radius: 8px; padding: 10px; font-size: 0.82rem;">
+              <div style="font-weight: 700; color: #9d174d; margin-bottom: 2px;">
+                ${getPlatformIcon(targetDev.platform)} ${escapeHtml(targetDev.name)}
+              </div>
+              <div style="color: #6b7280; font-size: 0.78rem;">
+                Platform: <strong>${targetDev.platform}</strong> • Requested at: <strong>${reqTime}</strong>
+              </div>
+              ${isLocked ? `
+                <div style="color: #dc2626; font-weight: 700; margin-top: 6px;">
+                  🔒 Code Locked (5 failed attempts). Generate a fresh code on that device.
+                </div>
+              ` : attempts > 0 ? `
+                <div style="color: #d97706; margin-top: 4px;">
+                  ⚠️ ${attempts} failed attempt(s). Code locks after 5 wrong attempts.
+                </div>
+              ` : ""}
+            </div>
+          `;
+        } else {
+          cardContainer.innerHTML = "";
+        }
+      }
+
+      modal.style.display = "flex";
+      if (input) input.focus();
     }
 
     // Load and render devices list in Settings
@@ -2814,7 +2941,7 @@ document.addEventListener("DOMContentLoaded", () => {
           let statusLabel = "Trusted";
           if (d.status === "pending") {
             statusClass = "pending";
-            statusLabel = "Pending Code";
+            statusLabel = d.is_locked ? "Code Locked" : "Pending Code";
           } else if (d.status === "revoked") {
             statusClass = "revoked";
             statusLabel = "Revoked";
@@ -2843,7 +2970,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 <button type="button" class="device-action-icon-btn manage-dev-btn" data-id="${d.device_id}" title="Device Settings & Capabilities">⚙️ Settings</button>
               ` : ""}
               ${d.status === "pending" ? `
-                <button type="button" class="device-action-icon-btn approve-dev-btn" data-code="${d.pairing_code || ""}" title="Approve Pending Device" style="color: #059669; border-color: #a7f3d0; background: #ecfdf5;">✓ Approve</button>
+                <button type="button" class="device-action-icon-btn enter-code-btn" data-id="${d.device_id}" title="Enter 6-Digit Code to Approve" style="color: #059669; border-color: #a7f3d0; background: #ecfdf5;">🔑 Enter Code</button>
               ` : ""}
               <button type="button" class="device-action-icon-btn revoke-dev-btn" data-id="${d.device_id}" title="Revoke Device" style="color: #be123c;">🗑️</button>
             </div>
@@ -2855,14 +2982,11 @@ document.addEventListener("DOMContentLoaded", () => {
             mBtn.addEventListener("click", () => openDeviceDetailsModal(d));
           }
 
-          // Hook approve button
-          const aBtn = card.querySelector(".approve-dev-btn");
-          if (aBtn) {
-            aBtn.addEventListener("click", () => {
-              const codeInput = document.getElementById("pairCodeInput");
-              if (codeInput && d.pairing_code) codeInput.value = d.pairing_code;
-              const modal = document.getElementById("pairDeviceModal");
-              if (modal) modal.style.display = "flex";
+          // Hook enter code button (Step 16b Rule 3: Typing code always required, no one-click approve)
+          const eBtn = card.querySelector(".enter-code-btn");
+          if (eBtn) {
+            eBtn.addEventListener("click", () => {
+              openPairingApprovalModal(d);
             });
           }
 
@@ -2883,7 +3007,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
 
-    // Modal: Device Details & Permissions
+    // Modal: Device Details & Permissions with Password Gate (Step 16b Rule 4)
     function openDeviceDetailsModal(device) {
       const modal = document.getElementById("deviceDetailsModal");
       const title = document.getElementById("devModalTitle");
@@ -2894,6 +3018,8 @@ document.addEventListener("DOMContentLoaded", () => {
       const capOpenLink = document.getElementById("capOpenLinkToggle");
       const capRing = document.getElementById("capRingToggle");
       const capSync = document.getElementById("capSyncToggle");
+      const elevateGroup = document.getElementById("elevatePasswordGroup");
+      const elevateInput = document.getElementById("elevatePasswordInput");
 
       if (!modal) return;
       if (title) title.textContent = `⚙️ ${device.name}`;
@@ -2906,6 +3032,29 @@ document.addEventListener("DOMContentLoaded", () => {
       if (capOpenLink) capOpenLink.checked = caps.open_link !== false;
       if (capRing) capRing.checked = caps.ring !== false;
       if (capSync) capSync.checked = caps.sync !== false;
+
+      // Track baseline settings to know when password elevation is needed
+      modal.dataset.initialLevel = String(device.permission_level ?? 1);
+      modal.dataset.initialOpenLink = String(caps.open_link !== false);
+      if (elevateGroup) elevateGroup.style.display = "none";
+      if (elevateInput) elevateInput.value = "";
+
+      const updateElevateVisibility = () => {
+        const initLevel = parseInt(modal.dataset.initialLevel || "1", 10);
+        const curLevel = parseInt(permSelect ? permSelect.value : "1", 10);
+        const initOpenLink = modal.dataset.initialOpenLink === "true";
+        const curOpenLink = capOpenLink ? capOpenLink.checked : false;
+
+        const isRaisingLevel = curLevel >= 2 && curLevel > initLevel;
+        const isEnablingOpenLink = curOpenLink && !initOpenLink;
+
+        if (elevateGroup) {
+          elevateGroup.style.display = (isRaisingLevel || isEnablingOpenLink) ? "block" : "none";
+        }
+      };
+
+      if (permSelect) permSelect.onchange = updateElevateVisibility;
+      if (capOpenLink) capOpenLink.onchange = updateElevateVisibility;
 
       modal.style.display = "flex";
     }
@@ -2956,7 +3105,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
 
-    // UI Event Listeners for Step 16
+    // UI Event Listeners for Step 16 / 16b
     const refreshDevBtn = document.getElementById("refreshDevicesBtn");
     if (refreshDevBtn) {
       refreshDevBtn.addEventListener("click", loadDevices);
@@ -2970,9 +3119,18 @@ document.addEventListener("DOMContentLoaded", () => {
     const pairCodeInput = document.getElementById("pairCodeInput");
 
     if (openPairBtn && pairModal) {
-      openPairBtn.addEventListener("click", () => {
-        if (pairCodeInput) pairCodeInput.value = "";
-        pairModal.style.display = "flex";
+      openPairBtn.addEventListener("click", async () => {
+        // Fetch devices to see if there is any pending device to show
+        let pendingDev = null;
+        try {
+          const res = await fetch("/api/devices");
+          if (res.ok) {
+            const data = await res.json();
+            const devs = data.devices || [];
+            pendingDev = devs.find(d => d.status === "pending") || null;
+          }
+        } catch (e) {}
+        openPairingApprovalModal(pendingDev);
       });
     }
 
@@ -2983,11 +3141,17 @@ document.addEventListener("DOMContentLoaded", () => {
       cancelPairBtn.addEventListener("click", () => pairModal.style.display = "none");
     }
 
+    // Typing 6-digit code is strictly required (Step 16b Rule 3)
     if (submitPairBtn && pairCodeInput) {
       submitPairBtn.addEventListener("click", async () => {
         const code = pairCodeInput.value.trim();
+        const warn = document.getElementById("pairAttemptsWarning");
         if (!code || code.length < 6) {
-          showToast("Please enter a valid 6-digit pairing code.");
+          showToast("Please enter the complete 6-digit pairing code.");
+          if (warn) {
+            warn.textContent = "Please enter all 6 digits.";
+            warn.style.display = "block";
+          }
           return;
         }
         try {
@@ -3005,10 +3169,56 @@ document.addEventListener("DOMContentLoaded", () => {
             if (pairModal) pairModal.style.display = "none";
             await loadDevices();
           } else {
-            showToast(data.detail || data.message || "Pairing approval failed.");
+            const errMsg = data.detail || data.message || "Pairing approval failed.";
+            showToast(`❌ ${errMsg}`);
+            if (warn) {
+              warn.textContent = errMsg;
+              warn.style.display = "block";
+            }
+            await loadDevices();
           }
         } catch (e) {
           showToast("Error approving device: " + e.message);
+        }
+      });
+    }
+
+    // Trust first device for existing accounts using password (Step 16b Rule 2)
+    const trustFirstDevBtn = document.getElementById("trustFirstDeviceBtn");
+    const firstDevPassInput = document.getElementById("firstDevicePasswordInput");
+    if (trustFirstDevBtn && firstDevPassInput) {
+      trustFirstDevBtn.addEventListener("click", async () => {
+        const pwd = firstDevPassInput.value;
+        if (!pwd) {
+          showToast("Please enter your account password.");
+          firstDevPassInput.focus();
+          return;
+        }
+        const myId = getOrCreateDeviceId();
+        const { platform, name } = getDevicePlatformAndName();
+        try {
+          const res = await fetch("/api/devices/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              device_id: myId,
+              name: name,
+              platform: platform,
+              password: pwd
+            })
+          });
+          const data = await res.json();
+          if (data.success && data.device && data.device.status === "trusted") {
+            currentDeviceData = data.device;
+            updateCurrentDeviceUI(currentDeviceData);
+            showToast("🌸 First device verified with password and trusted!");
+            connectDeviceWebSocket(myId);
+            loadDevices();
+          } else {
+            showToast(data.detail || data.message || "Incorrect password.");
+          }
+        } catch (e) {
+          showToast("Error trusting device: " + e.message);
         }
       });
     }
@@ -3100,20 +3310,38 @@ document.addEventListener("DOMContentLoaded", () => {
           ring: document.getElementById("capRingToggle").checked,
           sync: document.getElementById("capSyncToggle").checked
         };
+        const elevateGroup = document.getElementById("elevatePasswordGroup");
+        const elevateInput = document.getElementById("elevatePasswordInput");
+        const isElevateActive = elevateGroup && elevateGroup.style.display !== "none";
+        const passwordVal = isElevateActive ? (elevateInput ? elevateInput.value : "") : null;
+
+        if (isElevateActive && !passwordVal) {
+          showToast("Please enter your account password to authorize permission elevation.");
+          if (elevateInput) elevateInput.focus();
+          return;
+        }
+
         try {
+          const bodyPayload = {
+            permission_level: permLevel,
+            capabilities: caps
+          };
+          if (passwordVal) {
+            bodyPayload.password = passwordVal;
+          }
+
           const res = await fetch(`/api/devices/${encodeURIComponent(id)}`, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              permission_level: permLevel,
-              capabilities: caps
-            })
+            body: JSON.stringify(bodyPayload)
           });
           const data = await res.json();
           if (data.success) {
             showToast("Device settings saved 🌸");
             if (devModal) devModal.style.display = "none";
             loadDevices();
+          } else {
+            showToast(data.detail || data.message || "Failed to update device settings.");
           }
         } catch (e) {
           showToast("Error saving device settings: " + e.message);

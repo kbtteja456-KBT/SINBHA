@@ -17,11 +17,17 @@ class ReminderActionReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_MARK_DONE = "com.sinbha.app.ACTION_MARK_DONE"
         const val ACTION_SNOOZE = "com.sinbha.app.ACTION_SNOOZE"
+        const val ACTION_STOP_RING = "com.sinbha.app.ACTION_STOP_RING"
         const val EXTRA_TASK_ID = "extra_task_id"
         const val EXTRA_MINUTES = "extra_minutes"
     }
 
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == ACTION_STOP_RING) {
+            SinbhaPlugin.stopCurrentAlarmRing(context)
+            return
+        }
+
         val taskId = intent.getIntExtra(EXTRA_TASK_ID, -1)
         if (taskId <= 0) return
 
