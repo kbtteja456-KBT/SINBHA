@@ -16,6 +16,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.pm.PackageInfoCompat
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
@@ -429,13 +430,10 @@ class SinbhaPlugin : Plugin() {
     @PluginMethod
     fun getAppVersion(call: PluginCall) {
         val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+        val vCode = PackageInfoCompat.getLongVersionCode(pInfo)
         val res = JSObject().apply {
             put("versionName", pInfo.versionName)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                put("versionCode", pInfo.longVersionCode)
-            } else {
-                put("versionCode", pInfo.versionCode)
-            }
+            put("versionCode", vCode)
         }
         call.resolve(res)
     }
@@ -465,7 +463,7 @@ class SinbhaPlugin : Plugin() {
         val isBatteryIgnored = pm.isIgnoringBatteryOptimizations(ctx.packageName)
 
         val pInfo = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
-        val vCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) pInfo.longVersionCode else pInfo.versionCode.toLong()
+        val vCode = PackageInfoCompat.getLongVersionCode(pInfo)
 
         val tokenExists = !prefs.sessionToken.isNullOrEmpty()
         val tokenStatusStr = if (tokenExists) {
