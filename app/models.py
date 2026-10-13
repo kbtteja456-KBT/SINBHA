@@ -211,3 +211,34 @@ class Device(Base):
         Index("ix_devices_user_status", "user_id", "status"),
     )
 
+class SearchCache(Base):
+    """
+    Step 15: Cached search results for identical queries (24-hour TTL).
+    Saves API calls and respects provider free tier quotas.
+    """
+    __tablename__ = "search_cache"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    query_hash = Column(String(64), unique=True, nullable=False, index=True)
+    results_json = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+class SearchUsageLog(Base):
+    """
+    Step 15: Anonymized search query usage log.
+    Strictly logs query hashes (never raw text containing personal info),
+    timestamps, and domain counts to enforce daily per-user and monthly global caps.
+    """
+    __tablename__ = "search_usage_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    query_hash = Column(String(64), nullable=False)
+    domain_count = Column(Integer, default=0, nullable=False)
+    timestamp = Column(DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False, index=True)
+
+    __table_args__ = (
+        Index("ix_search_usage_user_time", "user_id", "timestamp"),
+    )
+

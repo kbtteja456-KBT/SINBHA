@@ -108,6 +108,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const quietEndInput = document.getElementById("quietEndInput");
   const dndToggle = document.getElementById("dndToggle");
   const startWithWindowsToggle = document.getElementById("startWithWindowsToggle");
+  const webSearchToggle = document.getElementById("webSearchToggle");
 
   // Step 9 Auth Elements
   const authScreen = document.getElementById("authScreen");
@@ -211,8 +212,8 @@ document.addEventListener("DOMContentLoaded", () => {
     scrollToBottom();
   }
 
-  // Add an AI bubble to chat (with optional proposal action card)
-  function appendAiMessage(text, timeStr = null, proposal = null) {
+  // Add an AI bubble to chat (with optional proposal action card and web search sources)
+  function appendAiMessage(text, timeStr = null, proposal = null, webSearch = null) {
     const group = document.createElement("div");
     group.className = "message-group ai-group";
     
@@ -324,12 +325,41 @@ document.addEventListener("DOMContentLoaded", () => {
           </div>
         `;
       }
+    let webSearchHtml = "";
+    if (webSearch && webSearch.searched) {
+      let sourcesHtml = "";
+      if (webSearch.sources && webSearch.sources.length > 0) {
+        sourcesHtml = `
+          <div class="web-search-sources">
+            ${webSearch.sources.map(s => {
+              const safeDomain = escapeHtml(s.domain || "web");
+              const safeDate = escapeHtml(s.date || "");
+              const safeUrl = escapeHtml(s.url || "#");
+              const safeTitle = escapeHtml(s.title || s.domain || "Source");
+              return `
+                <a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="web-source-chip" title="${safeTitle}">
+                  <span class="source-icon">🔗</span>
+                  <span class="source-domain">${safeDomain}</span>
+                  ${safeDate ? `<span class="source-date">• ${safeDate}</span>` : ''}
+                </a>
+              `;
+            }).join('')}
+          </div>
+        `;
+      }
+      webSearchHtml = `
+        <div class="web-search-badge-container">
+          <span class="web-search-badge">🌐 Searched the web${webSearch.cached ? ' (cached)' : ''}</span>
+          ${sourcesHtml}
+        </div>
+      `;
     }
 
     group.innerHTML = `
       <div class="message-avatar">🌸</div>
       <div class="message-bubble ai-bubble">
         <p>${escapeHtml(text)}</p>
+        ${webSearchHtml}
         ${proposalHtml}
         <span class="message-time">${formatTime(timeStr)}</span>
       </div>
@@ -937,6 +967,19 @@ document.addEventListener("DOMContentLoaded", () => {
       setStopUiState(false);
     }
 
+    const isSearchQuery = /https?:\/\/|\b(search|look up|price|cost|how much|latest|news|weather|who won)\b/i.test(text);
+    const indicatorGroup = document.createElement("div");
+    indicatorGroup.className = "message-group ai-group searching-indicator-group";
+    indicatorGroup.innerHTML = `
+      <div class="message-avatar">🌸</div>
+      <div class="searching-indicator-bubble">
+        <span class="searching-indicator-spinner"></span>
+        <span>${isSearchQuery ? "Searching the web…" : "Thinking…"}</span>
+      </div>
+    `;
+    chatMessages.appendChild(indicatorGroup);
+    scrollToBottom();
+
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
@@ -946,6 +989,8 @@ document.addEventListener("DOMContentLoaded", () => {
           tz_offset_minutes: new Date().getTimezoneOffset()
         })
       });
+
+      indicatorGroup.remove();
 
       if (response.status === 401) {
         showToast("Your session has expired. Please log in.");
@@ -958,7 +1003,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const data = await response.json();
-      appendAiMessage(data.reply, null, data.proposal);
+      appendAiMessage(data.reply, null, data.proposal, data.web_search);
 
       if (data.stopped) {
         setStopUiState(true);
@@ -978,6 +1023,7 @@ document.addEventListener("DOMContentLoaded", () => {
         loadDevData();
       }
     } catch (err) {
+      indicatorGroup.remove();
       appendAiMessage("I had a little hiccup connecting right now. Don't worry, please check if the server is still running on your computer 🌸");
       console.error(err);
     }
@@ -1233,6 +1279,9 @@ document.addEventListener("DOMContentLoaded", () => {
       if (quietEndInput && s.quiet_hours_end) {
         quietEndInput.value = s.quiet_hours_end;
       }
+      if (webSearchToggle && s.web_search_enabled !== undefined) {
+        webSearchToggle.checked = (s.web_search_enabled === "true" || s.web_search_enabled === true);
+      }
 
       // Check electron desktop integration
       if (window.electronAPI) {
@@ -1257,7 +1306,8 @@ document.addEventListener("DOMContentLoaded", () => {
         timezone: timezoneSelect ? timezoneSelect.value : (Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"),
         quiet_hours_enabled: quietHoursToggle ? (quietHoursToggle.checked ? "true" : "false") : "true",
         quiet_hours_start: quietStartInput ? quietStartInput.value : "22:00",
-        quiet_hours_end: quietEndInput ? quietEndInput.value : "08:00"
+        quiet_hours_end: quietEndInput ? quietEndInput.value : "08:00",
+        web_search_enabled: webSearchToggle ? (webSearchToggle.checked ? "true" : "false") : "true"
       };
       await fetch("/api/settings", {
         method: "POST",
@@ -1282,6 +1332,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   if (quietStartInput) quietStartInput.addEventListener("change", saveSettings);
   if (quietEndInput) quietEndInput.addEventListener("change", saveSettings);
+  if (webSearchToggle) webSearchToggle.addEventListener("change", saveSettings);
 
   // Desktop toggles
   if (dndToggle) {

@@ -33,6 +33,8 @@ from app.models import (
     PendingAction,
     DeviceToken,
     Device,
+    SearchCache,
+    SearchUsageLog,
     utc_now,
 )
 from app.crypto import encrypt_text, decrypt_text
@@ -248,7 +250,8 @@ def create_user(
             "quiet_hours_start": "22:00",
             "quiet_hours_end": "08:00",
             "country": "US",
-            "timezone": timezone_name or "UTC"
+            "timezone": timezone_name or "UTC",
+            "web_search_enabled": "true"
         }
         for k, v in defaults.items():
             session.add(UserSetting(user_id=user_id, key=k, value=v))
@@ -1053,7 +1056,8 @@ def get_all_settings(user_id: int) -> dict:
         "quiet_hours_start": "22:00",
         "quiet_hours_end": "08:00",
         "country": "US",
-        "timezone": "UTC"
+        "timezone": "UTC",
+        "web_search_enabled": "true"
     }
     with get_db_session() as session:
         settings = session.scalars(select(UserSetting).where(UserSetting.user_id == user_id)).all()
@@ -1687,5 +1691,96 @@ def update_device_last_seen(device_id: str):
             )
     except Exception:
         pass
+
+
+# ----------------- Web Search Cache & Usage Tracking (Step 15) -----------------
+
+def get_search_cache(query_hash: str) -> Optional[dict]:
+    """
+    Returns unexpired cached search results for query_hash, or None.
+    TTL: 24 hours.
+    """
+    now = utc_now()
+    with get_db_session() as session:
+        cached = session.scalar(
+            select(SearchCache).where(
+                and_(SearchCache.query_hash == query_hash, SearchCache.expires_at > now)
+            )
+        )
+        if cached and cached.results_json:
+            try:
+                return json.loads(cached.results_json)
+            except Exception:
+                return None
+        return None
+
+def set_search_cache(query_hash: str, results_data: dict, ttl_hours: int = 24) -> None:
+    """
+    Saves or updates cached search results with expires_at = now + ttl_hours.
+    """
+    now = utc_now()
+    exp = now + timedelta(hours=ttl_hours)
+    results_json = json.dumps(results_data)
+    with get_db_session() as session:
+        cached = session.scalar(
+            select(SearchCache).where(SearchCache.query_hash == query_hash)
+        )
+        if cached:
+            cached.results_json = results_json
+            cached.expires_at = exp
+        else:
+            session.add(SearchCache(
+                query_hash=query_hash,
+                results_json=results_json,
+                created_at=now,
+                expires_at=exp
+            ))
+
+def log_search_usage(user_id: Optional[int], query_hash: str, domain_count: int = 0) -> None:
+    """
+    Logs an anonymized search query into search_usage_log.
+    Strict privacy: only stores query_hash (never raw query text or personal data).
+    """
+    with get_db_session() as session:
+        session.add(SearchUsageLog(
+            user_id=user_id,
+            query_hash=query_hash,
+            domain_count=domain_count,
+            timestamp=utc_now()
+        ))
+
+def count_user_searches_today(user_id: int) -> int:
+    """
+    Counts search queries executed by user_id today (since UTC 00:00:00).
+    Used to enforce daily per-user search limit (15 searches/day).
+    """
+    now = utc_now()
+    today_start = datetime(now.year, now.month, now.day, 0, 0, 0, tzinfo=timezone.utc)
+    with get_db_session() as session:
+        count = session.scalar(
+            select(func.count(SearchUsageLog.id)).where(
+                and_(
+                    SearchUsageLog.user_id == user_id,
+                    SearchUsageLog.timestamp >= today_start
+                )
+            )
+        )
+        return count or 0
+
+def count_global_searches_this_month() -> int:
+    """
+    Counts global search queries across all users for the current calendar month.
+    Used to enforce monthly global cap (950 searches/month) to stay under Tavily free tier.
+    """
+    now = utc_now()
+    month_start = datetime(now.year, now.month, 1, 0, 0, 0, tzinfo=timezone.utc)
+    with get_db_session() as session:
+        count = session.scalar(
+            select(func.count(SearchUsageLog.id)).where(
+                SearchUsageLog.timestamp >= month_start
+            )
+        )
+        return count or 0
+
 
 

@@ -30,6 +30,10 @@ from app.ai_brain import (
     detect_task_chat_intent,
 )
 from app import database as db
+from app.search import (
+    execute_web_search,
+    detect_search_intent,
+)
 from app.device_relay import relay_manager
 from app.security import (
     is_production,
@@ -130,6 +134,7 @@ class SettingsUpdateRequest(BaseModel):
     quiet_hours_end: str = "08:00"
     country: Optional[str] = "US"
     timezone: Optional[str] = "UTC"
+    web_search_enabled: Optional[str] = "true"
 
 class TaskStatusUpdateRequest(BaseModel):
     status: str  # "pending" or "completed"
@@ -751,12 +756,56 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
     recent_history = db.get_recent_messages(user_id, limit=20)
     current_facts = db.get_all_facts(user_id)
 
+    # 7b. Web Search check (Step 15)
+    web_search_meta = None
+    web_search_context = None
+    web_search_setting = db.get_setting(user_id, "web_search_enabled", "true")
+
+    if web_search_setting == "true":
+        needs_search, s_query, d_url = detect_search_intent(user_msg)
+        if needs_search:
+            search_res = await execute_web_search(
+                user_id=user_id,
+                raw_query=s_query,
+                direct_url=d_url,
+                user_facts=current_facts,
+                user_email=user.get("email")
+            )
+            if search_res.limit_reached:
+                ai_reply = search_res.limit_message
+                db.save_message(user_id, "assistant", ai_reply)
+                db.log_audit(user_id, "SEARCH_LIMIT_REACHED", f"Search limit reached for user #{user_id}")
+                return JSONResponse({
+                    "reply": ai_reply,
+                    "proposal": None,
+                    "new_facts": [],
+                    "web_search": {"searched": False, "limit_reached": True, "sources": []}
+                })
+
+            if search_res.searched:
+                web_search_context = search_res.context_text
+                web_search_meta = {
+                    "searched": True,
+                    "sources": search_res.sources,
+                    "cached": search_res.cached
+                }
+            elif search_res.error == "missing_api_key" and (d_url or "search" in user_msg.lower()):
+                web_search_meta = {
+                    "searched": False,
+                    "error": "missing_api_key",
+                    "sources": []
+                }
+
     brain_result = await call_sinbha_brain(
         user_message=user_msg,
         chat_history=recent_history[:-1],
-        remembered_facts=current_facts
+        remembered_facts=current_facts,
+        web_search_context=web_search_context
     )
     ai_reply = brain_result.get("reply", "I'm right here with you 🌸")
+
+    if web_search_meta and not web_search_meta.get("searched") and web_search_meta.get("error") == "missing_api_key":
+        ai_reply = "I wanted to check the web for you, but my search key isn't configured yet in the .env file! 🌸"
 
     # 8. Check if AI proposed a structured task
     task_proposal_obj = None
@@ -818,21 +867,23 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
 
     db.save_message(user_id, "assistant", ai_reply)
 
-    # 9. Background fact extraction
+    # 9. Background fact extraction (suppressed on untrusted external links)
     new_facts_saved = []
-    try:
-        extracted = await extract_explicit_facts(user_msg)
-        for f in extracted:
-            res = db.update_or_add_fact(user_id, f)
-            if res.get("action") in ("added", "updated"):
-                new_facts_saved.append(f)
-    except Exception as e:
-        print(f"Fact extraction note: {e}")
+    if not (web_search_meta and web_search_meta.get("searched") and bool(re.search(r"https?://", user_msg))):
+        try:
+            extracted = await extract_explicit_facts(user_msg)
+            for f in extracted:
+                res = db.update_or_add_fact(user_id, f)
+                if res.get("action") in ("added", "updated"):
+                    new_facts_saved.append(f)
+        except Exception as e:
+            print(f"Fact extraction note: {e}")
 
     return JSONResponse({
         "reply": ai_reply,
         "proposal": task_proposal_obj,
-        "new_facts": new_facts_saved
+        "new_facts": new_facts_saved,
+        "web_search": web_search_meta
     })
 
 # ----------------- Task Management Endpoints (Per-User) -----------------
@@ -1194,7 +1245,9 @@ async def update_settings_endpoint(payload: SettingsUpdateRequest, user: dict = 
         db.set_setting(user_id, "country", payload.country)
     if payload.timezone:
         db.set_setting(user_id, "timezone", payload.timezone)
-    db.log_audit(user_id, "SETTINGS_UPDATED", f"Persistence: {payload.persistence}, Quiet hours: {payload.quiet_hours_start}-{payload.quiet_hours_end}, Timezone: {payload.timezone or 'UTC'}")
+    if payload.web_search_enabled is not None:
+        db.set_setting(user_id, "web_search_enabled", payload.web_search_enabled)
+    db.log_audit(user_id, "SETTINGS_UPDATED", f"Persistence: {payload.persistence}, Quiet hours: {payload.quiet_hours_start}-{payload.quiet_hours_end}, Web Search: {payload.web_search_enabled}")
     return {"success": True, "settings": db.get_all_settings(user_id)}
 
 @app.post("/api/confirm-action")
