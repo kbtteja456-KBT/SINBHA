@@ -57,10 +57,11 @@ SINBHA APP CAPABILITIES & SETTINGS AWARENESS:
      - In the app's Settings menu under "My Devices", users can securely link their Android phone and Windows laptop.
      - How Pairing Works: When they log in on their Android phone, the phone displays a 6-digit one-time code (valid for 5 minutes). On their trusted laptop, they open Settings -> "My Devices", find "Android Companion", click "[🔑 Enter Code]", and enter that 6-digit code to approve and pair the phone.
      - Operating the phone from laptop: Once paired, they can ask you in chat to "ring my phone" (buzzes/rings their phone to help find it) or "send a note to my phone: <note>" (pushes a note to the phone)! They can also manage permissions and kill switches in Settings -> "My Devices".
-  2. REAL WEB SEARCH:
-     - The app has a "Web Search" toggle in Settings (powered by Tavily).
-     - When enabled, you can search the web for real-time information: live cricket scores and match updates, current prices on Amazon and other stores, latest news, and website links.
-     - If asked whether you have web search access or can browse the web, warmly confirm that you have real web search enabled in your Settings and invite them to ask what they'd like you to check!
+  2. REAL WEB SEARCH & TEMPORAL ACCURACY:
+     - The app has real-time Web Search enabled (powered by Tavily).
+     - CRITICAL: When web search is enabled or information is requested, NEVER ask permission before searching (never ask "shall I search the web?", "would you like me to look that up?"). Just search and provide the verified answer directly!
+     - You can search the web for real-time information: live cricket scores and match updates, current prices on Amazon and other stores, latest news, and website links.
+     - If search results look old, incomplete, or uncertain, say so plainly.
 """
 
 FACT_EXTRACTOR_PROMPT = """You are a strict, objective fact extractor for a personal companion.
@@ -150,53 +151,11 @@ def parse_relative_datetime(raw_str: str, base_dt: datetime.datetime = None, use
             "suggested_reminders": generate_suggested_reminders(target, base_dt)
         }
 
-    # 1. Extract time
-    hour = None
-    minute = 0
-    time_specified = False
-
-    # 12-hour format: '8am', '8:30 am', '8 pm', '11:45pm'
-    m12 = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)\b", clean)
-    if m12:
-        h = int(m12.group(1))
-        m = int(m12.group(2)) if m12.group(2) else 0
-        ampm = m12.group(3).replace(".", "")
-        if ampm == "pm" and h < 12:
-            h += 12
-        elif ampm == "am" and h == 12:
-            h = 0
-        hour = h
-        minute = m
-        time_specified = True
-    else:
-        # 24-hour format: 'at 17:00', '14:30'
-        m24 = re.search(r"\b(?:at\s+)?([01]?\d|2[0-3]):([0-5]\d)\b", clean)
-        if m24:
-            hour = int(m24.group(1))
-            minute = int(m24.group(2))
-            time_specified = True
-        elif "noon" in clean:
-            hour, minute = 12, 0
-            time_specified = True
-        elif "midnight" in clean:
-            hour, minute = 0, 0
-            time_specified = True
-        elif "in the morning" in clean:
-            hour, minute = 9, 0
-            time_specified = True
-        elif "in the afternoon" in clean:
-            hour, minute = 14, 0
-            time_specified = True
-        elif "in the evening" in clean:
-            hour, minute = 18, 0
-            time_specified = True
-        elif "at night" in clean:
-            hour, minute = 21, 0
-            time_specified = True
-
-    # 2. Extract date
+    # 1. Extract date first so time parsing knows if date is in the future
     target_date = base_dt.date()
+    has_explicit_future_day = False
     if "tomorrow" in clean:
+        has_explicit_future_day = True
         if "day after" in clean:
             target_date = base_dt.date() + datetime.timedelta(days=2)
         else:
@@ -204,6 +163,7 @@ def parse_relative_datetime(raw_str: str, base_dt: datetime.datetime = None, use
     elif "today" in clean or "tonight" in clean:
         target_date = base_dt.date()
     elif "in a week" in clean or "next week" in clean:
+        has_explicit_future_day = True
         target_date = base_dt.date() + datetime.timedelta(days=7)
     else:
         # Weekdays
@@ -212,6 +172,7 @@ def parse_relative_datetime(raw_str: str, base_dt: datetime.datetime = None, use
         for idx, day in enumerate(weekdays):
             if day in clean:
                 matched_weekday = True
+                has_explicit_future_day = True
                 today_idx = base_dt.weekday()
                 ahead = idx - today_idx
                 if ahead <= 0:
@@ -227,6 +188,8 @@ def parse_relative_datetime(raw_str: str, base_dt: datetime.datetime = None, use
             if m_iso:
                 try:
                     target_date = datetime.date(int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3)))
+                    if target_date > base_dt.date():
+                        has_explicit_future_day = True
                 except ValueError:
                     pass
             else:
@@ -241,24 +204,125 @@ def parse_relative_datetime(raw_str: str, base_dt: datetime.datetime = None, use
                                 target_date = datetime.date(base_dt.year, m_idx, int(day_match.group(1)))
                                 if target_date < base_dt.date():
                                     target_date = datetime.date(base_dt.year + 1, m_idx, int(day_match.group(1)))
+                                if target_date > base_dt.date():
+                                    has_explicit_future_day = True
                             except ValueError:
                                 pass
                         break
 
+    # 2. Extract time with Next-Occurrence and Ambiguity resolution
+    hour = None
+    minute = 0
+    time_specified = False
+    is_ambiguous = False
+    ambiguous_options = []
+
+    # 12-hour format: '8am', '8:30 am', '8 pm', '11:45pm'
+    m12 = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)\b", clean)
+    if m12:
+        h = int(m12.group(1))
+        m = int(m12.group(2)) if m12.group(2) else 0
+        ampm = m12.group(3).replace(".", "")
+        if ampm == "pm" and h < 12:
+            h += 12
+        elif ampm == "am" and h == 12:
+            h = 0
+        hour = h
+        minute = m
+        time_specified = True
+    else:
+        m24 = re.search(r"\b(?:at\s+)?([01]?\d|2[0-3]):([0-5]\d)\b", clean)
+        m_hour_only = re.search(r"\b(?:at\s+)(\d{1,2})\s*(?:o'?clock)?\b", clean)
+        raw_h = None
+        raw_m = 0
+        if m24:
+            raw_h = int(m24.group(1))
+            raw_m = int(m24.group(2))
+        elif m_hour_only:
+            raw_h = int(m_hour_only.group(1))
+            raw_m = 0
+        elif "noon" in clean:
+            raw_h, raw_m = 12, 0
+        elif "midnight" in clean:
+            raw_h, raw_m = 0, 0
+        elif "in the morning" in clean:
+            raw_h, raw_m = 9, 0
+        elif "in the afternoon" in clean:
+            raw_h, raw_m = 14, 0
+        elif "in the evening" in clean:
+            raw_h, raw_m = 18, 0
+        elif "at night" in clean:
+            raw_h, raw_m = 21, 0
+
+        if raw_h is not None:
+            if raw_h >= 13 or raw_h == 0 or "noon" in clean or "midnight" in clean or "in the" in clean or "at night" in clean:
+                hour = raw_h
+                minute = raw_m
+                time_specified = True
+            else:
+                # 12-hour time without am/pm
+                if has_explicit_future_day:
+                    # Ambiguous between AM and PM (e.g. 'tomorrow at 8') -> show 2 buttons instead of guessing
+                    is_ambiguous = True
+                    hour = raw_h
+                    minute = raw_m
+                    time_specified = True
+                    h12 = raw_h if raw_h != 0 else 12
+                    ambiguous_options = [
+                        {
+                            "label": f"{h12}:{raw_m:02d} AM",
+                            "time": f"{raw_h % 12:02d}:{raw_m:02d}",
+                            "due_date": str(target_date),
+                            "datetime": f"{target_date} {raw_h % 12:02d}:{raw_m:02d}",
+                            "display": f"{target_date.strftime('%A, %B %d, %Y')} at {h12}:{raw_m:02d} AM ({user_timezone})"
+                        },
+                        {
+                            "label": f"{h12}:{raw_m:02d} PM",
+                            "time": f"{(raw_h % 12) + 12:02d}:{raw_m:02d}",
+                            "due_date": str(target_date),
+                            "datetime": f"{target_date} {(raw_h % 12) + 12:02d}:{raw_m:02d}",
+                            "display": f"{target_date.strftime('%A, %B %d, %Y')} at {h12}:{raw_m:02d} PM ({user_timezone})"
+                        }
+                    ]
+                else:
+                    # Choose NEXT OCCURRENCE (e.g. at 8:49 PM, 8:51 means 8:51 PM today; at 9:00 AM, 8:51 means 8:51 PM today)
+                    h_am = raw_h % 12
+                    h_pm = (raw_h % 12) + 12
+                    now_hm = (base_dt.hour, base_dt.minute)
+                    if (h_am, raw_m) > now_hm:
+                        hour = h_am
+                        minute = raw_m
+                    elif (h_pm, raw_m) > now_hm:
+                        hour = h_pm
+                        minute = raw_m
+                    else:
+                        target_date = base_dt.date() + datetime.timedelta(days=1)
+                        hour = h_am
+                        minute = raw_m
+                    time_specified = True
+
     due_date_str = target_date.strftime("%Y-%m-%d")
     due_time_str = f"{hour:02d}:{minute:02d}" if time_specified else None
     
+    is_past = False
+    past_message = None
+
     if time_specified:
         target_dt = datetime.datetime(target_date.year, target_date.month, target_date.day, hour, minute, tzinfo=tz)
+        if target_dt < base_dt and not is_ambiguous:
+            is_past = True
+            time_label = target_dt.strftime("%I:%M %p").lstrip("0")
+            past_message = f"That requested time ({time_label}) was earlier today. Would you like me to schedule it for tomorrow at {time_label}, or a different time? 🌸"
+
         due_datetime_str = target_dt.strftime("%Y-%m-%d %H:%M")
         target_dt_utc = target_dt.astimezone(datetime.timezone.utc)
         due_datetime_utc_str = target_dt_utc.strftime("%Y-%m-%d %H:%M")
-        display_str = target_dt.strftime("%Y-%m-%d at %I:%M %p (%A)").replace(" 0", " ")
+        display_str = target_dt.strftime("%A, %B %d, %Y at %I:%M %p").replace(" 0", " ") + f" ({user_timezone})"
         suggested = generate_suggested_reminders(target_dt, base_dt)
     else:
         due_datetime_str = None
         due_datetime_utc_str = None
-        display_str = target_date.strftime("%Y-%m-%d (%A)")
+        display_str = target_date.strftime("%A, %B %d, %Y") + f" ({user_timezone})"
         suggested = generate_date_only_reminders(target_date, base_dt)
 
     return {
@@ -268,7 +332,10 @@ def parse_relative_datetime(raw_str: str, base_dt: datetime.datetime = None, use
         "due_datetime_utc": due_datetime_utc_str,
         "display": display_str,
         "time_specified": time_specified,
-        "is_ambiguous": False,
+        "is_ambiguous": is_ambiguous,
+        "ambiguous_options": ambiguous_options,
+        "is_past": is_past,
+        "past_message": past_message,
         "suggested_reminders": suggested
     }
 
@@ -449,7 +516,7 @@ def extract_fallback_task_proposal(user_message: str) -> dict | None:
         "notes": None
     }
 
-async def call_sinbha_brain(user_message: str, chat_history: list = None, remembered_facts: list = None, web_search_context: str = None) -> dict:
+async def call_sinbha_brain(user_message: str, chat_history: list = None, remembered_facts: list = None, web_search_context: str = None, user_timezone: str = None) -> dict:
     """
     Sends message to OpenRouter with memory context (last 20 messages + explicit facts)
     and optional untrusted web search context (Step 15).
@@ -465,9 +532,26 @@ async def call_sinbha_brain(user_message: str, chat_history: list = None, rememb
             "error": "missing_api_key"
         }
 
-    # Build system prompt with today's real date and remembered facts
-    today_str = datetime.date.today().strftime("%A, %B %d, %Y")
-    system_content = f"{BASE_SYSTEM_PROMPT}\n\nCURRENT DATE: Today is {today_str}."
+    # Build system prompt with today's real date in user's timezone and remembered facts
+    tz_label = user_timezone or "UTC"
+    try:
+        import zoneinfo
+        tz_obj = zoneinfo.ZoneInfo(tz_label)
+        now_dt = datetime.datetime.now(tz_obj)
+        today_str = now_dt.strftime("%A, %B %d, %Y")
+    except Exception:
+        now_dt = datetime.datetime.now()
+        today_str = now_dt.strftime("%A, %B %d, %Y")
+
+    system_content = (
+        f"{BASE_SYSTEM_PROMPT}\n\n"
+        f"CURRENT DATE: Today is {today_str} ({tz_label}).\n"
+        "TEMPORAL GROUNDING & MEMORY TRUST:\n"
+        "- You must strictly TRUST this provided current date and any web search results over your own internal training memory or pre-trained cutoff.\n"
+        "- Do not doubt this date. Any events or news occurring up to today are real and present-day.\n"
+        "- When web search is enabled, never ask permission before searching, just search and answer.\n"
+        "- If the results look old or uncertain, say so plainly."
+    )
 
     if remembered_facts and len(remembered_facts) > 0:
         facts_list_text = "\n".join([f"- {f['fact']}" for f in remembered_facts])

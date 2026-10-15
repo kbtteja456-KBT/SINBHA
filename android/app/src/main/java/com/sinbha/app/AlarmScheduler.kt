@@ -156,4 +156,62 @@ object AlarmScheduler {
             e.printStackTrace()
         }
     }
+
+    fun addOrUpdateCachedReminder(
+        context: Context,
+        taskId: Int,
+        taskTitle: String,
+        label: String,
+        reminderId: String?,
+        triggerAtMillis: Long
+    ) {
+        val prefs = PreferencesManager(context)
+        val cached = prefs.cachedRemindersJson
+        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        val formattedTime = sdf.format(Date(triggerAtMillis))
+
+        val newArray = JSONArray()
+        var updated = false
+
+        if (!cached.isNullOrEmpty()) {
+            try {
+                val oldArr = JSONArray(cached)
+                for (i in 0 until oldArr.length()) {
+                    val item = oldArr.getJSONObject(i)
+                    val tId = item.optInt("task_id", -1)
+                    val rId = item.optString("reminder_id", "")
+                    if (tId == taskId && (reminderId == null || rId == reminderId || rId.startsWith("snooze_"))) {
+                        val updatedItem = JSONObject().apply {
+                            put("task_id", taskId)
+                            put("task_title", taskTitle)
+                            put("reminder_id", reminderId ?: "snooze_$taskId")
+                            put("time", formattedTime)
+                            put("label", label)
+                            put("is_explicit", true)
+                        }
+                        newArray.put(updatedItem)
+                        updated = true
+                    } else {
+                        newArray.put(item)
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        if (!updated) {
+            val newItem = JSONObject().apply {
+                put("task_id", taskId)
+                put("task_title", taskTitle)
+                put("reminder_id", reminderId ?: "snooze_$taskId")
+                put("time", formattedTime)
+                put("label", label)
+                put("is_explicit", true)
+            }
+            newArray.put(newItem)
+        }
+
+        prefs.cachedRemindersJson = newArray.toString()
+    }
 }

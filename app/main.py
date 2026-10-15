@@ -118,6 +118,7 @@ class TaskActionRequest(BaseModel):
 class TaskConfirmWithRemindersRequest(BaseModel):
     proposal_id: Optional[int] = None
     reminders: Optional[list] = []
+    chosen_time: Optional[str] = None
 
 class ReminderFiredRequest(BaseModel):
     task_id: int
@@ -839,11 +840,14 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
                     "sources": []
                 }
 
+    user_tz = payload.timezone or user.get("timezone") or db.get_setting(user_id, "timezone", "UTC")
+
     brain_result = await call_sinbha_brain(
         user_message=user_msg,
         chat_history=recent_history[:-1],
         remembered_facts=current_facts,
-        web_search_context=web_search_context
+        web_search_context=web_search_context,
+        user_timezone=user_tz
     )
     ai_reply = brain_result.get("reply", "I'm right here with you 🌸")
 
@@ -870,14 +874,16 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
             user_tz = payload.timezone or user.get("timezone") or db.get_setting(user_id, "timezone", "UTC")
             dt_res = parse_relative_datetime(raw_due, base_dt=client_now, user_timezone=user_tz)
             
-            if dt_res["is_ambiguous"]:
-                if "when" not in ai_reply.lower() and "due" not in ai_reply.lower():
-                    ai_reply += "\n\nWhen would you like to get this done by? Let me know so I can keep track of it accurately for you 🌸"
-                real_due = None
+            if dt_res.get("is_past") and dt_res.get("past_message"):
+                if dt_res["past_message"] not in ai_reply:
+                    ai_reply += "\n\n" + dt_res["past_message"]
+
+            if dt_res.get("is_ambiguous"):
+                real_due = dt_res["due_date"]
                 due_time = None
                 due_datetime = None
-                display_due = None
-                suggested_rems = []
+                display_due = dt_res["display"]
+                suggested_rems = dt_res.get("suggested_reminders", [])
             else:
                 real_due = dt_res["due_date"]
                 due_time = dt_res["due_time"]
@@ -907,6 +913,8 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
                 "due_datetime": due_datetime,
                 "display_due": display_due,
                 "time_specified": dt_res["time_specified"],
+                "is_ambiguous": dt_res.get("is_ambiguous", False),
+                "ambiguous_options": dt_res.get("ambiguous_options", []),
                 "suggested_reminders": suggested_rems,
                 "notes": notes
             }
@@ -987,7 +995,8 @@ async def confirm_task_endpoint(payload: TaskConfirmWithRemindersRequest = None,
     """Confirms pending task proposal for the logged-in user."""
     user_id = user["id"]
     reminders = payload.reminders if payload and payload.reminders is not None else []
-    confirmed = db.confirm_pending_proposal(user_id, chosen_reminders=reminders)
+    chosen_time = payload.chosen_time if payload else None
+    confirmed = db.confirm_pending_proposal(user_id, chosen_reminders=reminders, chosen_time=chosen_time)
     if not confirmed:
         return JSONResponse({
             "success": False,
@@ -1475,6 +1484,8 @@ async def get_device_status_endpoint(device_id: str, user: dict = Depends(get_cu
     dev = db.get_device_by_id(user["id"], device_id.strip())
     if not dev:
         raise HTTPException(status_code=404, detail="Device not found.")
+    trusted_count = len([d for d in db.get_user_devices(user["id"]) if d["status"] == "trusted"])
+    dev["requires_first_device_trust"] = (trusted_count == 0 and dev.get("status") == "pending")
     return {"device": dev}
 
 @app.post("/api/devices/approve-pairing")

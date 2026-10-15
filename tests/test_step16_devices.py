@@ -71,8 +71,8 @@ class TestStep16DeviceChannel(unittest.TestCase):
         user = db.create_user("user1_devices@example.com", "Password123!", is_18=True, agreed_terms=True)
         user_id = user["id"]
 
-        # Register first device
-        dev1 = db.create_or_register_device(user_id, "dev_pc_1", name="Desktop PC", platform="windows")
+        # Register first device (trusted via password verification)
+        dev1 = db.create_or_register_device(user_id, "dev_pc_1", name="Desktop PC", platform="windows", password="Password123!")
         self.assertEqual(dev1["status"], "trusted")
         self.assertIsNone(dev1["pairing_code"])
 
@@ -89,7 +89,7 @@ class TestStep16DeviceChannel(unittest.TestCase):
         user = db.create_user("user2_pairing@example.com", "Password123!", is_18=True, agreed_terms=True)
         user_id = user["id"]
 
-        dev1 = db.create_or_register_device(user_id, "dev_u2_1", name="PC", platform="windows")
+        dev1 = db.create_or_register_device(user_id, "dev_u2_1", name="PC", platform="windows", password="Password123!")
         dev2 = db.create_or_register_device(user_id, "dev_u2_2", name="Tablet", platform="android")
         pairing_code = dev2["pairing_code"]
 
@@ -120,8 +120,8 @@ class TestStep16DeviceChannel(unittest.TestCase):
         user_a = db.create_user("user_a@example.com", "Password123!", is_18=True, agreed_terms=True)
         user_b = db.create_user("user_b@example.com", "Password123!", is_18=True, agreed_terms=True)
 
-        dev_a1 = db.create_or_register_device(user_a["id"], "dev_a1", "User A Laptop", "windows")
-        dev_b1 = db.create_or_register_device(user_b["id"], "dev_b1", "User B Laptop", "windows")
+        dev_a1 = db.create_or_register_device(user_a["id"], "dev_a1", "User A Laptop", "windows", password="Password123!")
+        dev_b1 = db.create_or_register_device(user_b["id"], "dev_b1", "User B Laptop", "windows", password="Password123!")
 
         # User B attempts to send command targeting User A's device
         cmd = {
@@ -153,7 +153,7 @@ class TestStep16DeviceChannel(unittest.TestCase):
     def test_04_revoked_device_cannot_send_or_receive(self):
         """Removing/revoking a device revokes access immediately."""
         user = db.create_user("user_revoke@example.com", "Password123!", is_18=True, agreed_terms=True)
-        dev1 = db.create_or_register_device(user["id"], "dev_r1", "Device 1", "windows")
+        dev1 = db.create_or_register_device(user["id"], "dev_r1", "Device 1", "windows", password="Password123!")
         dev2 = db.create_or_register_device(user["id"], "dev_r2", "Device 2", "android")
         db.approve_device_pairing(user["id"], dev2["pairing_code"])
 
@@ -194,7 +194,7 @@ class TestStep16DeviceChannel(unittest.TestCase):
     def test_05_expired_and_replayed_commands_rejected(self):
         """Commands older than 60s or replayed IDs are strictly rejected."""
         user = db.create_user("user_replay@example.com", "Password123!", is_18=True, agreed_terms=True)
-        dev1 = db.create_or_register_device(user["id"], "dev_rp1", "Device 1", "windows")
+        dev1 = db.create_or_register_device(user["id"], "dev_rp1", "Device 1", "windows", password="Password123!")
         dev2 = db.create_or_register_device(user["id"], "dev_rp2", "Device 2", "android")
         db.approve_device_pairing(user["id"], dev2["pairing_code"])
         token = db.create_session(user["id"])
@@ -234,7 +234,7 @@ class TestStep16DeviceChannel(unittest.TestCase):
     def test_06_global_stop_blocks_all_remote_commands(self):
         """Emergency STOP halts and blocks all remote commands immediately."""
         user = db.create_user("user_stop@example.com", "Password123!", is_18=True, agreed_terms=True)
-        dev1 = db.create_or_register_device(user["id"], "dev_st1", "Device 1", "windows")
+        dev1 = db.create_or_register_device(user["id"], "dev_st1", "Device 1", "windows", password="Password123!")
         dev2 = db.create_or_register_device(user["id"], "dev_st2", "Device 2", "android")
         db.approve_device_pairing(user["id"], dev2["pairing_code"])
         token = db.create_session(user["id"])
@@ -258,7 +258,7 @@ class TestStep16DeviceChannel(unittest.TestCase):
     def test_07_disconnect_all_devices_button(self):
         """Disconnect all devices button revokes all devices immediately and clears queues."""
         user = db.create_user("user_disconn@example.com", "Password123!", is_18=True, agreed_terms=True)
-        db.create_or_register_device(user["id"], "dev_d1", "PC", "windows")
+        db.create_or_register_device(user["id"], "dev_d1", "PC", "windows", password="Password123!")
         dev2 = db.create_or_register_device(user["id"], "dev_d2", "Phone", "android")
         db.approve_device_pairing(user["id"], dev2["pairing_code"])
         token = db.create_session(user["id"])
@@ -275,7 +275,7 @@ class TestStep16DeviceChannel(unittest.TestCase):
     def test_08_audit_log_never_logs_payload_content(self):
         """Server strictly logs metadata (command type, sender, target, result), NEVER the payload content."""
         user = db.create_user("user_audit_privacy@example.com", "Password123!", is_18=True, agreed_terms=True)
-        dev1 = db.create_or_register_device(user["id"], "dev_aud1", "Device 1", "windows")
+        dev1 = db.create_or_register_device(user["id"], "dev_aud1", "Device 1", "windows", password="Password123!")
         dev2 = db.create_or_register_device(user["id"], "dev_aud2", "Device 2", "android")
         db.approve_device_pairing(user["id"], dev2["pairing_code"])
         token = db.create_session(user["id"])
@@ -312,7 +312,7 @@ class TestStep16DeviceChannel(unittest.TestCase):
     def test_09_permission_levels_and_capability_toggles(self):
         """Level 0 blocks active commands; disabled capability blocks command."""
         user = db.create_user("user_perms@example.com", "Password123!", is_18=True, agreed_terms=True)
-        dev1 = db.create_or_register_device(user["id"], "dev_p1", "Sender", "windows")
+        dev1 = db.create_or_register_device(user["id"], "dev_p1", "Sender", "windows", password="Password123!")
         dev2 = db.create_or_register_device(user["id"], "dev_p2", "Target", "android")
         db.approve_device_pairing(user["id"], dev2["pairing_code"])
         token = db.create_session(user["id"])
@@ -363,7 +363,7 @@ class TestStep16DeviceChannel(unittest.TestCase):
     def test_10_offline_queue_pruning_and_limits(self):
         """Offline devices have max 10 queued commands and stale commands (> 60s) never run."""
         user = db.create_user("user_queue@example.com", "Password123!", is_18=True, agreed_terms=True)
-        dev1 = db.create_or_register_device(user["id"], "dev_q1", "Sender", "windows")
+        dev1 = db.create_or_register_device(user["id"], "dev_q1", "Sender", "windows", password="Password123!")
         dev2 = db.create_or_register_device(user["id"], "dev_q2", "Target", "android")
         db.approve_device_pairing(user["id"], dev2["pairing_code"])
         token = db.create_session(user["id"])
@@ -397,7 +397,7 @@ class TestStep16DeviceChannel(unittest.TestCase):
     def test_11_stop_vs_disconnect_all_kill_switches(self):
         """Step 16b Rule 1: STOP pauses remote commands (devices stay paired, resumable); Disconnect All revokes all devices."""
         user = db.create_user("user_killswitch@example.com", "Password123!", is_18=True, agreed_terms=True)
-        dev1 = db.create_or_register_device(user["id"], "dev_ks1", "Laptop", "windows")
+        dev1 = db.create_or_register_device(user["id"], "dev_ks1", "Laptop", "windows", password="Password123!")
         dev2 = db.create_or_register_device(user["id"], "dev_ks2", "Phone", "android")
         db.approve_device_pairing(user["id"], dev2["pairing_code"])
         token = db.create_session(user["id"])
@@ -482,7 +482,7 @@ class TestStep16DeviceChannel(unittest.TestCase):
     def test_13_code_locking_after_5_failed_attempts(self):
         """Step 16b Rule 3: 5 wrong attempts lock the pairing code; regenerating code resets attempts."""
         user = db.create_user("user_lock@example.com", "Password123!", is_18=True, agreed_terms=True)
-        dev1 = db.create_or_register_device(user["id"], "dev_lk1", "PC", "windows")
+        dev1 = db.create_or_register_device(user["id"], "dev_lk1", "PC", "windows", password="Password123!")
         dev2 = db.create_or_register_device(user["id"], "dev_lk2", "Phone", "android")
         real_code = dev2["pairing_code"]
 
@@ -517,7 +517,7 @@ class TestStep16DeviceChannel(unittest.TestCase):
     def test_14_permission_elevation_password_gate(self):
         """Step 16b Rule 4: Raising permission to Level >= 2 or enabling 'open_link' requires account password."""
         user = db.create_user("user_elevate@example.com", "SuperSecurePass123!", is_18=True, agreed_terms=True)
-        dev1 = db.create_or_register_device(user["id"], "dev_el1", "Desktop", "windows")
+        dev1 = db.create_or_register_device(user["id"], "dev_el1", "Desktop", "windows", password="SuperSecurePass123!")
         token = db.create_session(user["id"])
 
         # 1. Try raising permission level from 1 to 2 without password -> raises ValueError
@@ -573,7 +573,7 @@ class TestStep16DeviceChannel(unittest.TestCase):
     def test_15_offline_payload_memory_pruning(self):
         """Step 16b Rule 5: Queued offline payloads exist strictly in-memory and are purged upon expiry (> 60s)."""
         user = db.create_user("user_memqueue@example.com", "Password123!", is_18=True, agreed_terms=True)
-        dev1 = db.create_or_register_device(user["id"], "dev_mq1", "Sender", "windows")
+        dev1 = db.create_or_register_device(user["id"], "dev_mq1", "Sender", "windows", password="Password123!")
         dev2 = db.create_or_register_device(user["id"], "dev_mq2", "Target", "android")
         db.approve_device_pairing(user["id"], dev2["pairing_code"])
 

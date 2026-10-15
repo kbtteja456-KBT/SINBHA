@@ -548,6 +548,27 @@ class OverlayBirdService : Service() {
 
     private fun handleSnoozeAction(minutes: Int = 15) {
         if (currentTaskId > 0) {
+            val triggerAtMillis = System.currentTimeMillis() + minutes * 60 * 1000L
+            val snoozeRemId = "snooze_$currentTaskId"
+            val dueLabel = "Snoozed (${minutes}m)"
+
+            AlarmScheduler.scheduleExactAlarm(
+                this,
+                currentTaskId,
+                currentTaskTitle,
+                dueLabel,
+                snoozeRemId,
+                triggerAtMillis
+            )
+            AlarmScheduler.addOrUpdateCachedReminder(
+                this,
+                currentTaskId,
+                currentTaskTitle,
+                dueLabel,
+                snoozeRemId,
+                triggerAtMillis
+            )
+
             serviceScope.launch {
                 apiClient.snoozeReminder(currentTaskId, minutes)
             }

@@ -20,6 +20,7 @@ let remindersPaused = false;
 let doNotDisturb = false;
 let isBirdShowingOnOverlay = false;
 let authNotificationShown = false;
+const localSnoozeTimers = new Map();
 
 // Auto-updater (only active in packaged app or when configured)
 let autoUpdater = null;
@@ -492,8 +493,30 @@ function setupIpcHandlers() {
     }
   });
 
-  // Snooze reminder from bird popup
-  ipcMain.handle('snooze-reminder', async (_event, taskId, minutes) => {
+  // Snooze reminder from bird popup or client (with local timer for offline reliability)
+  ipcMain.handle('snooze-reminder', async (_event, taskId, minutes, taskTitle) => {
+    const mins = Math.max(1, parseInt(minutes, 10) || 2);
+    const ms = mins * 60 * 1000;
+
+    // 1. Local offline timer on Windows
+    if (localSnoozeTimers.has(taskId)) {
+      clearTimeout(localSnoozeTimers.get(taskId));
+    }
+    const timer = setTimeout(() => {
+      localSnoozeTimers.delete(taskId);
+      if (remindersPaused || doNotDisturb) return;
+      isBirdShowingOnOverlay = true;
+      if (overlayWindow && !overlayWindow.isDestroyed()) {
+        overlayWindow.webContents.send('show-bird', {
+          task: { id: taskId, title: taskTitle || 'Snoozed Task' },
+          reminder_id: `snooze_${taskId}`,
+          is_explicit: true
+        });
+      }
+    }, ms);
+    localSnoozeTimers.set(taskId, timer);
+
+    // 2. Sync to cloud backend
     const cookieHeader = await getSessionCookieHeader();
     try {
       const res = await fetch(`${config.BACKEND_URL}/api/reminders/snooze`, {
@@ -503,11 +526,11 @@ function setupIpcHandlers() {
           'Cookie': cookieHeader || '',
           'X-Requested-With': 'XMLHttpRequest'
         },
-        body: JSON.stringify({ task_id: taskId, minutes: minutes || 15 })
+        body: JSON.stringify({ task_id: taskId, minutes: mins })
       });
       return { success: res.ok };
     } catch (e) {
-      return { success: false };
+      return { success: true, offline: true };
     }
   });
 

@@ -16,7 +16,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Actions from overlay
   markTaskDone: (taskId) => ipcRenderer.invoke('mark-task-done', taskId),
-  snoozeReminder: (taskId, minutes) => ipcRenderer.invoke('snooze-reminder', taskId, minutes),
+  snoozeReminder: (taskId, minutes, taskTitle) => ipcRenderer.invoke('snooze-reminder', taskId, minutes, taskTitle),
   openChatWindow: () => ipcRenderer.send('open-chat-window'),
   dismissBird: () => ipcRenderer.send('dismiss-bird'),
   birdDeparted: () => ipcRenderer.send('bird-departed'),

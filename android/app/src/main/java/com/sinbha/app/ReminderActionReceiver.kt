@@ -45,6 +45,28 @@ class ReminderActionReceiver : BroadcastReceiver() {
             }
             ACTION_SNOOZE -> {
                 val minutes = intent.getIntExtra(EXTRA_MINUTES, 2)
+                val taskTitle = intent.getStringExtra(AlarmScheduler.EXTRA_TASK_TITLE) ?: "Reminder"
+                val triggerAtMillis = System.currentTimeMillis() + minutes * 60 * 1000L
+                val snoozeRemId = "snooze_$taskId"
+                val dueLabel = "Snoozed (${minutes}m)"
+
+                AlarmScheduler.scheduleExactAlarm(
+                    context,
+                    taskId,
+                    taskTitle,
+                    dueLabel,
+                    snoozeRemId,
+                    triggerAtMillis
+                )
+                AlarmScheduler.addOrUpdateCachedReminder(
+                    context,
+                    taskId,
+                    taskTitle,
+                    dueLabel,
+                    snoozeRemId,
+                    triggerAtMillis
+                )
+
                 scope.launch {
                     apiClient.snoozeReminder(taskId, minutes)
                 }

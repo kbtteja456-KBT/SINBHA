@@ -843,20 +843,47 @@ def cancel_pending_proposal(user_id: int, reason: str = "User cancelled") -> boo
     log_audit(user_id, "TASK_PROPOSAL_CANCELLED", f"Proposal '{pa.get('title')}' cancelled: {reason}")
     return True
 
-def confirm_pending_proposal(user_id: int, chosen_reminders: list = None) -> dict | None:
+def confirm_pending_proposal(user_id: int, chosen_reminders: list = None, chosen_time: str = None) -> dict | None:
     """Confirms pending task proposal and creates the task."""
     pa = get_pending_proposal(user_id)
     if not pa:
         return None
 
     reminders = chosen_reminders if chosen_reminders is not None else pa.get("suggested_reminders", [])
+    due_time = chosen_time or pa.get("due_time")
+    due_date = pa.get("due_date")
+
+    # If chosen_time was selected and pa has due_date, update exact_due reminder
+    if chosen_time and due_date:
+        for r in reminders:
+            if r.get("id") == "exact_due" or "due time" in str(r.get("label", "")).lower():
+                r["time"] = f"{due_date} {chosen_time}"
+
+    # Also compute due_datetime_utc if due_date and due_time are present
+    due_dt_utc = None
+    if due_date and due_time:
+        try:
+            user_tz_str = get_setting(user_id, "timezone", "UTC")
+            try:
+                import zoneinfo
+                tz_obj = zoneinfo.ZoneInfo(user_tz_str)
+            except Exception:
+                tz_obj = timezone.utc
+            parts_d = [int(p) for p in due_date.split("-")]
+            parts_t = [int(p) for p in due_time.split(":")]
+            local_dt = datetime(parts_d[0], parts_d[1], parts_d[2], parts_t[0], parts_t[1], tzinfo=tz_obj)
+            due_dt_utc = local_dt.astimezone(timezone.utc)
+        except Exception:
+            due_dt_utc = None
+
     task_id = create_task(
         user_id=user_id,
         title=pa["title"],
-        due_date=pa.get("due_date"),
-        due_time=pa.get("due_time"),
+        due_date=due_date,
+        due_time=due_time,
         notes=pa.get("notes"),
-        chosen_reminders=reminders
+        chosen_reminders=reminders,
+        due_datetime_utc=due_dt_utc
     )
     clear_pending_action(user_id)
     return get_task_by_id(user_id, task_id)
@@ -1131,7 +1158,18 @@ def check_due_reminders(user_id: int, now_dt: datetime = None) -> list:
                 sn_dt = datetime.fromisoformat(snooze_str)
                 if sn_dt.tzinfo is None:
                     sn_dt = sn_dt.replace(tzinfo=timezone.utc)
-                if now < sn_dt:
+                current_utc = utc_now()
+                if current_utc < sn_dt:
+                    continue
+                else:
+                    # Expired snooze becomes a due reminder
+                    due_items.append({
+                        "task": t,
+                        "reminder_id": f"snooze_{t['id']}",
+                        "is_explicit": True,
+                        "reminder_label": "Snoozed Reminder",
+                        "reminder_time": snooze_str
+                    })
                     continue
             except Exception:
                 pass
@@ -1183,7 +1221,7 @@ def check_due_reminders(user_id: int, now_dt: datetime = None) -> list:
     return due_items
 
 def mark_reminder_fired(user_id: int, task_id: int, reminder_id: str = None) -> bool:
-    """Marks an explicit reminder as fired in database."""
+    """Marks an explicit reminder as fired in database and clears snoozed_until if snoozed."""
     with get_db_session() as session:
         t = session.scalar(select(Task).where(Task.id == task_id, Task.user_id == user_id))
         if not t:
@@ -1193,6 +1231,10 @@ def mark_reminder_fired(user_id: int, task_id: int, reminder_id: str = None) -> 
         if reminder_id and reminder_id not in fired:
             fired.append(reminder_id)
             t.fired_reminders_json = json.dumps(fired)
+
+        # Clear snoozed_until when a snooze reminder fires
+        if reminder_id and str(reminder_id).startswith("snooze_"):
+            t.snoozed_until = None
 
         log_audit(user_id, "REMINDER_FIRED", f"Reminder {reminder_id or 'default'} fired for task #{task_id}")
         return True
@@ -1205,6 +1247,18 @@ def snooze_task(user_id: int, task_id: int, minutes: int) -> bool:
         if not t:
             return False
         t.snoozed_until = snooze_until
+
+        # Clear any prior snooze fired marker so the fresh snooze can fire when due
+        if t.fired_reminders_json:
+            try:
+                fired = json.loads(t.fired_reminders_json)
+                snooze_id = f"snooze_{task_id}"
+                if snooze_id in fired:
+                    fired.remove(snooze_id)
+                    t.fired_reminders_json = json.dumps(fired)
+            except Exception:
+                pass
+
         log_audit(user_id, "REMINDER_SNOOZED", f"Task #{task_id} snoozed for {minutes}m until {snooze_until.isoformat()}", session=session)
         return True
 
@@ -1335,7 +1389,12 @@ def create_or_register_device(
             if platform:
                 dev.platform = platform
 
-            # If pending and user provides password for existing account verification
+            trusted_count = session.scalar(
+                select(func.count(Device.id))
+                .where(and_(Device.user_id == user_id, Device.status == "trusted"))
+            ) or 0
+
+            # If pending and user provides password for account verification
             if dev.status == "pending" and password:
                 if verify_password(user.password_hash, password):
                     dev.status = "trusted"
@@ -1349,7 +1408,7 @@ def create_or_register_device(
                         session=session
                     )
                 else:
-                    raise ValueError("Incorrect password. Re-entering your password is required to trust this device on an existing account.")
+                    raise ValueError("Incorrect password. Re-entering your password is required to trust this device.")
 
             # If still pending and code expired, auto-refresh code if not locked
             elif dev.status == "pending" and dev.pairing_expires_at and (getattr(dev, "pairing_attempts", 0) or 0) < 5:
@@ -1362,7 +1421,9 @@ def create_or_register_device(
                     dev.pairing_expires_at = now + timedelta(minutes=5)
 
             session.flush()
-            return _device_to_dict(dev)
+            ret = _device_to_dict(dev)
+            ret["requires_first_device_trust"] = (trusted_count == 0 and dev.status == "pending")
+            return ret
 
         # New device registration
         trusted_count = session.scalar(
@@ -1371,49 +1432,33 @@ def create_or_register_device(
         ) or 0
 
         now = utc_now()
-        user_created = user.created_at
-        if user_created and user_created.tzinfo is None:
-            user_created = user_created.replace(tzinfo=timezone.utc)
-        is_recent_signup = is_signup or (user_created and (now - user_created).total_seconds() < 120)
 
+        # Requirement 4: Do NOT auto-trust the first device, even on new signups.
+        # Password entry is strictly required to trust the first device.
         if trusted_count == 0:
-            if is_recent_signup:
-                # New account at signup: trust first device
-                status = "trusted"
-                pairing_code = None
-                pairing_expires_at = None
-                log_audit(
-                    user_id,
-                    "DEVICE_REGISTERED_TRUSTED",
-                    f"First device on new signup '{name}' ({device_id}) registered as trusted.",
-                    session=session
-                )
-            else:
-                # Account already exists! Must NOT become trusted automatically.
-                # Requires re-entering the password.
-                if password:
-                    if verify_password(user.password_hash, password):
-                        status = "trusted"
-                        pairing_code = None
-                        pairing_expires_at = None
-                        log_audit(
-                            user_id,
-                            "DEVICE_REGISTERED_TRUSTED",
-                            f"First device for existing account '{name}' ({device_id}) verified with password and trusted.",
-                            session=session
-                        )
-                    else:
-                        raise ValueError("Incorrect password. Re-entering your password is required to trust this device on an existing account.")
-                else:
-                    status = "pending"
-                    pairing_code = f"{secrets.randbelow(900000) + 100000}"
-                    pairing_expires_at = now + timedelta(minutes=5)
+            if password:
+                if verify_password(user.password_hash, password):
+                    status = "trusted"
+                    pairing_code = None
+                    pairing_expires_at = None
                     log_audit(
                         user_id,
-                        "DEVICE_REGISTERED_PENDING",
-                        f"First device for existing account '{name}' ({device_id}) pending password verification.",
+                        "DEVICE_REGISTERED_TRUSTED",
+                        f"First device '{name}' ({device_id}) verified with password and trusted.",
                         session=session
                     )
+                else:
+                    raise ValueError("Incorrect password. Re-entering your password is required to trust this device.")
+            else:
+                status = "pending"
+                pairing_code = f"{secrets.randbelow(900000) + 100000}"
+                pairing_expires_at = now + timedelta(minutes=5)
+                log_audit(
+                    user_id,
+                    "DEVICE_REGISTERED_PENDING",
+                    f"First device '{name}' ({device_id}) pending password verification.",
+                    session=session
+                )
         else:
             status = "pending"
             pairing_code = f"{secrets.randbelow(900000) + 100000}"
@@ -1441,7 +1486,9 @@ def create_or_register_device(
         )
         session.add(new_dev)
         session.flush()
-        return _device_to_dict(new_dev)
+        ret = _device_to_dict(new_dev)
+        ret["requires_first_device_trust"] = (trusted_count == 0 and status == "pending")
+        return ret
 
 def get_user_devices(user_id: int) -> List[dict]:
     """Lists all devices belonging to the user."""

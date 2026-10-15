@@ -212,6 +212,63 @@ document.addEventListener("DOMContentLoaded", () => {
     scrollToBottom();
   }
 
+  // Helper to format full date, time, and timezone on all task cards (Requirement 2)
+  function formatFullTaskDateTime(dueDate, dueTime, dueDatetimeUtc) {
+    if (!dueDate) return `<span class="task-card-due no-date">📅 No due date</span>`;
+    const userTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "Local";
+
+    if (dueDatetimeUtc) {
+      try {
+        const dt = new Date(dueDatetimeUtc);
+        if (!isNaN(dt.getTime())) {
+          const formatted = dt.toLocaleString(undefined, {
+            weekday: 'short',
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            timeZoneName: 'short'
+          });
+          return `<span class="task-card-due">📅 Due: ${escapeHtml(formatted)}</span>`;
+        }
+      } catch (_) {}
+    }
+
+    if (dueTime) {
+      try {
+        const partsD = dueDate.split('-').map(Number);
+        const partsT = dueTime.split(':').map(Number);
+        const dt = new Date(partsD[0], partsD[1] - 1, partsD[2], partsT[0], partsT[1]);
+        const formatted = dt.toLocaleString(undefined, {
+          weekday: 'short',
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit'
+        });
+        return `<span class="task-card-due">📅 Due: ${escapeHtml(formatted)} (${escapeHtml(userTz)})</span>`;
+      } catch (_) {
+        return `<span class="task-card-due">📅 Due: ${escapeHtml(dueDate)} at ${escapeHtml(dueTime)} (${escapeHtml(userTz)})</span>`;
+      }
+    }
+
+    try {
+      const partsD = dueDate.split('-').map(Number);
+      const dt = new Date(partsD[0], partsD[1] - 1, partsD[2]);
+      const formatted = dt.toLocaleString(undefined, {
+        weekday: 'short',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      });
+      return `<span class="task-card-due">📅 Due: ${escapeHtml(formatted)} (${escapeHtml(userTz)})</span>`;
+    } catch (_) {
+      return `<span class="task-card-due">📅 Due: ${escapeHtml(dueDate)} (${escapeHtml(userTz)})</span>`;
+    }
+  }
+
   // Add an AI bubble to chat (with optional proposal action card and web search sources)
   function appendAiMessage(text, timeStr = null, proposal = null, webSearch = null) {
     const group = document.createElement("div");
@@ -247,9 +304,26 @@ document.addEventListener("DOMContentLoaded", () => {
           `;
         }
 
-        const dueFormatted = proposal.due_date 
-          ? `<span class="task-proposal-due-badge">${escapeHtml(proposal.due_date)}${proposal.due_time ? ' at ' + escapeHtml(proposal.due_time) : ''}</span>`
-          : `<span style="color: #6b7280; font-size: 0.82rem;">No deadline</span>`;
+        const dueFormatted = proposal.display_due 
+          ? `<span class="task-proposal-due-badge">📅 ${escapeHtml(proposal.display_due)}</span>`
+          : (proposal.due_date 
+              ? formatFullTaskDateTime(proposal.due_date, proposal.due_time, proposal.due_datetime_utc)
+              : `<span style="color: #6b7280; font-size: 0.82rem;">No deadline</span>`);
+
+        const ambiguityHtml = (proposal.ambiguous_options && proposal.ambiguous_options.length > 0)
+          ? `
+            <div class="task-proposal-ambiguity-box" style="margin: 8px 0; padding: 10px; background: rgba(236, 72, 153, 0.08); border-radius: 8px; border: 1.5px dashed rgba(236, 72, 153, 0.4);">
+              <div style="font-size: 0.78rem; font-weight: 700; color: #be123c; margin-bottom: 6px;">Which time did you mean?</div>
+              <div style="display: flex; gap: 8px;">
+                ${proposal.ambiguous_options.map((opt, idx) => `
+                  <button type="button" class="task-ambiguity-choice-btn ${idx === 1 ? 'selected' : ''}" data-time="${escapeHtml(opt.time)}" data-display="${escapeHtml(opt.display)}" style="flex: 1; padding: 7px 10px; border-radius: 6px; font-size: 0.82rem; font-weight: 700; cursor: pointer; border: 1.5px solid #ec4899; background: ${idx === 1 ? '#be123c' : '#fff'}; color: ${idx === 1 ? '#fff' : '#be123c'}; transition: all 0.15s ease;">
+                    ${escapeHtml(opt.label)}
+                  </button>
+                `).join('')}
+              </div>
+            </div>
+          `
+          : "";
 
         proposalHtml = `
           <div class="task-proposal-card" id="task-prop-${proposal.id}">
@@ -263,9 +337,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 <span>${escapeHtml(proposal.title)}</span>
               </div>
               <div class="task-proposal-due-row">
-                <span>📅</span>
                 ${dueFormatted}
               </div>
+              ${ambiguityHtml}
               ${remindersHtml}
               ${proposal.notes ? `<div class="task-proposal-notes-row">📝 ${escapeHtml(proposal.notes)}</div>` : ''}
             </div>
@@ -371,9 +445,25 @@ document.addEventListener("DOMContentLoaded", () => {
     // Attach event listeners to task proposal buttons (Step 5 & 6B)
     if (proposal && proposal.type === "task_proposal") {
       const card = group.querySelector(".task-proposal-card");
-      const confirmBtn = group.querySelector(".task-confirm-btn");
-      const cancelBtn = group.querySelector(".task-cancel-btn");
-      const quickChip = group.querySelector(".task-quick-10m-chip");
+      if (card) {
+        card.querySelectorAll(".task-ambiguity-choice-btn").forEach(btn => {
+          btn.addEventListener("click", () => {
+            card.querySelectorAll(".task-ambiguity-choice-btn").forEach(b => {
+              b.classList.remove("selected");
+              b.style.background = "#fff";
+              b.style.color = "#be123c";
+            });
+            btn.classList.add("selected");
+            btn.style.background = "#be123c";
+            btn.style.color = "#fff";
+            card.dataset.chosenTime = btn.dataset.time;
+            const dueRow = card.querySelector(".task-proposal-due-row");
+            if (dueRow && btn.dataset.display) {
+              dueRow.innerHTML = `<span class="task-proposal-due-badge">📅 ${escapeHtml(btn.dataset.display)}</span>`;
+            }
+          });
+        });
+      }
 
       if (quickChip) {
         quickChip.addEventListener("click", () => {
@@ -493,12 +583,14 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       }
 
+      const chosenTime = cardElement ? cardElement.dataset.chosenTime : undefined;
       const res = await fetch("/api/tasks/confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           proposal_id: proposalId,
-          reminders: chosenReminders
+          reminders: chosenReminders,
+          chosen_time: chosenTime
         })
       });
       const data = await res.json();
@@ -740,7 +832,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 ${t.is_overdue ? `<span class="task-overdue-badge">⚠️ Overdue</span>` : ""}
               </div>
               <div class="task-card-meta">
-                ${t.due_date ? `<span class="task-card-due ${t.is_overdue ? "overdue-text" : ""}">📅 Due: ${escapeHtml(t.due_date)}${t.due_time ? ' at ' + escapeHtml(t.due_time) : ''}</span>` : `<span class="task-card-due no-date">📅 No due date</span>`}
+                ${formatFullTaskDateTime(t.due_date, t.due_time, t.due_datetime_utc)}
                 ${(t.reminders && t.reminders.length > 0) ? `<span style="font-size: 0.72rem; color: #db2777; background: #fff0f3; padding: 1px 6px; border-radius: 4px; font-weight: 600;">🔔 ${t.reminders.length} reminder${t.reminders.length > 1 ? 's' : ''}</span>` : ''}
                 ${t.notes ? `<span class="task-card-notes">📝 ${escapeHtml(t.notes)}</span>` : ""}
               </div>
@@ -797,7 +889,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 <span class="task-card-title">${escapeHtml(t.title)}</span>
               </div>
               <div class="task-card-meta">
-                ${t.due_date ? `<span class="task-card-due no-date">📅 ${escapeHtml(t.due_date)}${t.due_time ? ' at ' + escapeHtml(t.due_time) : ''}</span>` : `<span class="task-card-due no-date">📅 No due date</span>`}
+                ${formatFullTaskDateTime(t.due_date, t.due_time, t.due_datetime_utc)}
                 ${t.notes ? `<span class="task-card-notes">📝 ${escapeHtml(t.notes)}</span>` : ""}
               </div>
             </div>
@@ -1666,6 +1758,28 @@ document.addEventListener("DOMContentLoaded", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ task_id: task.id, minutes: mins })
       });
+
+      // Native Android exact alarm (survives reboot & offline)
+      if (window.Capacitor && window.Capacitor.isPluginAvailable && window.Capacitor.isPluginAvailable("SinbhaNative")) {
+        try {
+          window.Capacitor.Plugins.SinbhaNative.snoozeLocalAlarm({
+            taskId: task.id,
+            taskTitle: task.title,
+            minutes: mins
+          });
+        } catch (e) {
+          console.warn("Native Android snooze failed:", e);
+        }
+      }
+
+      // Native Windows Electron local timer (works offline)
+      if (window.electronAPI && typeof window.electronAPI.snoozeReminder === "function") {
+        try {
+          window.electronAPI.snoozeReminder(task.id, mins, task.title);
+        } catch (e) {
+          console.warn("Electron snooze timer failed:", e);
+        }
+      }
 
       const label = mins === 60 ? "1 hour" : (mins === 1440 ? "tomorrow" : `${mins} minutes`);
       appendAiMessage(`I've snoozed "${task.title}" for ${label} 🌸 Take all the time you need, the bird will rest for now.`);
@@ -2674,6 +2788,9 @@ document.addEventListener("DOMContentLoaded", () => {
             connectDeviceWebSocket(deviceId);
             pollPendingCommands(deviceId);
           } else if (currentDeviceData.status === "pending") {
+            if (currentDeviceData.requires_first_device_trust) {
+              openFirstDeviceTrustModal();
+            }
             showPendingPairingUI(currentDeviceData);
             startPairingPolling(deviceId);
           }
@@ -2683,10 +2800,31 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
 
+    function openFirstDeviceTrustModal() {
+      const modal = document.getElementById("firstDeviceTrustModal");
+      const input = document.getElementById("firstDeviceModalPasswordInput");
+      const err = document.getElementById("firstDeviceModalError");
+      if (modal) {
+        modal.style.display = "flex";
+        if (err) err.style.display = "none";
+        if (input) {
+          input.value = "";
+          setTimeout(() => input.focus(), 150);
+        }
+      }
+    }
+
+    function closeFirstDeviceTrustModal() {
+      const modal = document.getElementById("firstDeviceTrustModal");
+      if (modal) modal.style.display = "none";
+    }
+
     function updateCurrentDeviceUI(device) {
       const nameEl = document.getElementById("currentDeviceName");
       const badgeEl = document.getElementById("currentDeviceStatusBadge");
       const pendingBanner = document.getElementById("pendingPairingBanner");
+      const topBanner = document.getElementById("topPairingBanner");
+      const trustModal = document.getElementById("firstDeviceTrustModal");
 
       if (nameEl) nameEl.textContent = `${getPlatformIcon(device.platform)} ${device.name}`;
       if (badgeEl) {
@@ -2694,12 +2832,15 @@ document.addEventListener("DOMContentLoaded", () => {
           badgeEl.textContent = "● Trusted";
           badgeEl.style.color = "#059669";
           if (pendingBanner) pendingBanner.style.display = "none";
+          if (topBanner) topBanner.style.display = "none";
+          if (trustModal) trustModal.style.display = "none";
         } else if (device.status === "pending") {
           badgeEl.textContent = "⏳ Pending Pairing Approval";
           badgeEl.style.color = "#b45309";
         } else {
           badgeEl.textContent = "🛑 Revoked";
           badgeEl.style.color = "#dc2626";
+          if (topBanner) topBanner.style.display = "none";
         }
       }
     }
@@ -2709,24 +2850,29 @@ document.addEventListener("DOMContentLoaded", () => {
       const codeDisplay = document.getElementById("pairingCodeDisplay");
       const countdownText = document.getElementById("pairingCountdownText");
 
-      if (!pendingBanner) return;
-      pendingBanner.style.display = "block";
+      const topBanner = document.getElementById("topPairingBanner");
+      const topCodeDisplay = document.getElementById("topPairingCodeDisplay");
+      const topCountdown = document.getElementById("topPairingCountdown");
 
-      if (codeDisplay) {
-        const c = device.pairing_code || "------";
-        codeDisplay.textContent = c.length === 6 ? `${c.slice(0, 3)} ${c.slice(3)}` : c;
-      }
+      if (pendingBanner) pendingBanner.style.display = "block";
+      if (topBanner) topBanner.style.display = "flex";
 
-      if (countdownText) {
-        let sec = device.expires_in_seconds || 300;
-        const updateText = () => {
-          const m = Math.floor(sec / 60);
-          const s = sec % 60;
-          countdownText.textContent = `Expires in ${m}:${s < 10 ? "0" : ""}${s}`;
-          if (sec > 0) sec--;
-        };
-        updateText();
-      }
+      const c = device.pairing_code || "------";
+      const formattedCode = c.length === 6 ? `${c.slice(0, 3)} ${c.slice(3)}` : c;
+
+      if (codeDisplay) codeDisplay.textContent = formattedCode;
+      if (topCodeDisplay) topCodeDisplay.textContent = formattedCode;
+
+      let sec = device.expires_in_seconds || 300;
+      const updateText = () => {
+        const m = Math.floor(sec / 60);
+        const s = sec % 60;
+        const msg = `Expires in ${m}:${s < 10 ? "0" : ""}${s}`;
+        if (countdownText) countdownText.textContent = msg;
+        if (topCountdown) topCountdown.textContent = `(${msg})`;
+        if (sec > 0) sec--;
+      };
+      updateText();
     }
 
     function startPairingPolling(deviceId) {
@@ -3306,20 +3452,83 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Refresh pairing code button for pending device
     const refreshCodeBtn = document.getElementById("refreshPairCodeBtn");
-    if (refreshCodeBtn) {
-      refreshCodeBtn.addEventListener("click", async () => {
+    const topRefreshCodeBtn = document.getElementById("topRefreshPairCodeBtn");
+    const triggerCodeRefresh = async () => {
+      const myId = getOrCreateDeviceId();
+      try {
+        const res = await fetch(`/api/devices/refresh-code?device_id=${encodeURIComponent(myId)}`, {
+          method: "POST"
+        });
+        const data = await res.json();
+        if (data.success && data.device) {
+          currentDeviceData = data.device;
+          showPendingPairingUI(currentDeviceData);
+          showToast("Fresh pairing code generated 🌸");
+        }
+      } catch (e) {}
+    };
+
+    if (refreshCodeBtn) refreshCodeBtn.addEventListener("click", triggerCodeRefresh);
+    if (topRefreshCodeBtn) topRefreshCodeBtn.addEventListener("click", triggerCodeRefresh);
+
+    const topOpenSettingsBtn = document.getElementById("topOpenPairSettingsBtn");
+    if (topOpenSettingsBtn && openSettingsBtn) {
+      topOpenSettingsBtn.addEventListener("click", () => {
+        openSettingsBtn.click();
+      });
+    }
+
+    // First Device Trust Modal Form Submission (Requirement 4: Prominent full-screen prompt with password)
+    const firstTrustForm = document.getElementById("firstDeviceTrustForm");
+    if (firstTrustForm) {
+      firstTrustForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const input = document.getElementById("firstDeviceModalPasswordInput");
+        const err = document.getElementById("firstDeviceModalError");
+        const submitBtn = document.getElementById("firstDeviceModalSubmitBtn");
+        const pwd = input ? input.value : "";
+        if (!pwd) return;
+
+        if (err) err.style.display = "none";
+        if (submitBtn) submitBtn.disabled = true;
+
         const myId = getOrCreateDeviceId();
+        const { platform, name } = getDevicePlatformAndName();
+
         try {
-          const res = await fetch(`/api/devices/refresh-code?device_id=${encodeURIComponent(myId)}`, {
-            method: "POST"
+          const res = await fetch("/api/devices/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              device_id: myId,
+              name: name,
+              platform: platform,
+              password: pwd
+            })
           });
           const data = await res.json();
-          if (data.success && data.device) {
+          if (data.success && data.device && data.device.status === "trusted") {
             currentDeviceData = data.device;
-            showPendingPairingUI(currentDeviceData);
-            showToast("Fresh pairing code generated 🌸");
+            closeFirstDeviceTrustModal();
+            updateCurrentDeviceUI(currentDeviceData);
+            showToast("🌸 Device verified with password and trusted!");
+            connectDeviceWebSocket(myId);
+            loadDevices();
+          } else {
+            if (err) {
+              err.textContent = data.detail || data.message || "Incorrect password. Please try again.";
+              err.style.display = "block";
+            }
+            if (input) input.focus();
           }
-        } catch (e) {}
+        } catch (ex) {
+          if (err) {
+            err.textContent = "Error trusting device: " + ex.message;
+            err.style.display = "block";
+          }
+        } finally {
+          if (submitBtn) submitBtn.disabled = false;
+        }
       });
     }
 

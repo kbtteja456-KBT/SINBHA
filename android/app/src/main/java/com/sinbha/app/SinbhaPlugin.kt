@@ -296,6 +296,46 @@ class SinbhaPlugin : Plugin() {
     }
 
     /**
+     * Schedules a local exact alarm and updates cache for snoozed reminders (offline + reboot survival).
+     */
+    @PluginMethod
+    fun snoozeLocalAlarm(call: PluginCall) {
+        val taskId = call.getInt("taskId", -1) ?: -1
+        val taskTitle = call.getString("taskTitle") ?: "Reminder"
+        val minutes = call.getInt("minutes", 2) ?: 2
+        if (taskId <= 0) {
+            call.reject("Invalid taskId")
+            return
+        }
+
+        val triggerAtMillis = System.currentTimeMillis() + minutes * 60 * 1000L
+        val snoozeRemId = "snooze_$taskId"
+        val dueLabel = "Snoozed (${minutes}m)"
+
+        AlarmScheduler.scheduleExactAlarm(
+            context,
+            taskId,
+            taskTitle,
+            dueLabel,
+            snoozeRemId,
+            triggerAtMillis
+        )
+        AlarmScheduler.addOrUpdateCachedReminder(
+            context,
+            taskId,
+            taskTitle,
+            dueLabel,
+            snoozeRemId,
+            triggerAtMillis
+        )
+
+        call.resolve(JSObject().apply {
+            put("success", true)
+            put("triggerAtMillis", triggerAtMillis)
+        })
+    }
+
+    /**
      * Step 16b: Shows a native heads-up notification for an incoming remote note.
      */
     @PluginMethod

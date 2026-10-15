@@ -145,6 +145,22 @@
       </div>
     </div>
 
+    <!-- Prominent Device Pairing Banner (Requirement 4: Obvious in app, no hunting in settings) -->
+    <div id="topPairingBanner" class="top-pairing-banner" style="display: none; background: #fffbeb; border-bottom: 2px solid #f59e0b; padding: 10px 16px; align-items: center; justify-content: space-between; gap: 12px; font-size: 0.86rem; color: #92400e; z-index: 50;">
+      <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+        <span style="font-size: 1.2rem;">⏳</span>
+        <strong>Device Pairing:</strong>
+        <span>Pair this device by approving code</span>
+        <span id="topPairingCodeDisplay" style="font-family: monospace; font-weight: 800; font-size: 1.1rem; background: #fff; padding: 2px 8px; border-radius: 6px; border: 1px dashed #f59e0b; color: #b45309; letter-spacing: 2px;">------</span>
+        <span>on your trusted device.</span>
+        <span id="topPairingCountdown" style="font-size: 0.78rem; color: #b45309;">(Expires in 5:00)</span>
+      </div>
+      <div style="display: flex; gap: 8px;">
+        <button type="button" id="topRefreshPairCodeBtn" style="background: #fef3c7; border: 1px solid #f59e0b; color: #b45309; border-radius: 6px; padding: 4px 10px; font-size: 0.78rem; font-weight: 600; cursor: pointer;">New Code</button>
+        <button type="button" id="topOpenPairSettingsBtn" style="background: #f59e0b; border: none; color: #fff; border-radius: 6px; padding: 4px 12px; font-size: 0.78rem; font-weight: 600; cursor: pointer;">Pairing Details</button>
+      </div>
+    </div>
+
     <!-- Chat Messages Scroll Area -->
     <main class="chat-container" id="chatContainer">
       <div class="chat-messages" id="chatMessages">
@@ -936,6 +952,27 @@
     </div>
   </div>
 
+  <!-- FIRST DEVICE TRUST MODAL (Requirement 4: Full-screen Trust this device prompt with password) -->
+  <div class="confirm-modal-overlay" id="firstDeviceTrustModal" style="display: none; z-index: 100002; background: rgba(15, 23, 42, 0.88); backdrop-filter: blur(8px);">
+    <div class="confirm-modal-card" style="max-width: 440px; text-align: center; border: 2px solid #ec4899; box-shadow: 0 25px 50px -12px rgba(236, 72, 153, 0.35); padding: 28px 24px;">
+      <div class="confirm-icon-box" style="background: #fdf2f8; color: #db2777; font-size: 2.5rem; margin: 0 auto 16px auto; width: 68px; height: 68px; display: flex; align-items: center; justify-content: center; border-radius: 50%;">🔐</div>
+      <h2 style="color: #1e293b; font-size: 1.35rem; font-weight: 700; margin-bottom: 8px;">Trust this device</h2>
+      <p style="font-size: 0.88rem; color: #4b5563; line-height: 1.5; margin-bottom: 18px;">
+        To protect your account and personal memories, your first device requires password verification before it can be trusted.
+      </p>
+      <form id="firstDeviceTrustForm" onsubmit="return false;" style="display: flex; flex-direction: column; gap: 14px;">
+        <div style="text-align: left;">
+          <label for="firstDeviceModalPasswordInput" style="display: block; font-size: 0.82rem; font-weight: 600; color: #374151; margin-bottom: 6px;">Enter your account password</label>
+          <input type="password" id="firstDeviceModalPasswordInput" placeholder="Account password" required autocomplete="current-password" style="width: 100%; box-sizing: border-box; padding: 11px 14px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 0.95rem;" />
+        </div>
+        <div id="firstDeviceModalError" style="display: none; color: #dc2626; font-size: 0.82rem; font-weight: 600; text-align: left;"></div>
+        <button type="submit" id="firstDeviceModalSubmitBtn" class="confirm-btn-primary" style="width: 100%; justify-content: center; padding: 12px; font-size: 0.95rem; font-weight: 700;">
+          ✓ Verify & Trust Device 🌸
+        </button>
+      </form>
+    </div>
+  </div>
+
   <!-- Status Notification Toast -->
   <div id="toast" class="toast"></div>
 
@@ -1043,6 +1080,6 @@
     })();
   </script>
 
-  <script src="/static/script.js?v=1.0.6"></script>
+  <script src="/static/script.js?v=1.0.7"></script>
 </body>
 </html>

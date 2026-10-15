@@ -51,7 +51,7 @@ class SearchProvider(ABC):
     """Abstract interface for web search providers."""
     
     @abstractmethod
-    async def search(self, query: str, max_results: int = 5) -> List[SearchResult]:
+    async def search(self, query: str, max_results: int = 5, topic: Optional[str] = None, days: Optional[int] = None) -> List[SearchResult]:
         """Performs a web search for the query and returns top results."""
         pass
 
@@ -76,7 +76,7 @@ class TavilySearchProvider(SearchProvider):
         except Exception:
             return "web"
 
-    async def search(self, query: str, max_results: int = 5) -> List[SearchResult]:
+    async def search(self, query: str, max_results: int = 5, topic: Optional[str] = None, days: Optional[int] = None) -> List[SearchResult]:
         if not self.api_key or self.api_key == "your_tavily_api_key_here":
             return []
 
@@ -88,6 +88,10 @@ class TavilySearchProvider(SearchProvider):
             "search_depth": "basic",
             "include_answer": False
         }
+        if topic:
+            payload["topic"] = topic
+        if days:
+            payload["days"] = days
 
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(endpoint, json=payload)
@@ -281,6 +285,39 @@ def detect_search_intent(message: str) -> Tuple[bool, Optional[str], Optional[st
 
     return False, None, None
 
+def is_time_sensitive_query(query: str) -> bool:
+    """
+    Detects whether a search query is time-sensitive (news, sports, schedules, prices, weather).
+    Requirement 3b: For news, sports, schedules, prices and weather, use Tavily's news topic
+    and recent time range, and add the current month and year to query.
+    """
+    q = query.lower()
+    keywords = [
+        "news", "sport", "sports", "cricket", "football", "match", "matches",
+        "game", "games", "score", "scores", "schedule", "schedules", "fixture",
+        "fixtures", "price", "prices", "cost", "costs", "weather", "forecast",
+        "temperature", "rain", "stock", "stocks", "market", "latest", "today",
+        "tonight", "tomorrow", "current", "upcoming", "who won", "live"
+    ]
+    return any(re.search(r"\b" + re.escape(kw) + r"\b", q) for kw in keywords)
+
+def is_result_too_stale(published_date_str: Optional[str], max_days: int = 14) -> bool:
+    """
+    Checks if a search result published date is older than max_days.
+    Requirement 3c: Discard results older than a sensible age for time-sensitive questions.
+    """
+    if not published_date_str:
+        return False
+    try:
+        clean = published_date_str.split("T")[0]
+        parts = [int(p) for p in clean.split("-")]
+        pub_date = datetime.date(parts[0], parts[1], parts[2])
+        today = datetime.date.today()
+        age = (today - pub_date).days
+        return age > max_days
+    except Exception:
+        return False
+
 
 # ----------------- Untrusted Context Formatting -----------------
 
@@ -440,9 +477,26 @@ async def execute_web_search(
             error="missing_api_key"
         )
 
-    # 7. Execute live search
+    # 7. Execute live search with time-sensitive enhancements (Requirement 3b & 3c)
+    is_time_sens = is_time_sensitive_query(clean_query)
+    search_query = clean_query
+    topic = None
+    days = None
+
+    if is_time_sens:
+        now_dt = datetime.date.today()
+        month_year = now_dt.strftime("%B %Y")
+        year_str = str(now_dt.year)
+        if month_year.lower() not in clean_query.lower() and year_str not in clean_query:
+            search_query = f"{clean_query} {month_year}"
+        topic = "news"
+        days = 7
+
     try:
-        results = await provider.search(clean_query, max_results=5)
+        try:
+            results = await provider.search(search_query, max_results=5, topic=topic, days=days)
+        except TypeError:
+            results = await provider.search(search_query, max_results=5)
     except Exception as e:
         return SearchResponse(
             searched=False,
@@ -452,25 +506,36 @@ async def execute_web_search(
             error=str(e)
         )
 
+    # Discard results older than sensible age for time-sensitive questions
+    has_stale_warning = False
+    if is_time_sens and results:
+        fresh_results = [r for r in results if not is_result_too_stale(r.published_date, max_days=14)]
+        if fresh_results:
+            results = fresh_results
+        else:
+            has_stale_warning = True
+
     if not results:
         return SearchResponse(
             searched=True,
             query=clean_query,
             sources=[],
-            context_text="<untrusted_web_content>No web results found for this query.</untrusted_web_content>"
+            context_text="<untrusted_web_content>No recent web results found for this query.</untrusted_web_content>"
         )
 
-    # Build sources and context
+    # Build sources and context (showing date on every source)
     sources = []
     for r in results:
         sources.append({
             "title": r.title,
             "url": r.url,
             "domain": r.domain,
-            "date": check_date_str
+            "date": r.published_date or check_date_str
         })
 
     context_text = format_untrusted_web_context(results, check_date_str)
+    if has_stale_warning:
+        context_text += "\n\nTEMPORAL ACCURACY WARNING: Available web sources may be older or uncertain for this recent query. State this plainly and do not present assumptions as verified facts."
 
     # Save to 24-hour cache
     cache_payload = {
