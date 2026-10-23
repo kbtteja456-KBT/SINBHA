@@ -347,8 +347,14 @@ ALWAYS search for:
 - Up-to-date facts about real-world entities, people, movies, companies, or events
 - Any request to look up, search, verify, or check something online
 
+Search query guidelines (Perplexity / ChatGPT standard):
+- Produce concise, high-yield keyword queries.
+- For sports schedules/matches ("when is the cricket match", "india match brooo"), use upcoming schedule keywords: "India cricket upcoming match schedule fixtures" (do NOT restrict with specific month/day unless user specifically gave one).
+- For scores/results ("who won yesterday"), include team names and match score.
+- For prices, include the item and "price".
+
 Return ONLY a JSON object:
-{{"needs_search": true, "query": "concise keyword search query with month/year if time-sensitive"}}
+{{"needs_search": true, "query": "optimal keyword search query"}}
 OR
 {{"needs_search": false, "query": ""}}
 """
@@ -538,49 +544,58 @@ async def execute_web_search(
     query_hash = hashlib.sha256(norm_query.encode("utf-8")).hexdigest()
 
     # 3. Check 24-hour search cache
-    cached_data = db.get_search_cache(query_hash)
-    if cached_data and isinstance(cached_data, dict):
-        sources = cached_data.get("sources", [])
-        context_text = cached_data.get("context_text", "")
-        return SearchResponse(
-            searched=True,
-            query=clean_query,
-            sources=sources,
-            context_text=context_text,
-            cached=True
-        )
+    try:
+        cached_data = db.get_search_cache(query_hash)
+        if cached_data and isinstance(cached_data, dict):
+            sources = cached_data.get("sources", [])
+            context_text = cached_data.get("context_text", "")
+            return SearchResponse(
+                searched=True,
+                query=clean_query,
+                sources=sources,
+                context_text=context_text,
+                cached=True
+            )
+    except Exception as e:
+        logger.warning(f"Search cache read failed (proceeding without cache): {e}")
 
     # 4. Check Per-User Daily Search Limit (15 searches/day)
-    user_today_count = db.count_user_searches_today(user_id)
-    if user_today_count >= USER_DAILY_SEARCH_LIMIT:
-        limit_msg = (
-            "I've reached my daily web search limit for today (15 searches). "
-            "I'm still right here to chat and help with your tasks, and my web search quota resets tomorrow! 🌸"
-        )
-        return SearchResponse(
-            searched=False,
-            query=clean_query,
-            sources=[],
-            context_text="",
-            limit_reached=True,
-            limit_message=limit_msg
-        )
+    try:
+        user_today_count = db.count_user_searches_today(user_id)
+        if user_today_count >= USER_DAILY_SEARCH_LIMIT:
+            limit_msg = (
+                "I've reached my daily web search limit for today (15 searches). "
+                "I'm still right here to chat and help with your tasks, and my web search quota resets tomorrow! 🌸"
+            )
+            return SearchResponse(
+                searched=False,
+                query=clean_query,
+                sources=[],
+                context_text="",
+                limit_reached=True,
+                limit_message=limit_msg
+            )
+    except Exception as e:
+        logger.warning(f"User search quota check failed: {e}")
 
     # 5. Check Global Monthly Search Cap (950 searches/month)
-    global_month_count = db.count_global_searches_this_month()
-    if global_month_count >= GLOBAL_MONTHLY_SEARCH_CAP:
-        limit_msg = (
-            "I've reached our monthly web search cap to keep things within our free limit. "
-            "My web searches will be fresh again at the start of next month! 🌸"
-        )
-        return SearchResponse(
-            searched=False,
-            query=clean_query,
-            sources=[],
-            context_text="",
-            limit_reached=True,
-            limit_message=limit_msg
-        )
+    try:
+        global_month_count = db.count_global_searches_this_month()
+        if global_month_count >= GLOBAL_MONTHLY_SEARCH_CAP:
+            limit_msg = (
+                "I've reached our monthly web search cap to keep things within our free limit. "
+                "My web searches will be fresh again at the start of next month! 🌸"
+            )
+            return SearchResponse(
+                searched=False,
+                query=clean_query,
+                sources=[],
+                context_text="",
+                limit_reached=True,
+                limit_message=limit_msg
+            )
+    except Exception as e:
+        logger.warning(f"Global search quota check failed: {e}")
 
     # 6. Check API Key availability
     api_key = getattr(provider, "api_key", os.getenv("TAVILY_API_KEY", "")).strip()
@@ -593,20 +608,21 @@ async def execute_web_search(
             error="missing_api_key"
         )
 
-    # 7. Execute live search with time-sensitive enhancements (Requirement 3b & 3c)
+    # 7. Execute live search with time-sensitive enhancements
     is_time_sens = is_time_sensitive_query(clean_query)
     search_query = clean_query
-    topic = None
-    days = None
+    
+    # Sports fixtures, match calendars, and schedules are reference pages (Cricinfo/Cricbuzz), not 7-day breaking news articles
+    is_fixture_schedule = bool(re.search(r"\b(schedules?|fixtures?|upcoming\s+match|next\s+match|tour\b|calendar|when\s+is\s+.*match)\b", clean_query, re.IGNORECASE))
 
-    if is_time_sens:
+    topic = "news" if (is_time_sens and not is_fixture_schedule) else None
+    days = 7 if (is_time_sens and not is_fixture_schedule) else None
+
+    if is_time_sens and not is_fixture_schedule:
         now_dt = datetime.date.today()
         month_year = now_dt.strftime("%B %Y")
-        year_str = str(now_dt.year)
-        if month_year.lower() not in clean_query.lower() and year_str not in clean_query:
+        if month_year.lower() not in clean_query.lower():
             search_query = f"{clean_query} {month_year}"
-        topic = "news"
-        days = 7
 
     try:
         try:
@@ -630,6 +646,22 @@ async def execute_web_search(
             results = fresh_results
         else:
             has_stale_warning = True
+            # If news search returned only stale results, fall back to general search
+            try:
+                fallback_res = await provider.search(clean_query, max_results=5, topic=None, days=None)
+                if fallback_res:
+                    results = fallback_res
+            except Exception:
+                pass
+
+    # If initial news/time-restricted search returned 0 results, fall back to general web search
+    if not results and (topic is not None or days is not None or search_query != clean_query):
+        try:
+            fallback_res = await provider.search(clean_query, max_results=5, topic=None, days=None)
+            if fallback_res:
+                results = fallback_res
+        except Exception:
+            pass
 
     if not results:
         return SearchResponse(
@@ -655,14 +687,15 @@ async def execute_web_search(
         context_text += "\n\nTEMPORAL ACCURACY WARNING: Available web sources may be older or uncertain for this recent query. State this plainly and do not present assumptions as verified facts."
 
     # Save to 24-hour cache
-    cache_payload = {
-        "sources": sources,
-        "context_text": context_text
-    }
-    db.set_search_cache(query_hash, cache_payload, ttl_hours=24)
-
-    # Log anonymized usage for quota tracking (never logs raw query or personal data)
-    db.log_search_usage(user_id=user_id, query_hash=query_hash, domain_count=len(sources))
+    try:
+        cache_payload = {
+            "sources": sources,
+            "context_text": context_text
+        }
+        db.set_search_cache(query_hash, cache_payload, ttl_hours=24)
+        db.log_search_usage(user_id=user_id, query_hash=query_hash, domain_count=len(sources))
+    except Exception as e:
+        logger.warning(f"Saving search cache or usage failed: {e}")
 
     return SearchResponse(
         searched=True,

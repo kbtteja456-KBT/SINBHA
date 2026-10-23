@@ -842,7 +842,18 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
                     "sources": []
                 }
 
-    user_tz = payload.timezone or user.get("timezone") or db.get_setting(user_id, "timezone", "UTC")
+    user_tz = payload.timezone or user.get("timezone") or db.get_setting(user_id, "timezone", None)
+    if not user_tz:
+        if payload.tz_offset_minutes == -330:
+            user_tz = "Asia/Kolkata"
+        else:
+            user_tz = "UTC"
+
+    if payload.timezone:
+        try:
+            db.set_setting(user_id, "timezone", payload.timezone)
+        except Exception:
+            pass
 
     brain_result = await call_sinbha_brain(
         user_message=user_msg,
@@ -868,12 +879,16 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
         notes = raw_prop.get("notes")
 
         if len(title) >= 3 and title.lower() not in ("none", "task", "null"):
-            client_now = datetime.datetime.now()
-            if payload.tz_offset_minutes is not None:
-                utc_now = datetime.datetime.now(datetime.timezone.utc)
-                client_now = (utc_now - datetime.timedelta(minutes=payload.tz_offset_minutes)).replace(tzinfo=None)
+            try:
+                import zoneinfo
+                tz_obj = zoneinfo.ZoneInfo(user_tz)
+                client_now = datetime.datetime.now(tz_obj)
+            except Exception:
+                client_now = datetime.datetime.now()
+                if payload.tz_offset_minutes is not None:
+                    utc_now = datetime.datetime.now(datetime.timezone.utc)
+                    client_now = (utc_now - datetime.timedelta(minutes=payload.tz_offset_minutes)).replace(tzinfo=None)
 
-            user_tz = payload.timezone or user.get("timezone") or db.get_setting(user_id, "timezone", "UTC")
             dt_res = parse_relative_datetime(raw_due, base_dt=client_now, user_timezone=user_tz)
             
             if dt_res.get("is_past") and dt_res.get("past_message"):

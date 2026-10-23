@@ -1080,7 +1080,8 @@ document.addEventListener("DOMContentLoaded", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: text,
-          tz_offset_minutes: new Date().getTimezoneOffset()
+          tz_offset_minutes: new Date().getTimezoneOffset(),
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
         })
       });
 

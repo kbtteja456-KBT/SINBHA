@@ -446,8 +446,10 @@ def extract_fallback_task_proposal(user_message: str) -> dict | None:
     """Fallback parser to guarantee task proposals when the user explicitly states an assignment/to-do or asks to be reminded."""
     clean = user_message.strip()
 
-    # 1. "remind me <due_time> to <action>" (e.g. "remind me tomorrow at 8am to take vitamins", "remind me in 2min to study")
-    m_rem1 = re.search(r"\bremind\s+me\s+(.+?)\s+to\s+(.+)", clean, re.IGNORECASE)
+    # 1. "remind me <due_time> to <action>" or "remind me at <time> [i need to] <action>"
+    m_rem1 = re.search(r"\bremind\s+me\s+(?:at\s+|on\s+|in\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm)?|\d+\s*(?:min|mins|minute|minutes|hr|hrs|hour|hours))\s+(?:that\s+|to\s+|i\s+need\s+to\s+|i\s+have\s+to\s+)?(.+)", clean, re.IGNORECASE)
+    if not m_rem1:
+        m_rem1 = re.search(r"\bremind\s+me\s+(.+?)\s+to\s+(.+)", clean, re.IGNORECASE)
     if m_rem1:
         due_part = m_rem1.group(1).strip()
         title_part = m_rem1.group(2).strip()
@@ -561,20 +563,26 @@ async def call_sinbha_brain(user_message: str, chat_history: list = None, rememb
             "error": "missing_api_key"
         }
 
-    # Build system prompt with today's real date in user's timezone and remembered facts
+    # Build system prompt with today's real date and current time in user's timezone
     tz_label = user_timezone or "UTC"
     try:
         import zoneinfo
         tz_obj = zoneinfo.ZoneInfo(tz_label)
         now_dt = datetime.datetime.now(tz_obj)
         today_str = now_dt.strftime("%A, %B %d, %Y")
+        current_time_str = now_dt.strftime("%I:%M %p").lstrip("0")
     except Exception:
         now_dt = datetime.datetime.now()
         today_str = now_dt.strftime("%A, %B %d, %Y")
+        current_time_str = now_dt.strftime("%I:%M %p").lstrip("0")
 
     system_content = (
         f"{BASE_SYSTEM_PROMPT}\n\n"
-        f"CURRENT DATE: Today is {today_str} ({tz_label}).\n"
+        f"CURRENT REAL-TIME CONTEXT:\n"
+        f"- Today is {today_str}.\n"
+        f"- Current local time is {current_time_str} ({tz_label}).\n"
+        f"- TIME ANCHORING & REMINDERS: When your friend asks for a reminder at a time without AM/PM (e.g. 'at 9:33' or 'at 8'), anchor directly to the current local time ({current_time_str}). If it is evening or night, '9:33' means tonight at 9:33 PM! Never assume morning AM when chatting in the evening.\n"
+        f"- In your <<<TASK_PROPOSAL>>> block, output the exact upcoming time (e.g. 'today at 9:33pm', 'tomorrow at 8am', or 'in 5 minutes').\n\n"
         "TEMPORAL GROUNDING & MEMORY TRUST:\n"
         "- You must strictly TRUST this provided current date and any web search results over your own internal training memory or pre-trained cutoff.\n"
         "- Do not doubt this date. Any events or news occurring up to today are real and present-day.\n"
