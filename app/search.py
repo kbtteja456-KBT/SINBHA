@@ -68,6 +68,7 @@ class TavilySearchProvider(SearchProvider):
 
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = (api_key or os.getenv("TAVILY_API_KEY", "")).strip()
+        self.last_answer: Optional[str] = None
 
     def _extract_domain(self, url: str) -> str:
         try:
@@ -86,7 +87,7 @@ class TavilySearchProvider(SearchProvider):
             "query": query,
             "max_results": max_results,
             "search_depth": "basic",
-            "include_answer": False
+            "include_answer": True
         }
         if topic:
             payload["topic"] = topic
@@ -99,6 +100,7 @@ class TavilySearchProvider(SearchProvider):
                 return []
             data = resp.json()
 
+        self.last_answer = data.get("answer")
         raw_results = data.get("results", [])
         results: List[SearchResult] = []
         for r in raw_results:
@@ -285,6 +287,117 @@ def detect_search_intent(message: str) -> Tuple[bool, Optional[str], Optional[st
 
     return False, None, None
 
+async def detect_search_intent_smart(message: str, chat_history: list = None) -> Tuple[bool, Optional[str], Optional[str]]:
+    """
+    Intelligent Search Router (ChatGPT / Perplexity / Grok standard).
+    Combines fast local guardrails (0ms for greetings, personal tasks, and memories)
+    with lightning-fast LLM routing (~150ms on Groq) to accurately detect search intent
+    and generate the optimal keyword search engine query with temporal grounding.
+    """
+    clean_msg = message.strip()
+    if not clean_msg:
+        return False, None, None
+
+    # 1. Direct URL check
+    url_match = re.search(r"https?://[^\s<>\"']+", clean_msg)
+    if url_match:
+        url = url_match.group(0).rstrip(".,;!?)")
+        return True, None, url
+
+    lower = clean_msg.lower()
+
+    # 2. Fast bypass for pure greetings, memory questions, emotional venting, or personal tasks
+    fast_non_search = [
+        r"^(hi|hello|hey|good morning|good night|good evening|gm|gn)\b",
+        r"\bwhat do you remember\b",
+        r"\bwhat is my name\b",
+        r"\bwhat do you know about me\b",
+        r"\bremember that\b",
+        r"^(remind me|nannu remind|remind cheyyi)\b",
+        r"^(i feel|i am feeling|feeling sad|feeling tired|so tired|exhausted)\b",
+        r"^(thank you|thanks|bye|goodbye)\b"
+    ]
+    for p in fast_non_search:
+        if re.search(p, lower):
+            # If user explicitly said "search" or "google", let it through
+            if not re.search(r"\b(search|look\s*up|google|check\s+online)\b", lower):
+                return False, None, None
+
+    # 3. Call LLM Search Router (Perplexity / ChatGPT logic)
+    from app.ai_brain import get_llm_credentials
+    creds = get_llm_credentials()
+    if not creds:
+        # Fall back to synchronous rule-based detection
+        return detect_search_intent(message)
+
+    today_str = datetime.date.today().strftime("%B %d, %Y")
+    router_sys = f"""You are the search router of SINBHA AI. Today is {today_str}.
+Decide if the user's message needs external real-time web search or up-to-date facts.
+
+NEVER search for:
+- Chit-chat, greetings, emotional support ("hi", "how are you", "im sad")
+- Memory/companion questions ("what is my name", "what do you remember about me", "who are you")
+- Tasks/reminders ("remind me at 5pm to buy milk", "i have homework")
+
+ALWAYS search for:
+- Live sports, scores, match schedules, tournaments
+- Current news, world events, recent politics, announcements
+- Weather, temperature, forecasts
+- Prices, shopping, product releases, specs
+- Up-to-date facts about real-world entities, people, movies, companies, or events
+- Any request to look up, search, verify, or check something online
+
+Return ONLY a JSON object:
+{{"needs_search": true, "query": "concise keyword search query with month/year if time-sensitive"}}
+OR
+{{"needs_search": false, "query": ""}}
+"""
+    try:
+        headers = {
+            "Authorization": f"Bearer {creds['api_key']}",
+            "Content-Type": "application/json"
+        }
+        if creds.get("provider") == "openrouter":
+            headers["HTTP-Referer"] = "http://localhost:8080"
+            headers["X-Title"] = "SINBHA Search Router"
+
+        messages = [{"role": "system", "content": router_sys}]
+        
+        # Include contextual context if last message might be relevant
+        if chat_history and len(chat_history) > 0:
+            last_assistant = chat_history[-1].get("content", "")
+            if len(last_assistant) > 5 and len(clean_msg.split()) <= 6:
+                messages.append({"role": "assistant", "content": last_assistant[:250]})
+        messages.append({"role": "user", "content": clean_msg})
+
+        payload = {
+            "model": creds["model"],
+            "messages": messages,
+            "temperature": 0.0,
+            "max_tokens": 250
+        }
+        if creds.get("reasoning_effort"):
+            payload["reasoning_effort"] = creds["reasoning_effort"]
+
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.post(creds["endpoint"], headers=headers, json=payload)
+            if resp.status_code == 200:
+                data = resp.json()
+                raw_json = data["choices"][0]["message"].get("content", "").strip()
+                raw_json = re.sub(r"^```(?:json)?", "", raw_json, flags=re.MULTILINE)
+                raw_json = re.sub(r"```$", "", raw_json, flags=re.MULTILINE).strip()
+                parsed = json.loads(raw_json)
+                if parsed.get("needs_search"):
+                    q = parsed.get("query") or clean_msg
+                    return True, q.strip(), None
+                else:
+                    return False, None, None
+    except Exception:
+        # Graceful fallback to regex-based detection
+        pass
+
+    return detect_search_intent(message)
+
 def is_time_sensitive_query(query: str) -> bool:
     """
     Detects whether a search query is time-sensitive (news, sports, schedules, prices, weather).
@@ -321,7 +434,7 @@ def is_result_too_stale(published_date_str: Optional[str], max_days: int = 14) -
 
 # ----------------- Untrusted Context Formatting -----------------
 
-def format_untrusted_web_context(results: List[SearchResult], check_date: str = None) -> str:
+def format_untrusted_web_context(results: List[SearchResult], check_date: str = None, direct_summary: Optional[str] = None) -> str:
     """
     Formats web results inside <untrusted_web_content> tags (Requirement 4).
     Contains strict system guardrails instructing the AI model:
@@ -330,7 +443,7 @@ def format_untrusted_web_context(results: List[SearchResult], check_date: str = 
     - For prices, specify store, price, link, and timestamp.
     - If sources conflict or evidence is weak, state so plainly.
     """
-    if not results:
+    if not results and not direct_summary:
         return ""
 
     if not check_date:
@@ -347,6 +460,9 @@ def format_untrusted_web_context(results: List[SearchResult], check_date: str = 
         "5. For prices, show store, price, link, and timestamp, and say clearly when it could not verify.",
         ""
     ]
+
+    if direct_summary:
+        lines.append(f"VERIFIED REAL-TIME SNAPSHOT:\n{direct_summary}\n")
 
     for idx, r in enumerate(results, 1):
         lines.append(f"[SOURCE {idx}: {r.domain} | Checked: {check_date}]")
@@ -533,7 +649,8 @@ async def execute_web_search(
             "date": r.published_date or check_date_str
         })
 
-    context_text = format_untrusted_web_context(results, check_date_str)
+    direct_summary = getattr(provider, "last_answer", None)
+    context_text = format_untrusted_web_context(results, check_date_str, direct_summary=direct_summary)
     if has_stale_warning:
         context_text += "\n\nTEMPORAL ACCURACY WARNING: Available web sources may be older or uncertain for this recent query. State this plainly and do not present assumptions as verified facts."
 

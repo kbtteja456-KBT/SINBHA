@@ -15,9 +15,15 @@ services:
         value: production
       - key: DEV_MODE
         value: "false"
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: "openai/gpt-oss-120b"
       - key: OPENROUTER_MODEL
         value: "google/gemini-2.5-flash"
       - key: OPENROUTER_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
         sync: false
       - key: DATABASE_URL
         sync: false

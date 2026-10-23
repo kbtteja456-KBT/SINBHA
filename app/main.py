@@ -28,11 +28,13 @@ from app.ai_brain import (
     parse_relative_datetime,
     find_matching_tasks,
     detect_task_chat_intent,
+    get_llm_credentials,
 )
 from app import database as db
 from app.search import (
     execute_web_search,
     detect_search_intent,
+    detect_search_intent_smart,
 )
 from app.device_relay import relay_manager
 from app.security import (
@@ -797,7 +799,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
     web_search_setting = db.get_setting(user_id, "web_search_enabled", "true")
 
     if web_search_setting == "true":
-        needs_search, s_query, d_url = detect_search_intent(user_msg)
+        needs_search, s_query, d_url = await detect_search_intent_smart(user_msg, recent_history[:-1])
         if needs_search:
             # Handle contextual follow-up phrases like "search and tell me" or "check it"
             if s_query and len(s_query.split()) <= 4 and re.search(r"^(search|check|look\s*up|tell\s*me|yeah|yes)", s_query, re.IGNORECASE):
@@ -1707,7 +1709,8 @@ async def device_websocket_endpoint(websocket: WebSocket):
 async def info_endpoint(request: Request):
     """Provides general host information and session state."""
     port = int(os.environ.get("PORT", 8080))
-    model = os.getenv("OPENROUTER_MODEL", "google/gemini-2.5-flash")
+    creds = get_llm_credentials()
+    model = creds["model"] if creds else os.getenv("OPENROUTER_MODEL", "google/gemini-2.5-flash")
     user = await get_current_user_optional(request)
     is_stopped = db.get_emergency_stopped(user["id"]) if user else False
 

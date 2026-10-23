@@ -38,10 +38,13 @@ def validate_production_config():
 
     errors = []
 
-    # 1. OpenRouter API Key
-    api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
-    if not api_key or "your_openrouter_api_key" in api_key:
-        errors.append("OPENROUTER_API_KEY is missing or invalid.")
+    # 1. AI Model API Key (Groq or OpenRouter)
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    has_valid_groq = groq_key and "your_groq_api_key" not in groq_key
+    has_valid_or = openrouter_key and "your_openrouter_api_key" not in openrouter_key
+    if not has_valid_groq and not has_valid_or:
+        errors.append("AI API Key is missing. Please configure GROQ_API_KEY or OPENROUTER_API_KEY.")
 
     # 2. Database URL
     db_url = os.getenv("DATABASE_URL", "").strip().lower()

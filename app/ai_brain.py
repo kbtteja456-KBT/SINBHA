@@ -516,19 +516,48 @@ def extract_fallback_task_proposal(user_message: str) -> dict | None:
         "notes": None
     }
 
+def get_llm_credentials() -> Optional[dict]:
+    """
+    Returns active LLM credentials.
+    Prioritizes GROQ_API_KEY (100% free, ultra-fast frontier models),
+    and falls back to OPENROUTER_API_KEY.
+    """
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    groq_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b").strip()
+    openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    openrouter_model = os.getenv("OPENROUTER_MODEL", "google/gemini-2.5-flash").strip()
+
+    if groq_key and groq_key != "your_groq_api_key_here":
+        return {
+            "provider": "groq",
+            "api_key": groq_key,
+            "model": groq_model,
+            "endpoint": "https://api.groq.com/openai/v1/chat/completions",
+            "reasoning_effort": "low" if "gpt-oss-120b" in groq_model else None
+        }
+
+    if openrouter_key and openrouter_key != "your_openrouter_api_key_here":
+        return {
+            "provider": "openrouter",
+            "api_key": openrouter_key,
+            "model": openrouter_model,
+            "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+            "reasoning_effort": None
+        }
+
+    return None
+
 async def call_sinbha_brain(user_message: str, chat_history: list = None, remembered_facts: list = None, web_search_context: str = None, user_timezone: str = None) -> dict:
     """
-    Sends message to OpenRouter with memory context (last 20 messages + explicit facts)
+    Sends message to active LLM (Groq or OpenRouter) with memory context (last 20 messages + explicit facts)
     and optional untrusted web search context (Step 15).
     Never prints, logs, or exposes the API key.
     """
-    api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
-    model_name = os.getenv("OPENROUTER_MODEL", "google/gemini-2.5-flash").strip()
-
-    if not api_key or api_key == "your_openrouter_api_key_here":
+    creds = get_llm_credentials()
+    if not creds:
         return {
             "success": False,
-            "reply": "I'm not quite connected to my brain yet! 🌸 Please paste your OpenRouter API key into your .env file on your computer.",
+            "reply": "I'm not quite connected to my brain yet! 🌸 Please paste your Groq or OpenRouter API key into your .env file on your computer.",
             "error": "missing_api_key"
         }
 
@@ -581,31 +610,34 @@ async def call_sinbha_brain(user_message: str, chat_history: list = None, rememb
     messages.append({"role": "user", "content": user_message})
 
     headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "http://localhost:8080",
-        "X-Title": "SINBHA Companion"
+        "Authorization": f"Bearer {creds['api_key']}",
+        "Content-Type": "application/json"
     }
+    if creds["provider"] == "openrouter":
+        headers["HTTP-Referer"] = "http://localhost:8080"
+        headers["X-Title"] = "SINBHA Companion"
 
-    max_toks = 600 if web_search_context else 400
+    max_toks = 800 if web_search_context else 500
     payload = {
-        "model": model_name,
+        "model": creds["model"],
         "messages": messages,
         "max_tokens": max_toks,
-        "temperature": 0.75
+        "temperature": 0.7
     }
+    if creds.get("reasoning_effort"):
+        payload["reasoning_effort"] = creds["reasoning_effort"]
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
-                "https://openrouter.ai/api/v1/chat/completions",
+                creds["endpoint"],
                 headers=headers,
                 json=payload
             )
 
         if response.status_code == 200:
             data = response.json()
-            raw_text = data["choices"][0]["message"]["content"].strip()
+            raw_text = data["choices"][0]["message"].get("content", "").strip()
             
             # Check for structured task proposal block
             raw_proposal = None
@@ -637,15 +669,16 @@ async def call_sinbha_brain(user_message: str, chat_history: list = None, rememb
             }
         
         elif response.status_code == 401:
+            provider_name = creds["provider"].capitalize()
             return {
                 "success": False,
-                "reply": "It looks like my OpenRouter API key isn't recognized. Could you please double-check your key in the .env file? 🌸",
+                "reply": f"It looks like my {provider_name} API key isn't recognized. Could you please double-check your key in the .env file? 🌸",
                 "error": "invalid_api_key"
             }
         elif response.status_code == 402:
             return {
                 "success": False,
-                "reply": "It looks like your OpenRouter account has run out of credits. Once you top it up, I'll be right back! 🌸",
+                "reply": "It looks like your AI account has run out of credits. Once you top it up or switch to a free Groq key, I'll be right back! 🌸",
                 "error": "insufficient_credits"
             }
         else:
@@ -673,10 +706,8 @@ async def extract_explicit_facts(user_message: str) -> list[str]:
     Separate small AI call to extract new explicit facts.
     Returns a list of fact strings. The application code strictly validates and decides what gets saved.
     """
-    api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
-    model_name = os.getenv("OPENROUTER_MODEL", "google/gemini-2.5-flash").strip()
-
-    if not api_key or api_key == "your_openrouter_api_key_here":
+    creds = get_llm_credentials()
+    if not creds:
         return []
 
     # Fast safety pre-filter: don't call extractor on very short greetings or stop commands
@@ -694,33 +725,36 @@ async def extract_explicit_facts(user_message: str) -> list[str]:
         return []
 
     headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "http://localhost:8080",
-        "X-Title": "SINBHA Fact Extractor"
+        "Authorization": f"Bearer {creds['api_key']}",
+        "Content-Type": "application/json"
     }
+    if creds["provider"] == "openrouter":
+        headers["HTTP-Referer"] = "http://localhost:8080"
+        headers["X-Title"] = "SINBHA Fact Extractor"
 
     payload = {
-        "model": model_name,
+        "model": creds["model"],
         "messages": [
             {"role": "system", "content": FACT_EXTRACTOR_PROMPT},
             {"role": "user", "content": user_message}
         ],
-        "max_tokens": 150,
+        "max_tokens": 200,
         "temperature": 0.1  # Low temperature for strict factual consistency
     }
+    if creds.get("reasoning_effort"):
+        payload["reasoning_effort"] = creds["reasoning_effort"]
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(
-                "https://openrouter.ai/api/v1/chat/completions",
+                creds["endpoint"],
                 headers=headers,
                 json=payload
             )
 
         if response.status_code == 200:
             data = response.json()
-            raw_text = data["choices"][0]["message"]["content"].strip()
+            raw_text = data["choices"][0]["message"].get("content", "").strip()
             
             # Clean possible markdown formatting
             raw_text = re.sub(r"^```(?:json)?", "", raw_text, flags=re.MULTILINE)
