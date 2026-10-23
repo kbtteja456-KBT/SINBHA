@@ -463,26 +463,29 @@ document.addEventListener("DOMContentLoaded", () => {
             }
           });
         });
-      }
 
-      if (quickChip) {
-        quickChip.addEventListener("click", () => {
-          quickChip.classList.toggle("active");
-        });
-      }
+        const quickChip = card.querySelector(".task-quick-10m-chip");
+        if (quickChip) {
+          quickChip.addEventListener("click", () => {
+            quickChip.classList.toggle("active");
+          });
+        }
 
-      if (confirmBtn && cancelBtn) {
-        confirmBtn.addEventListener("click", async () => {
-          confirmBtn.disabled = true;
-          cancelBtn.disabled = true;
-          await handleTaskConfirm(proposal.id, card);
-        });
+        const confirmBtn = card.querySelector(".task-confirm-btn");
+        const cancelBtn = card.querySelector(".task-cancel-btn");
+        if (confirmBtn && cancelBtn) {
+          confirmBtn.addEventListener("click", async () => {
+            confirmBtn.disabled = true;
+            cancelBtn.disabled = true;
+            await handleTaskConfirm(proposal.id, card);
+          });
 
-        cancelBtn.addEventListener("click", async () => {
-          confirmBtn.disabled = true;
-          cancelBtn.disabled = true;
-          await handleTaskCancel(proposal.id, card);
-        });
+          cancelBtn.addEventListener("click", async () => {
+            confirmBtn.disabled = true;
+            cancelBtn.disabled = true;
+            await handleTaskCancel(proposal.id, card);
+          });
+        }
       }
     }
 

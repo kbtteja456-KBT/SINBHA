@@ -108,6 +108,7 @@ class LoginRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     tz_offset_minutes: Optional[int] = None
+    tz_offset: Optional[int] = None
     timezone: Optional[str] = None
 
 class ActionConfirmRequest(BaseModel):
@@ -842,16 +843,23 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
                     "sources": []
                 }
 
+    offset = payload.tz_offset_minutes if payload.tz_offset_minutes is not None else payload.tz_offset
     user_tz = payload.timezone or user.get("timezone") or db.get_setting(user_id, "timezone", None)
-    if not user_tz:
-        if payload.tz_offset_minutes == -330:
-            user_tz = "Asia/Kolkata"
-        else:
-            user_tz = "UTC"
+    
+    # If tz was unset or defaulted to UTC but client is in India (-330 offset), automatically ground to Asia/Kolkata
+    if offset == -330 and (not user_tz or user_tz == "UTC"):
+        user_tz = "Asia/Kolkata"
+    elif not user_tz:
+        user_tz = "UTC"
 
     if payload.timezone:
         try:
             db.set_setting(user_id, "timezone", payload.timezone)
+        except Exception:
+            pass
+    elif offset == -330:
+        try:
+            db.set_setting(user_id, "timezone", "Asia/Kolkata")
         except Exception:
             pass
 
