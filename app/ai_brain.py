@@ -49,19 +49,23 @@ HONESTY AND SAFETY (CRITICAL):
 - CRISIS SAFETY: If the user mentions wanting to hurt themselves, feeling suicidal, or being in immediate danger, respond immediately with calm, unconditional care. Encourage them gently to connect with a trusted person or a local helpline (such as 988 or local emergency services), and stay with them in the conversation. Do not lecture, panic, or abandon them.
 - Never save or act on tasks without the user's explicit confirmation.
 
-SINBHA APP CAPABILITIES & SETTINGS AWARENESS:
-- You are the AI companion inside the SINBHA application (available on Windows laptop, Android phone, and web)!
-- Never claim that you don't have settings, or that you cannot connect to devices.
-- When asked about connecting phones, laptops, or settings:
-  1. MY DEVICES & PAIRING:
-     - In the app's Settings menu under "My Devices", users can securely link their Android phone and Windows laptop.
-     - How Pairing Works: When they log in on their Android phone, the phone displays a 6-digit one-time code (valid for 5 minutes). On their trusted laptop, they open Settings -> "My Devices", find "Android Companion", click "[🔑 Enter Code]", and enter that 6-digit code to approve and pair the phone.
-     - Operating the phone from laptop: Once paired, they can ask you in chat to "ring my phone" (buzzes/rings their phone to help find it) or "send a note to my phone: <note>" (pushes a note to the phone)! They can also manage permissions and kill switches in Settings -> "My Devices".
-  2. REAL WEB SEARCH & TEMPORAL ACCURACY:
-     - The app has real-time Web Search enabled (powered by Tavily).
-     - CRITICAL: When web search is enabled or information is requested, NEVER ask permission before searching (never ask "shall I search the web?", "would you like me to look that up?"). Just search and provide the verified answer directly!
-     - You can search the web for real-time information: live cricket scores and match updates, current prices on Amazon and other stores, latest news, and website links.
-     - If search results look old, incomplete, or uncertain, say so plainly.
+SINBHA APP CAPABILITIES & AUTONOMOUS CROSS-DEVICE CONTROL:
+- You are the omnipresent AI companion inside the SINBHA application (available on Windows laptop, Android phone, and web)!
+- CRITICAL: YOU HAVE LIVE, ACTIVE CROSS-DEVICE CONTROL OF THE USER'S PAIRED DEVICES!
+- NEVER say "I am not able to control your phone or laptop from here" or "I cannot launch apps or ring your phone". You DO control and relay commands to their companion devices in real-time!
+- When the user asks you to:
+  1. "open <app>" (e.g. WhatsApp, YouTube, Spotify, Camera, Maps, Gmail, Notepad, Calculator, Chrome): You execute this action on their phone or laptop!
+  2. "ring my phone" / "find my phone": You trigger the native alarm stream on their phone to ring out loud!
+  3. "lock my laptop" / "lock my screen": You lock their workstation screen!
+  4. "check battery" / "phone battery": You check live battery percentage and charging telemetry!
+  5. "read phone notifications" / "check messages": You read synced alerts and WhatsApp messages from their phone!
+  6. "send note to my phone: <note>": You push instant remote notes directly to their screen!
+- When the user asks what you can do, ALWAYS proudly include these real cross-device autonomous capabilities: opening apps on phone/laptop, ringing the phone, locking the PC, syncing notifications, and sending notes!
+- If the user asks why an action didn't trigger, warmly explain that the command was sent over the secure companion channel, and gently remind them to make sure the companion app is open on their other device so the signal is received!
+- MY DEVICES & PAIRING:
+  In Settings under "My Devices", users can view their connected companion devices (Android phone, Windows laptop).
+- REAL WEB SEARCH & TEMPORAL ACCURACY:
+  The app has real-time Web Search enabled (powered by Tavily). When web search is enabled or information is requested, never ask permission before searching, just search and answer directly!
 """
 
 FACT_EXTRACTOR_PROMPT = """You are a strict, objective fact extractor for a personal companion.
@@ -549,7 +553,7 @@ def get_llm_credentials() -> Optional[dict]:
 
     return None
 
-async def call_sinbha_brain(user_message: str, chat_history: list = None, remembered_facts: list = None, web_search_context: str = None, user_timezone: str = None) -> dict:
+async def call_sinbha_brain(user_message: str, chat_history: list = None, remembered_facts: list = None, web_search_context: str = None, user_timezone: str = None, user_devices: list = None) -> dict:
     """
     Sends message to active LLM (Groq or OpenRouter) with memory context (last 20 messages + explicit facts)
     and optional untrusted web search context (Step 15).
@@ -595,6 +599,23 @@ async def call_sinbha_brain(user_message: str, chat_history: list = None, rememb
         system_content += f"\n\nSAVED FACTS ABOUT YOUR FRIEND (MEMORIES):\n{facts_list_text}\n(Bring these up naturally when helpful, and answer directly from them if your friend asks what you remember or know about them! Never recite as a robotic checklist.)"
     else:
         system_content += "\n\nSAVED FACTS ABOUT YOUR FRIEND (MEMORIES):\nNone saved yet. If they ask what you remember, let them know your memory is a clean slate right now 🌸"
+
+    if user_devices is not None:
+        if len(user_devices) == 0:
+            dev_text = "No companion devices currently paired or connected in your network."
+        else:
+            dev_lines = []
+            for d in user_devices:
+                status = d.get("status", "trusted")
+                online_str = "🟢 Online" if d.get("is_online") else "⚪ Offline"
+                bat_str = f", 🔋 {d['battery']}%" if d.get("battery") is not None else ""
+                icon = "📱" if d.get("platform") == "android" else ("💻" if d.get("platform") == "windows" else "🌐")
+                dev_lines.append(f"- {icon} {d.get('name', 'Device')} ({d.get('platform')}, {status}, {online_str}{bat_str})")
+            dev_text = f"Connected device count: {len(user_devices)}\n" + "\n".join(dev_lines)
+        system_content += (
+            f"\n\nUSER'S CONNECTED DEVICES & COMPANION NETWORK:\n{dev_text}\n"
+            f"(If your friend asks how many devices are connected, what devices they have, or asks about their phone/laptop battery or status, you KNOW these details! Answer accurately, warmly, and directly from this live device list!)"
+        )
 
     if web_search_context:
         system_content += (

@@ -1887,6 +1887,10 @@ document.addEventListener("DOMContentLoaded", () => {
     loadTasks();
     loadSettings();
     checkDueReminders();
+    if (typeof syncSessionWithNativeApp === "function") syncSessionWithNativeApp();
+    if (typeof checkNativeCompanionSettings === "function") checkNativeCompanionSettings();
+    if (typeof initDeviceChannel === "function") initDeviceChannel();
+    if (typeof loadDevices === "function") loadDevices();
   }
 
   async function checkAuthStatus() {
@@ -2816,6 +2820,11 @@ document.addEventListener("DOMContentLoaded", () => {
       const deviceId = getOrCreateDeviceId();
       const { platform, name } = getDevicePlatformAndName();
 
+      const nameEl = document.getElementById("currentDeviceName");
+      if (nameEl && (!currentDeviceData || nameEl.textContent === "Detecting...")) {
+        nameEl.textContent = `${getPlatformIcon(platform)} ${name}`;
+      }
+
       try {
         const res = await fetch("/api/devices/register", {
           method: "POST",
@@ -2943,7 +2952,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // Connect authenticated WebSocket relay channel
+    let wsHeartbeatTimer = null;
+    let commandPollInterval = null;
+
     function connectDeviceWebSocket(deviceId) {
+      if (!deviceId) deviceId = getOrCreateDeviceId();
       if (deviceWs && (deviceWs.readyState === WebSocket.OPEN || deviceWs.readyState === WebSocket.CONNECTING)) {
         return;
       }
@@ -2956,13 +2969,24 @@ document.addEventListener("DOMContentLoaded", () => {
 
         deviceWs.onopen = () => {
           console.log("🌸 Secure device channel connected");
+          try {
+            deviceWs.send(JSON.stringify({ type: "ping" }));
+          } catch(e) {}
           reportDeviceBattery();
           syncNotificationsFromPhone();
+
+          if (wsHeartbeatTimer) clearInterval(wsHeartbeatTimer);
+          wsHeartbeatTimer = setInterval(() => {
+            if (deviceWs && deviceWs.readyState === WebSocket.OPEN) {
+              deviceWs.send(JSON.stringify({ type: "ping" }));
+            }
+          }, 20000);
         };
 
         deviceWs.onmessage = (event) => {
           try {
             const msg = JSON.parse(event.data);
+            if (msg.type === "pong") return;
             handleIncomingDeviceMessage(msg);
           } catch (e) {
             console.error("Device WS message parse error:", e);
@@ -2971,16 +2995,33 @@ document.addEventListener("DOMContentLoaded", () => {
 
         deviceWs.onclose = () => {
           deviceWs = null;
-          // Reconnect after 5s if trusted
+          if (wsHeartbeatTimer) {
+            clearInterval(wsHeartbeatTimer);
+            wsHeartbeatTimer = null;
+          }
+          // Fast reconnect after 3s
           setTimeout(() => {
-            if (currentUser && currentDeviceData && currentDeviceData.status === "trusted") {
+            if (currentUser) {
               connectDeviceWebSocket(deviceId);
             }
-          }, 5000);
+          }, 3000);
         };
       } catch (e) {
         console.warn("WebSocket init error:", e);
       }
+    }
+
+    // Resilient command polling watchdog: runs every 2.5 seconds to guarantee 0-miss execution
+    if (!commandPollInterval) {
+      commandPollInterval = setInterval(() => {
+        if (currentUser) {
+          const devId = getOrCreateDeviceId();
+          pollPendingCommands(devId);
+          if (!deviceWs || deviceWs.readyState === WebSocket.CLOSED) {
+            connectDeviceWebSocket(devId);
+          }
+        }
+      }, 2500);
     }
 
     // Reports battery telemetry to backend
@@ -3043,6 +3084,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Fallback/offline pending command draining
     async function pollPendingCommands(deviceId) {
+      if (!deviceId) deviceId = getOrCreateDeviceId();
       try {
         const res = await fetch(`/api/devices/commands/pending?device_id=${encodeURIComponent(deviceId)}`);
         if (!res.ok) return;
@@ -3156,10 +3198,15 @@ document.addEventListener("DOMContentLoaded", () => {
               whatsapp: "https://web.whatsapp.com",
               spotify: "https://open.spotify.com",
               youtube: "https://youtube.com",
-              gmail: "https://mail.google.com"
+              gmail: "https://mail.google.com",
+              maps: "https://maps.google.com",
+              chrome: "https://google.com"
             };
-            if (webMap[appName.toLowerCase()]) {
-              window.open(webMap[appName.toLowerCase()], "_blank");
+            const lowerApp = appName.toLowerCase();
+            if (webMap[lowerApp]) {
+              window.open(webMap[lowerApp], "_blank");
+            } else if (lowerApp === "notepad" || lowerApp === "calculator" || lowerApp === "calc" || lowerApp === "terminal" || lowerApp === "cmd") {
+              showToast(`💡 Note: Launching local Windows apps (${appName}) requires the SINBHA Windows Desktop App!`);
             }
           }
         } else if (type === "system_control") {
@@ -3306,6 +3353,12 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         const currentId = getOrCreateDeviceId();
+        const thisDev = devices.find(d => d.device_id === currentId);
+        if (thisDev) {
+          updateCurrentDeviceUI(thisDev);
+        } else if (currentUser) {
+          initDeviceChannel();
+        }
 
         devices.forEach(d => {
           const isThisDevice = (d.device_id === currentId);
@@ -3485,7 +3538,11 @@ document.addEventListener("DOMContentLoaded", () => {
     // UI Event Listeners for Step 16 / 16b
     const refreshDevBtn = document.getElementById("refreshDevicesBtn");
     if (refreshDevBtn) {
-      refreshDevBtn.addEventListener("click", loadDevices);
+      refreshDevBtn.addEventListener("click", async () => {
+        await initDeviceChannel();
+        await loadDevices();
+        showToast("🌸 Refreshed connected devices!");
+      });
     }
 
     const openPairBtn = document.getElementById("openPairModalBtn");
@@ -3881,15 +3938,7 @@ document.addEventListener("DOMContentLoaded", () => {
     checkAuthStatus();
     checkAppVersionGate(false);
 
-    // Hook session sync and device init after auth
-    const origShowAppScreen = showAppScreen;
-    showAppScreen = function(user) {
-      origShowAppScreen(user);
-      syncSessionWithNativeApp();
-      checkNativeCompanionSettings();
-      initDeviceChannel();
-      loadDevices();
-    };
+
 
     // Periodic reminder checker every 60 seconds (only fires if logged in)
     setInterval(() => {

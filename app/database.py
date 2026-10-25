@@ -1382,7 +1382,13 @@ def create_or_register_device(
         dev = session.scalar(select(Device).where(Device.device_id == device_id))
         if dev:
             if dev.user_id != user_id:
-                raise ValueError("Device is already registered to another user account.")
+                dev.user_id = user_id
+                log_audit(
+                    user_id,
+                    "DEVICE_REASSIGNED",
+                    f"Device '{name}' ({device_id}) transferred to user {user_id} upon authentication.",
+                    session=session
+                )
             dev.last_seen_at = utc_now()
             if name and name != "Unknown Device":
                 dev.name = name

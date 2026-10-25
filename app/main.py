@@ -722,7 +722,13 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
     is_external_content = bool(re.search(r"(http[s]?://|forwarded message|from:|<email>|content from web)", user_msg, re.IGNORECASE))
     if not is_external_content:
         lower_m = user_msg.lower().strip()
-        is_list_devices = bool(re.search(r"\b(what|which|show|list)\s+(are\s+)?(my\s+)?(devices|connected devices|devices connected)\b", lower_m))
+        clean_lower = re.sub(r"[^\w\s]", " ", lower_m)
+        is_list_devices = bool(re.search(
+            r"\b(how\s+many|what|which|show|list|tell\s+me|check|status\s+of|count|are\s+there\s+any)\b.*?\b(devices?|laptop|phone|pc|mobile)\b"
+            r"|\b(devices?)\b.*?\b(connected|paired|online|count|status)\b"
+            r"|\b(is|are)\s+(my\s+)?(phone|laptop|pc|mobile|devices?)\s+(connected|paired|online)\b",
+            clean_lower
+        ))
         is_sync_intent = bool(re.search(r"\b(sync|synchronize)\s+(all\s+)?(my\s+)?(devices|phone and laptop|laptop and phone)\b", lower_m))
         is_open_app_intent = bool(re.search(r"\b(open|launch|start|run)\s+(the\s+)?(whatsapp|chrome|google\s+chrome|spotify|youtube|gmail|camera|notepad|calculator|calc|vscode|code|explorer|terminal|cmd|settings|maps)\b|\b(on\s+(my\s+)?(phone|mobile|android|laptop|pc|desktop)\s+(open|launch|start|run))\b", lower_m))
         is_lock_intent = bool(re.search(r"\b(lock|secure)\s+(my\s+)?(laptop|pc|desktop|computer|screen|workstation)\b", lower_m))
@@ -736,7 +742,13 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
             if not devs:
                 reply = "You don't have any devices connected yet! Log into your account on your phone or laptop and they will auto-connect 🌸"
             else:
-                lines = ["Here are your connected companion devices in your network: 🌸\n"]
+                total_count = len(devs)
+                online_count = sum(1 for d in devs if relay_manager.is_device_connected(user_id, d.get("device_id")))
+                if total_count == 1:
+                    hdr = f"You have **1 companion device** connected to your SINBHA network: 🌸\n"
+                else:
+                    hdr = f"You have **{total_count} companion devices** connected to your SINBHA network: 🌸\n"
+                lines = [hdr]
                 for d in devs:
                     is_online = relay_manager.is_device_connected(user_id, d.get("device_id"))
                     online_badge = "🟢 Online" if is_online else "⚪ Offline"
@@ -1049,12 +1061,26 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
         except Exception:
             pass
 
+    user_devices_list = db.get_user_devices(user_id)
+    annotated_devs = []
+    for d in user_devices_list:
+        is_onl = relay_manager.is_device_connected(user_id, d.get("device_id"))
+        tel = relay_manager.get_device_telemetry(user_id, d.get("device_id"))
+        annotated_devs.append({
+            "name": d.get("name"),
+            "platform": d.get("platform"),
+            "status": d.get("status"),
+            "is_online": is_onl,
+            "battery": tel.get("battery") if tel else None
+        })
+
     brain_result = await call_sinbha_brain(
         user_message=user_msg,
         chat_history=recent_history[:-1],
         remembered_facts=current_facts,
         web_search_context=web_search_context,
-        user_timezone=user_tz
+        user_timezone=user_tz,
+        user_devices=annotated_devs
     )
     ai_reply = brain_result.get("reply", "I'm right here with you 🌸")
 
@@ -1823,6 +1849,11 @@ async def get_pending_commands_endpoint(device_id: str, user: dict = Depends(get
     """
     clean_id = device_id.strip()
     dev = db.get_device_by_id(user["id"], clean_id)
+    if dev and dev["status"] == "pending":
+        strict_pairing = os.getenv("STRICT_DEVICE_PAIRING", "false").lower() == "true"
+        auto_connect = not strict_pairing and os.getenv("AUTO_CONNECT_DEVICES", "true").lower() == "true"
+        if auto_connect:
+            dev = db.create_or_register_device(user["id"], clean_id, name=dev.get("name"), platform=dev.get("platform"))
     if not dev or dev["status"] != "trusted":
         raise HTTPException(status_code=403, detail="Device is not trusted or does not belong to you.")
 
