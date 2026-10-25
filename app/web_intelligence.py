@@ -21,7 +21,10 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, Field
 
 import httpx
-from bs4 import BeautifulSoup
+try:
+    from bs4 import BeautifulSoup
+except ImportError:
+    BeautifulSoup = None
 
 from app import database as db
 
@@ -253,7 +256,7 @@ class DDGSSearchProvider(SearchProvider):
                     data={"q": clean_q},
                     headers=headers
                 )
-                if resp.status_code == 200:
+                if resp.status_code == 200 and BeautifulSoup:
                     soup = BeautifulSoup(resp.text, "html.parser")
                     results = soup.select(".result")
                     for idx, res in enumerate(results[:max_results], 1):
@@ -315,17 +318,23 @@ class SafeWebReader:
                 content_bytes = resp.content[:MAX_PAGE_BYTES]
                 html_text = content_bytes.decode(resp.encoding or "utf-8", errors="replace")
 
-                soup = BeautifulSoup(html_text, "html.parser")
-                # Remove boilerplate tags
-                for tag in soup(["script", "style", "nav", "footer", "header", "aside", "svg", "noscript", "iframe"]):
-                    tag.decompose()
+                if BeautifulSoup:
+                    soup = BeautifulSoup(html_text, "html.parser")
+                    # Remove boilerplate tags
+                    for tag in soup(["script", "style", "nav", "footer", "header", "aside", "svg", "noscript", "iframe"]):
+                        tag.decompose()
 
-                title_tag = soup.find("title")
-                title = title_tag.get_text(strip=True) if title_tag else urlparse(url).netloc
+                    title_tag = soup.find("title")
+                    title = title_tag.get_text(strip=True) if title_tag else urlparse(url).netloc
 
-                # Extract readable text
-                body_text = soup.get_text(separator=" ", strip=True)
-                clean_text = re.sub(r"\s+", " ", body_text).strip()
+                    # Extract readable text
+                    body_text = soup.get_text(separator=" ", strip=True)
+                    clean_text = re.sub(r"\s+", " ", body_text).strip()
+                else:
+                    clean_text = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html_text, flags=re.DOTALL | re.IGNORECASE)
+                    clean_text = re.sub(r"<[^>]+>", " ", clean_text)
+                    clean_text = re.sub(r"\s+", " ", clean_text).strip()
+                    title = urlparse(url).netloc
 
                 if len(clean_text) < 40:
                     return None
