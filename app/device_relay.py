@@ -9,6 +9,7 @@ Audit logging records only metadata (command type, sender, target, result),
 and NEVER the command content or payload.
 """
 
+import os
 import time
 import json
 import asyncio
@@ -30,6 +31,42 @@ class CommandRelayManager:
 
         # Offline queues: (user_id, device_id) -> List[dict] (max 10, expiry 60s, in-memory only)
         self.offline_queues: Dict[Tuple[int, str], List[dict]] = {}
+
+        # User notifications buffer: user_id -> List[dict] (max 25, in-memory only)
+        self.user_notifications: Dict[int, List[dict]] = {}
+
+        # Device telemetry: (user_id, device_id) -> dict (battery, is_charging, last_seen)
+        self.device_telemetry: Dict[Tuple[int, str], dict] = {}
+
+    def store_user_notifications(self, user_id: int, notifications: List[dict]):
+        """Stores recent notification buffer from phone in volatile memory."""
+        if not notifications:
+            return
+        current = self.user_notifications.get(user_id, [])
+        seen_keys = {(n.get("app"), n.get("title"), n.get("timestamp")) for n in current}
+        for n in notifications:
+            k = (n.get("app"), n.get("title"), n.get("timestamp"))
+            if k not in seen_keys:
+                current.insert(0, n)
+                seen_keys.add(k)
+        self.user_notifications[user_id] = current[:25]
+
+    def get_user_notifications(self, user_id: int) -> List[dict]:
+        """Returns volatile notifications for user."""
+        return self.user_notifications.get(user_id, [])
+
+    def store_device_telemetry(self, user_id: int, device_id: str, telemetry: dict):
+        """Stores device telemetry (battery, is_charging, timestamp) in volatile memory."""
+        self.device_telemetry[(user_id, device_id)] = telemetry
+
+    def get_device_telemetry(self, user_id: int, device_id: Optional[str] = None) -> Optional[dict]:
+        """Gets telemetry for a device or latest for any device of user."""
+        if device_id:
+            return self.device_telemetry.get((user_id, device_id))
+        for (u, _), t in self.device_telemetry.items():
+            if u == user_id:
+                return t
+        return None
 
     def _cleanup_old_records(self, now: float):
         """Prunes expired replay entries (> 300s old)."""
@@ -339,9 +376,12 @@ class CommandRelayManager:
                 "message": "Target device is Level 0 (Read-only)."
             }
 
-        # Anything above Level 1 (2, 3, 4) requires confirmation on TARGET device
-        # Also open_link always requires confirmation
-        requires_confirmation = (perm_level >= 2) or (cmd_type == "open_link")
+        # Zero-Prompt for same-user trusted devices unless STRICT_DEVICE_PAIRING=true
+        strict_pairing = os.getenv("STRICT_DEVICE_PAIRING", "false").lower() == "true"
+        if not strict_pairing:
+            requires_confirmation = False
+        else:
+            requires_confirmation = (perm_level >= 2) or (cmd_type == "open_link")
 
         # Packet delivered to target
         packet = {

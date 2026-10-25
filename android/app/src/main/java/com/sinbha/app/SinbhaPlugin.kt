@@ -567,4 +567,113 @@ class SinbhaPlugin : Plugin() {
 
         call.resolve(res)
     }
+
+    /**
+     * Step 16c: Launches native apps on Android by app name or package.
+     */
+    @PluginMethod
+    fun openApp(call: PluginCall) {
+        val appName = call.getString("app", "")?.lowercase()?.trim() ?: ""
+        val pkgName = when (appName) {
+            "whatsapp" -> "com.whatsapp"
+            "gmail", "mail", "email" -> "com.google.android.gm"
+            "youtube" -> "com.google.android.youtube"
+            "spotify" -> "com.spotify.music"
+            "camera" -> {
+                try {
+                    val intent = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    context.startActivity(intent)
+                    call.resolve(JSObject().put("success", true).put("app", "camera"))
+                    return
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            "settings" -> "com.android.settings"
+            "maps", "google maps" -> "com.google.android.apps.maps"
+            "chrome" -> "com.android.chrome"
+            else -> if (appName.contains(".")) appName else null
+        }
+
+        if (pkgName != null) {
+            try {
+                val launchIntent = context.packageManager.getLaunchIntentForPackage(pkgName)
+                if (launchIntent != null) {
+                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(launchIntent)
+                    call.resolve(JSObject().put("success", true).put("package", pkgName))
+                    return
+                }
+            } catch (e: Exception) {
+                call.reject("Failed to open app $pkgName: ${e.message}")
+                return
+            }
+        }
+        call.reject("Could not find matching app for '$appName'")
+    }
+
+    /**
+     * Step 16c: Returns phone battery level and charging state.
+     */
+    @PluginMethod
+    fun getBatteryStatus(call: PluginCall) {
+        try {
+            val ifilter = android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+            val bStatus = context.registerReceiver(null, ifilter)
+            val level = bStatus?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
+            val scale = bStatus?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1) ?: -1
+            val batteryPct = if (level >= 0 && scale > 0) (level * 100 / scale) else -1
+            val status = bStatus?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
+            val isCharging = status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
+                             status == android.os.BatteryManager.BATTERY_STATUS_FULL
+
+            val res = JSObject().apply {
+                put("percentage", batteryPct)
+                put("isCharging", isCharging)
+            }
+            call.resolve(res)
+        } catch (e: Exception) {
+            call.reject("Failed to get battery status: ${e.message}")
+        }
+    }
+
+    /**
+     * Step 16c: Returns recent notifications collected by SinbhaNotificationListener.
+     */
+    @PluginMethod
+    fun getRecentNotifications(call: PluginCall) {
+        try {
+            val items = SinbhaNotificationListener.getRecent()
+            val arr = JSArray()
+            for (item in items) {
+                arr.put(JSObject().apply {
+                    put("app", item.app)
+                    put("title", item.title)
+                    put("text", item.text)
+                    put("timestamp", item.timestamp)
+                })
+            }
+            call.resolve(JSObject().put("notifications", arr))
+        } catch (e: Exception) {
+            call.reject("Failed to get notifications: ${e.message}")
+        }
+    }
+
+    /**
+     * Step 16c: Opens Android Notification Listener settings if permission needed.
+     */
+    @PluginMethod
+    fun requestNotificationAccess(call: PluginCall) {
+        try {
+            val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+            call.resolve(JSObject().put("success", true))
+        } catch (e: Exception) {
+            call.reject("Failed to open notification settings: ${e.message}")
+        }
+    }
 }

@@ -717,14 +717,18 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
             "updated_fact": {"id": target_id, "fact": updated_text}
         })
 
-    # 6b. Check for remote device action request (Step 16)
+    # 6b. Check for remote device action request (Step 16 / 16c Omnipresent Agent)
     # Security Rule 7: Text from web pages, emails, or untrusted external content must NEVER trigger remote actions!
     is_external_content = bool(re.search(r"(http[s]?://|forwarded message|from:|<email>|content from web)", user_msg, re.IGNORECASE))
     if not is_external_content:
-        lower_m = user_msg.lower()
+        lower_m = user_msg.lower().strip()
         is_list_devices = bool(re.search(r"\b(what|which|show|list)\s+(are\s+)?(my\s+)?(devices|connected devices|devices connected)\b", lower_m))
         is_sync_intent = bool(re.search(r"\b(sync|synchronize)\s+(all\s+)?(my\s+)?(devices|phone and laptop|laptop and phone)\b", lower_m))
-        is_ring_intent = bool(re.search(r"\b(ring|find|buzz|ping)\s+(my\s+)?(phone|device|mobile)\b", lower_m))
+        is_open_app_intent = bool(re.search(r"\b(open|launch|start|run)\s+(the\s+)?(whatsapp|chrome|google\s+chrome|spotify|youtube|gmail|camera|notepad|calculator|calc|vscode|code|explorer|terminal|cmd|settings|maps)\b|\b(on\s+(my\s+)?(phone|mobile|android|laptop|pc|desktop)\s+(open|launch|start|run))\b", lower_m))
+        is_lock_intent = bool(re.search(r"\b(lock|secure)\s+(my\s+)?(laptop|pc|desktop|computer|screen|workstation)\b", lower_m))
+        is_battery_intent = bool(re.search(r"\b(check|what\s+is|show|get)\s+(the\s+)?(battery|battery\s+percentage|battery\s+level|charge)\b|\b(phone|laptop)\s+battery\b", lower_m))
+        is_read_notifs_intent = bool(re.search(r"\b(read|check|show|get|what\s+are)\s+(my\s+)?(phone\s+)?(notifications|messages|notifs|whatsapp\s+messages|emails|mails|sms)\b|\bwhat\s+(messages|emails|notifications)\s+(do\s+i\s+have|came)\b", lower_m))
+        is_ring_intent = bool(re.search(r"\b(ring|find|buzz|ping|alarm)\s+(my\s+)?(phone|device|mobile|laptop|pc)\b", lower_m))
         is_send_note_intent = bool(re.search(r"\b(send|push)\s+(a\s+)?(note|link|message)\s+to\s+(my\s+)?(phone|device|laptop|other\s+device)\b", lower_m))
 
         if is_list_devices:
@@ -732,10 +736,14 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
             if not devs:
                 reply = "You don't have any devices connected yet! Log into your account on your phone or laptop and they will auto-connect 🌸"
             else:
-                lines = ["Here are your connected companion devices in your network: 🌸"]
+                lines = ["Here are your connected companion devices in your network: 🌸\n"]
                 for d in devs:
+                    is_online = relay_manager.is_device_connected(user_id, d.get("device_id"))
+                    online_badge = "🟢 Online" if is_online else "⚪ Offline"
                     icon = "📱" if d.get("platform") == "android" else ("💻" if d.get("platform") == "windows" else "🌐")
-                    lines.append(f"- {icon} **{d.get('name')}** ({d.get('status').capitalize()})")
+                    tel = relay_manager.get_device_telemetry(user_id, d.get("device_id"))
+                    bat_str = f" • 🔋 {tel['battery']}%" if (tel and tel.get("battery") is not None) else ""
+                    lines.append(f"- {icon} **{d.get('name')}** ({online_badge}{bat_str}) [{d.get('status').capitalize()}]")
                 reply = "\n".join(lines)
             db.save_message(user_id, "user", user_msg)
             db.save_message(user_id, "assistant", reply)
@@ -751,15 +759,169 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
             db.save_message(user_id, "assistant", reply)
             return JSONResponse({"reply": reply, "proposal": None})
 
+        if is_read_notifs_intent:
+            all_user_devices = db.get_user_devices(user_id)
+            trusted_devices = [d for d in all_user_devices if d.get("status") == "trusted"]
+            for d in trusted_devices:
+                if d.get("platform", "").lower() in ("android", "mobile"):
+                    cmd_id = f"cmd_qry_{int(time.time()*1000)}"
+                    await relay_manager.relay_command(user_id, {
+                        "id": cmd_id,
+                        "sender_device": trusted_devices[0]["device_id"],
+                        "target_device": d["device_id"],
+                        "type": "query_notifications",
+                        "payload": {},
+                        "created_at": time.time(),
+                        "expiry": 30
+                    })
+            notifs = relay_manager.get_user_notifications(user_id)
+            db.save_message(user_id, "user", user_msg)
+            if notifs:
+                lines = ["📬 **Recent Notifications from your Phone:**\n"]
+                for n in notifs[:8]:
+                    app_label = n.get("app", "App")
+                    title = n.get("title", "")
+                    text = n.get("text", "")
+                    lines.append(f"• **[{app_label}]** {title}: {text}")
+                reply = "\n".join(lines)
+            else:
+                reply = (
+                    "📬 No recent notifications recorded from your phone yet! 🌸\n\n"
+                    "**To enable notifications:**\n"
+                    "1. Open the SINBHA app on your phone.\n"
+                    "2. Allow **Notification Access** for SINBHA in your Android Settings.\n"
+                    "Once enabled, incoming messages, WhatsApp alerts, and emails will automatically sync across all your devices!"
+                )
+            db.save_message(user_id, "assistant", reply)
+            return JSONResponse({"reply": reply, "proposal": None})
+
+        if is_battery_intent:
+            all_user_devices = db.get_user_devices(user_id)
+            trusted_devices = [d for d in all_user_devices if d.get("status") == "trusted"]
+            for d in trusted_devices:
+                cmd_id = f"cmd_bat_{int(time.time()*1000)}"
+                await relay_manager.relay_command(user_id, {
+                    "id": cmd_id,
+                    "sender_device": trusted_devices[0]["device_id"],
+                    "target_device": d["device_id"],
+                    "type": "get_battery",
+                    "payload": {},
+                    "created_at": time.time(),
+                    "expiry": 30
+                })
+            lines = ["🔋 **Device Battery Status:**\n"]
+            found = False
+            for d in trusted_devices:
+                tel = relay_manager.get_device_telemetry(user_id, d.get("device_id"))
+                if tel and tel.get("battery") is not None:
+                    icon = "📱" if d.get("platform") == "android" else "💻"
+                    chg = " (⚡ Charging)" if tel.get("is_charging") else ""
+                    lines.append(f"- {icon} **{d.get('name')}**: **{tel['battery']}%**{chg}")
+                    found = True
+            db.save_message(user_id, "user", user_msg)
+            if found:
+                reply = "\n".join(lines)
+            else:
+                reply = "🔋 Sent a battery query signal to your companion devices! Open or wake the device to refresh telemetry 🌸"
+            db.save_message(user_id, "assistant", reply)
+            return JSONResponse({"reply": reply, "proposal": None})
+
+        if is_lock_intent:
+            all_user_devices = db.get_user_devices(user_id)
+            trusted_devices = [d for d in all_user_devices if d.get("status") == "trusted"]
+            target_dev = None
+            for d in trusted_devices:
+                if d.get("platform", "").lower() in ("windows", "desktop", "laptop"):
+                    target_dev = d
+                    break
+            db.save_message(user_id, "user", user_msg)
+            if target_dev:
+                cmd_id = f"cmd_lock_{int(time.time()*1000)}"
+                await relay_manager.relay_command(user_id, {
+                    "id": cmd_id,
+                    "sender_device": trusted_devices[0]["device_id"],
+                    "target_device": target_dev["device_id"],
+                    "type": "system_control",
+                    "payload": {"action": "lock_screen"},
+                    "created_at": time.time(),
+                    "expiry": 60
+                })
+                reply = f"🔒 Done! I've locked your {target_dev['name']} screen."
+            else:
+                reply = "I couldn't find a trusted Windows laptop/PC connected to lock! Please make sure your laptop is logged in to your account 🌸"
+            db.save_message(user_id, "assistant", reply)
+            return JSONResponse({"reply": reply, "proposal": None})
+
+        if is_open_app_intent:
+            all_user_devices = db.get_user_devices(user_id)
+            trusted_devices = [d for d in all_user_devices if d.get("status") == "trusted"]
+            app_match = re.search(r"\b(whatsapp|google\s+chrome|chrome|spotify|youtube|gmail|camera|notepad|calculator|calc|vscode|code|explorer|terminal|cmd|settings|maps)\b", lower_m)
+            raw_app = app_match.group(1).lower() if app_match else "whatsapp"
+            app_map = {
+                "google chrome": "chrome",
+                "calc": "calculator",
+                "vscode": "code"
+            }
+            app_clean = app_map.get(raw_app, raw_app)
+            target_dev = None
+            wants_phone = bool(re.search(r"\b(phone|mobile|android|cell)\b", lower_m))
+            wants_laptop = bool(re.search(r"\b(laptop|pc|desktop|windows|computer)\b", lower_m))
+            if wants_laptop:
+                for d in trusted_devices:
+                    if d.get("platform", "").lower() in ("windows", "desktop", "laptop"):
+                        target_dev = d
+                        break
+            elif wants_phone:
+                for d in trusted_devices:
+                    if d.get("platform", "").lower() in ("android", "mobile"):
+                        target_dev = d
+                        break
+            else:
+                if app_clean in ("camera",):
+                    for d in trusted_devices:
+                        if d.get("platform", "").lower() in ("android", "mobile"):
+                            target_dev = d
+                            break
+                elif app_clean in ("notepad", "calculator", "code", "explorer", "terminal", "cmd"):
+                    for d in trusted_devices:
+                        if d.get("platform", "").lower() in ("windows", "desktop", "laptop"):
+                            target_dev = d
+                            break
+                if not target_dev and trusted_devices:
+                    target_dev = trusted_devices[-1] if len(trusted_devices) > 1 else trusted_devices[0]
+
+            db.save_message(user_id, "user", user_msg)
+            if target_dev:
+                cmd_id = f"cmd_app_{int(time.time()*1000)}"
+                await relay_manager.relay_command(user_id, {
+                    "id": cmd_id,
+                    "sender_device": trusted_devices[0]["device_id"],
+                    "target_device": target_dev["device_id"],
+                    "type": "open_app",
+                    "payload": {"app": app_clean},
+                    "created_at": time.time(),
+                    "expiry": 60
+                })
+                reply = f"🌸 Done! Opened {app_clean.capitalize()} on your {target_dev['name']}."
+            else:
+                reply = f"I'd love to open {app_clean.capitalize()}, but you don't have a paired companion device online to open it on! 🌸"
+            db.save_message(user_id, "assistant", reply)
+            return JSONResponse({"reply": reply, "proposal": None})
+
         if is_ring_intent or is_send_note_intent:
             all_user_devices = db.get_user_devices(user_id)
             trusted_devices = [d for d in all_user_devices if d.get("status") == "trusted"]
             pending_devices = [d for d in all_user_devices if d.get("status") == "pending"]
 
             if trusted_devices:
-                # Prioritize mobile/android device if ringing phone
+                wants_laptop = bool(re.search(r"\b(laptop|pc|desktop|windows|computer)\b", lower_m))
                 target_dev = None
-                if is_ring_intent:
+                if wants_laptop:
+                    for d in trusted_devices:
+                        if d.get("platform", "").lower() in ("windows", "desktop", "laptop"):
+                            target_dev = d
+                            break
+                else:
                     for d in trusted_devices:
                         if d.get("platform", "").lower() in ("android", "mobile", "ios"):
                             target_dev = d
@@ -778,23 +940,15 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
                     "created_at": time.time(),
                     "expiry": 60
                 }
-                db.set_pending_action(
-                    user_id,
-                    "remote_command",
-                    target_text=f"{action_type} -> {target_dev['name']}",
-                    details=json.dumps(cmd_data)
-                )
+                relay_res = await relay_manager.relay_command(user_id, cmd_data)
                 db.save_message(user_id, "user", user_msg)
-                action_desc = f"ring your '{target_dev['name']}'" if is_ring_intent else f"send a note to your '{target_dev['name']}'"
-                reply = f"Would you like me to {action_desc}? Reply 'yes' or 'confirm' to execute 🌸"
+                action_desc = f"Ringing your '{target_dev['name']}' now! 🔔" if is_ring_intent else f"Sent note to your '{target_dev['name']}'! 💌"
+                reply = f"🌸 {action_desc}"
                 db.save_message(user_id, "assistant", reply)
                 return JSONResponse({
                     "reply": reply,
-                    "proposal": {
-                        "type": "remote_action",
-                        "summary": action_desc,
-                        "device_name": target_dev["name"]
-                    }
+                    "proposal": None,
+                    "remote_command_result": relay_res
                 })
             elif pending_devices:
                 p_dev = pending_devices[0]
@@ -1310,9 +1464,9 @@ async def app_version_check_endpoint():
             pass
 
     min_android = os.getenv("MIN_APP_VERSION_ANDROID", "1.0.0")
-    latest_android = os.getenv("LATEST_APP_VERSION_ANDROID", "1.0.8")
+    latest_android = os.getenv("LATEST_APP_VERSION_ANDROID", "1.1.0")
     min_desktop = os.getenv("MIN_APP_VERSION_DESKTOP", "1.0.0")
-    latest_desktop = os.getenv("LATEST_APP_VERSION_DESKTOP", "1.0.8")
+    latest_desktop = os.getenv("LATEST_APP_VERSION_DESKTOP", "1.1.0")
 
     # Safety clamp: min_version must never exceed latest_version
     if is_semver_higher(min_android, latest_android):
@@ -1323,8 +1477,10 @@ async def app_version_check_endpoint():
         print(f"⚠️ [WARNING] Config error prevented: MIN_APP_VERSION_DESKTOP ({min_desktop}) was higher than LATEST_APP_VERSION_DESKTOP ({latest_desktop}). Clamping to latest to prevent accidental user lockout.")
         min_desktop = latest_desktop
 
-    download_android = os.getenv("DOWNLOAD_URL_ANDROID", "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA.apk")
-    download_desktop = os.getenv("DOWNLOAD_URL_DESKTOP", "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA-Setup.exe")
+    default_dl_android = f"https://github.com/kbtteja456-KBT/sinbha-releases/releases/download/android-v{latest_android}/SINBHA.apk"
+    default_dl_desktop = f"https://github.com/kbtteja456-KBT/sinbha-releases/releases/download/windows-v{latest_desktop}/SINBHA-Setup.exe"
+    download_android = os.getenv("DOWNLOAD_URL_ANDROID", default_dl_android)
+    download_desktop = os.getenv("DOWNLOAD_URL_DESKTOP", default_dl_desktop)
 
     return {
         "min_version_android": min_android,
@@ -1336,6 +1492,32 @@ async def app_version_check_endpoint():
         "releases_repo": "https://github.com/kbtteja456-KBT/sinbha-releases",
         "message": "A newer version of SINBHA is available. Please update to continue enjoying your companion."
     }
+
+@app.post("/api/devices/notifications/sync")
+async def sync_device_notifications(request: Request):
+    """Syncs recent notification buffer from phone."""
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    user = db.get_user_by_session(token) if token else None
+    if not user:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    try:
+        body = await request.json()
+        notifs = body.get("notifications", [])
+        relay_manager.store_user_notifications(user["id"], notifs)
+        return {"success": True, "count": len(notifs)}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+@app.get("/api/devices/notifications")
+async def get_device_notifications(request: Request):
+    """Retrieves recent notifications collected across paired devices."""
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    user = db.get_user_by_session(token) if token else None
+    if not user:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    notifs = relay_manager.get_user_notifications(user["id"])
+    return {"notifications": notifs}
+
 
 @app.get("/api/settings")
 async def get_settings_endpoint(user: dict = Depends(get_current_user)):
@@ -1745,6 +1927,16 @@ async def device_websocket_endpoint(websocket: WebSocket):
                     "DEVICE_COMMAND_ACK",
                     json.dumps({"command_id": cid, "status": st, "result": "acknowledged"})
                 )
+            elif msg_type == "device_status":
+                relay_manager.store_device_telemetry(user_id, device_id, {
+                    "battery": msg.get("battery"),
+                    "is_charging": msg.get("is_charging", False),
+                    "platform": msg.get("platform", "unknown"),
+                    "updated_at": time.time()
+                })
+            elif msg_type == "sync_notifications":
+                notifs = msg.get("notifications") or []
+                relay_manager.store_user_notifications(user_id, notifs)
 
     except WebSocketDisconnect:
         pass

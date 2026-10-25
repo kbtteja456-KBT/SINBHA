@@ -8,6 +8,7 @@
 const { app, BrowserWindow, Tray, Menu, ipcMain, screen, session, shell, dialog, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { exec } = require('child_process');
 const config = require('./config');
 
 let mainWindow = null;
@@ -102,6 +103,10 @@ function createMainWindow() {
       mainWindow.hide();
     }
   });
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
 }
 
 function createOverlayWindow() {
@@ -141,12 +146,16 @@ function createOverlayWindow() {
 }
 
 function showMainWindow() {
-  if (!mainWindow) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
     createMainWindow();
   } else {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
+    try {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    } catch (e) {
+      createMainWindow();
+    }
   }
 }
 
@@ -637,6 +646,80 @@ function setupIpcHandlers() {
     if (activeDesktopRingNotification) {
       try { activeDesktopRingNotification.close(); } catch (e) {}
       activeDesktopRingNotification = null;
+    }
+  });
+
+  // Step 16c: Full Cross-Device App Launcher & Control
+  ipcMain.handle('launch-desktop-app', async (_event, appNameOrTarget) => {
+    try {
+      const target = String(appNameOrTarget || '').toLowerCase().trim();
+      const appMap = {
+        'whatsapp': 'whatsapp:',
+        'chrome': 'chrome',
+        'google chrome': 'chrome',
+        'spotify': 'spotify:',
+        'notepad': 'notepad',
+        'calculator': 'calc',
+        'calc': 'calc',
+        'explorer': 'explorer',
+        'files': 'explorer',
+        'file manager': 'explorer',
+        'code': 'code',
+        'vscode': 'code',
+        'terminal': 'wt',
+        'cmd': 'cmd'
+      };
+
+      const resolved = appMap[target];
+      if (resolved) {
+        if (resolved.endsWith(':')) {
+          await shell.openExternal(resolved);
+          return { success: true, app: target, method: 'protocol' };
+        } else {
+          exec(`start "" "${resolved}"`, (err) => {
+            if (err) exec(`start ${resolved}`);
+          });
+          return { success: true, app: target, method: 'exec' };
+        }
+      } else if (target.startsWith('http://') || target.startsWith('https://')) {
+        await shell.openExternal(target);
+        return { success: true, app: target, method: 'url' };
+      } else {
+        const cleanName = target.replace(/[^a-zA-Z0-9_\-]/g, '');
+        if (cleanName) {
+          exec(`start "" "${cleanName}"`);
+          return { success: true, app: cleanName, method: 'fallback_start' };
+        }
+      }
+      return { success: false, error: 'App not recognized' };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('lock-workstation', async () => {
+    try {
+      exec('rundll32.exe user32.dll,LockWorkStation');
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('get-desktop-battery', async () => {
+    try {
+      return new Promise((resolve) => {
+        exec('powershell -NoProfile -Command "(Get-WmiObject -Class Win32_Battery).EstimatedChargeRemaining"', (err, stdout) => {
+          if (err || !stdout.trim()) {
+            resolve({ hasBattery: false, percentage: 100, isPlugged: true });
+          } else {
+            const pct = parseInt(stdout.trim(), 10);
+            resolve({ hasBattery: true, percentage: isNaN(pct) ? 100 : pct });
+          }
+        });
+      });
+    } catch (e) {
+      return { hasBattery: false, percentage: 100 };
     }
   });
 }

@@ -30,5 +30,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showNotification: (title, body) => ipcRenderer.send('show-device-notification', { title, body }),
   showConfirmDialog: (options) => ipcRenderer.invoke('show-confirm-dialog', options),
   startAlarmRing: (sender) => ipcRenderer.send('start-alarm-ring', sender),
-  stopAlarmRing: () => ipcRenderer.send('stop-alarm-ring')
+  stopAlarmRing: () => ipcRenderer.send('stop-alarm-ring'),
+
+  // Step 16c: Full Cross-Device App Launcher & Control
+  launchDesktopApp: (appName) => ipcRenderer.invoke('launch-desktop-app', appName),
+  lockWorkstation: () => ipcRenderer.invoke('lock-workstation'),
+  getDesktopBattery: () => ipcRenderer.invoke('get-desktop-battery')
 });

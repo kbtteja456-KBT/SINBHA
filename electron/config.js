@@ -19,7 +19,14 @@ module.exports = {
 
   // Version features for "What's New" popup
   WHATS_NEW: {
-        '1.0.1': [
+    '1.1.0': [
+      '⚡ Omnipresent Cross-Device Agent (Control phone from laptop & laptop from phone)',
+      '📱 Remote native app launching (WhatsApp, YouTube, Spotify, Gmail, Chrome, etc.)',
+      '🔒 Remote workstation locking and battery telemetry status',
+      '📬 Cross-device notification and message reading companion',
+      '🌐 Autonomous intelligent web search with zero-failure fallback'
+    ],
+    '1.0.1': [
       '✨ Fixed natural language reminder parsing & regional date formats',
       '🕊️ Instant desktop bird flight notification on due tasks',
       '☁️ High-speed direct connection to Render cloud backend',

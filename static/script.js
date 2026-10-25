@@ -2956,6 +2956,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
         deviceWs.onopen = () => {
           console.log("🌸 Secure device channel connected");
+          reportDeviceBattery();
+          syncNotificationsFromPhone();
         };
 
         deviceWs.onmessage = (event) => {
@@ -2981,6 +2983,64 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
 
+    // Reports battery telemetry to backend
+    async function reportDeviceBattery() {
+      try {
+        let batteryPct = 100;
+        let isCharging = false;
+        let platform = isAndroidPlatform() ? "android" : (window.electronAPI ? "windows" : "web");
+
+        if (window.electronAPI && window.electronAPI.getDesktopBattery) {
+          const res = await window.electronAPI.getDesktopBattery();
+          if (res && res.percentage !== undefined) {
+            batteryPct = res.percentage;
+            isCharging = res.isPlugged || false;
+          }
+        } else if (window.Capacitor && window.Capacitor.isPluginAvailable && window.Capacitor.isPluginAvailable("SinbhaNative")) {
+          const res = await window.Capacitor.Plugins.SinbhaNative.getBatteryStatus();
+          if (res && res.percentage !== undefined) {
+            batteryPct = res.percentage;
+            isCharging = res.isCharging || false;
+          }
+        } else if (navigator.getBattery) {
+          const b = await navigator.getBattery();
+          batteryPct = Math.round(b.level * 100);
+          isCharging = b.charging;
+        }
+
+        if (deviceWs && deviceWs.readyState === WebSocket.OPEN) {
+          deviceWs.send(JSON.stringify({
+            type: "device_status",
+            battery: batteryPct,
+            is_charging: isCharging,
+            platform: platform
+          }));
+        }
+      } catch (e) {}
+    }
+
+    // Syncs notifications buffer from Android phone
+    async function syncNotificationsFromPhone() {
+      if (window.Capacitor && window.Capacitor.isPluginAvailable && window.Capacitor.isPluginAvailable("SinbhaNative")) {
+        try {
+          const res = await window.Capacitor.Plugins.SinbhaNative.getRecentNotifications();
+          if (res && res.notifications && Array.isArray(res.notifications)) {
+            await fetch("/api/devices/notifications/sync", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ notifications: res.notifications })
+            });
+            if (deviceWs && deviceWs.readyState === WebSocket.OPEN) {
+              deviceWs.send(JSON.stringify({
+                type: "sync_notifications",
+                notifications: res.notifications
+              }));
+            }
+          }
+        } catch (e) {}
+      }
+    }
+
     // Fallback/offline pending command draining
     async function pollPendingCommands(deviceId) {
       try {
@@ -2995,16 +3055,15 @@ document.addEventListener("DOMContentLoaded", () => {
       } catch (e) {}
     }
 
-    // Dispatcher for incoming remote commands and pairing events (Step 16 / 16b)
+    // Dispatcher for incoming remote commands and pairing events (Step 16 / 16b / 16c)
     function handleIncomingDeviceMessage(msg) {
       if (msg.type === "remote_command") {
-        if (msg.requires_confirmation || msg.command_type === "open_link") {
+        if (msg.requires_confirmation) {
           showRemoteConfirmModal(msg);
         } else {
           executeRemoteCommand(msg);
         }
       } else if (msg.type === "pairing_requested") {
-        // Step 16b Rule 3: Notify all trusted devices when a pairing is requested
         const d = msg.device || {};
         const reqTime = d.created_at ? new Date(d.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Just now";
         showToast(`🔔 New device pairing requested: ${d.name || "Device"} (${d.platform || "unknown"}) at ${reqTime}`);
@@ -3062,19 +3121,64 @@ document.addEventListener("DOMContentLoaded", () => {
       modal.style.display = "flex";
     }
 
-    // Execute remote command on this target device (Step 16b Rule 6)
+    // Execute remote command on this target device (Step 16b / 16c)
     async function executeRemoteCommand(cmd) {
       const type = cmd.command_type;
       const payload = cmd.payload || {};
       const sender = cmd.sender_name || "Paired Device";
 
       try {
-        if (type === "send_note") {
+        if (type === "open_app") {
+          const appName = payload.app || "";
+          showToast(`🚀 Opening ${appName}...`);
+
+          // 1. If running inside Electron desktop app (Windows)
+          if (window.electronAPI && window.electronAPI.launchDesktopApp) {
+            const res = await window.electronAPI.launchDesktopApp(appName);
+            if (res && res.success) {
+              showToast(`✨ Launched ${appName} on laptop!`);
+            } else {
+              showToast(`Could not launch ${appName}: ${res ? res.error : "Unknown error"}`);
+            }
+          }
+          // 2. If running inside Capacitor Android app
+          else if (window.Capacitor && window.Capacitor.isPluginAvailable && window.Capacitor.isPluginAvailable("SinbhaNative")) {
+            try {
+              await window.Capacitor.Plugins.SinbhaNative.openApp({ app: appName });
+              showToast(`✨ Opened ${appName} on phone!`);
+            } catch (e) {
+              showToast(`Could not open ${appName}: ${e.message || e}`);
+            }
+          }
+          // 3. Web browser fallback: protocol or web link
+          else {
+            const webMap = {
+              whatsapp: "https://web.whatsapp.com",
+              spotify: "https://open.spotify.com",
+              youtube: "https://youtube.com",
+              gmail: "https://mail.google.com"
+            };
+            if (webMap[appName.toLowerCase()]) {
+              window.open(webMap[appName.toLowerCase()], "_blank");
+            }
+          }
+        } else if (type === "system_control") {
+          const action = payload.action || "";
+          if (action === "lock_screen" || action === "lock_workstation") {
+            if (window.electronAPI && window.electronAPI.lockWorkstation) {
+              await window.electronAPI.lockWorkstation();
+              showToast("🔒 Workstation locked!");
+            }
+          }
+        } else if (type === "get_battery") {
+          await reportDeviceBattery();
+        } else if (type === "query_notifications") {
+          await syncNotificationsFromPhone();
+        } else if (type === "send_note") {
           const noteText = payload.text || "(empty note)";
           showToast(`💌 Note from ${sender}: ${noteText.slice(0, 60)}`);
           appendMessage("assistant", `💌 **Remote Note from ${sender}:**\n${noteText}`);
 
-          // Native Android Notification
           if (window.Capacitor && window.Capacitor.isPluginAvailable && window.Capacitor.isPluginAvailable("SinbhaNative")) {
             try {
               window.Capacitor.Plugins.SinbhaNative.showNoteNotification({
@@ -3092,7 +3196,6 @@ document.addEventListener("DOMContentLoaded", () => {
         } else if (type === "open_link") {
           const url = payload.url || "";
           if (url && (url.startsWith("http://") || url.startsWith("https://"))) {
-            // Native Windows Electron confirmation dialog if available
             if (window.electronAPI && window.electronAPI.showConfirmDialog) {
               const allowed = await window.electronAPI.showConfirmDialog({
                 title: "Open Link from Paired Device?",
