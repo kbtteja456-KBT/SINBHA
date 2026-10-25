@@ -1857,6 +1857,9 @@ async def get_pending_commands_endpoint(device_id: str, user: dict = Depends(get
     if not dev or dev["status"] != "trusted":
         raise HTTPException(status_code=403, detail="Device is not trusted or does not belong to you.")
 
+    relay_manager.mark_device_active(user["id"], clean_id)
+    db.update_device_last_seen(clean_id)
+
     commands = relay_manager.get_pending_offline_commands(user["id"], clean_id)
     return {"commands": commands}
 

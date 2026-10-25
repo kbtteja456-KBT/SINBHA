@@ -3174,26 +3174,63 @@ document.addEventListener("DOMContentLoaded", () => {
           const appName = payload.app || "";
           showToast(`🚀 Opening ${appName}...`);
 
+          const lowerApp = appName.toLowerCase();
+          let opened = false;
+
           // 1. If running inside Electron desktop app (Windows)
           if (window.electronAPI && window.electronAPI.launchDesktopApp) {
-            const res = await window.electronAPI.launchDesktopApp(appName);
-            if (res && res.success) {
-              showToast(`✨ Launched ${appName} on laptop!`);
-            } else {
-              showToast(`Could not launch ${appName}: ${res ? res.error : "Unknown error"}`);
-            }
+            try {
+              const res = await window.electronAPI.launchDesktopApp(appName);
+              if (res && res.success) {
+                showToast(`✨ Launched ${appName} on laptop!`);
+                opened = true;
+              } else {
+                showToast(`Could not launch ${appName}: ${res ? res.error : "Unknown error"}`);
+              }
+            } catch (e) {}
           }
-          // 2. If running inside Capacitor Android app
-          else if (window.Capacitor && window.Capacitor.isPluginAvailable && window.Capacitor.isPluginAvailable("SinbhaNative")) {
+
+          // 2. If running inside Capacitor Android app via native SinbhaPlugin
+          if (!opened && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative) {
             try {
               await window.Capacitor.Plugins.SinbhaNative.openApp({ app: appName });
               showToast(`✨ Opened ${appName} on phone!`);
+              opened = true;
             } catch (e) {
-              showToast(`Could not open ${appName}: ${e.message || e}`);
+              console.warn("SinbhaNative.openApp plugin call failed, trying intent URI:", e);
             }
           }
-          // 3. Web browser fallback: protocol or web link
-          else {
+
+          // 3. Direct Android Package Intent Launcher (works on all Android WebViews and browsers)
+          if (!opened && /Android/i.test(navigator.userAgent || "")) {
+            const androidIntentMap = {
+              whatsapp: "intent:#Intent;package=com.whatsapp;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
+              youtube: "intent:#Intent;package=com.google.android.youtube;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
+              spotify: "spotify://",
+              gmail: "intent:#Intent;package=com.google.android.gm;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
+              chrome: "intent:#Intent;package=com.android.chrome;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
+              maps: "geo:0,0",
+              camera: "intent:#Intent;action=android.media.action.IMAGE_CAPTURE;end;"
+            };
+            if (androidIntentMap[lowerApp]) {
+              try {
+                const link = document.createElement("a");
+                link.href = androidIntentMap[lowerApp];
+                link.rel = "noreferrer";
+                document.body.appendChild(link);
+                link.click();
+                setTimeout(() => { if (link.parentNode) link.parentNode.removeChild(link); }, 300);
+                showToast(`✨ Opening ${appName} on phone!`);
+                opened = true;
+              } catch (ie) {
+                window.location.href = androidIntentMap[lowerApp];
+                opened = true;
+              }
+            }
+          }
+
+          // 4. Web browser fallback: protocol or web link
+          if (!opened) {
             const webMap = {
               whatsapp: "https://web.whatsapp.com",
               spotify: "https://open.spotify.com",
@@ -3202,7 +3239,6 @@ document.addEventListener("DOMContentLoaded", () => {
               maps: "https://maps.google.com",
               chrome: "https://google.com"
             };
-            const lowerApp = appName.toLowerCase();
             if (webMap[lowerApp]) {
               window.open(webMap[lowerApp], "_blank");
             } else if (lowerApp === "notepad" || lowerApp === "calculator" || lowerApp === "calc" || lowerApp === "terminal" || lowerApp === "cmd") {

@@ -38,6 +38,9 @@ class CommandRelayManager:
         # Device telemetry: (user_id, device_id) -> dict (battery, is_charging, last_seen)
         self.device_telemetry: Dict[Tuple[int, str], dict] = {}
 
+        # Recent device active timestamps: (user_id, device_id) -> float
+        self.device_last_active: Dict[Tuple[int, str], float] = {}
+
     def store_user_notifications(self, user_id: int, notifications: List[dict]):
         """Stores recent notification buffer from phone in volatile memory."""
         if not notifications:
@@ -100,9 +103,33 @@ class CommandRelayManager:
         if current and (websocket is None or current == websocket):
             self.active_websockets.pop(key, None)
 
+    def mark_device_active(self, user_id: int, device_id: str):
+        """Marks device as actively communicating."""
+        self.device_last_active[(user_id, device_id)] = time.time()
+
     def is_device_connected(self, user_id: int, device_id: str) -> bool:
-        """Checks if device has an active WebSocket."""
-        return (user_id, device_id) in self.active_websockets
+        """Checks if device has an active WebSocket or was actively communicating in the last 45s."""
+        if (user_id, device_id) in self.active_websockets:
+            return True
+        last_act = self.device_last_active.get((user_id, device_id), 0)
+        if (time.time() - last_act) < 45.0:
+            return True
+        dev = db.get_device_by_id(user_id, device_id)
+        if dev and dev.get("last_seen_at"):
+            try:
+                from datetime import datetime, timezone
+                dt_str = str(dev["last_seen_at"])
+                if dt_str.endswith("Z"):
+                    dt_str = dt_str[:-1] + "+00:00"
+                last_seen = datetime.fromisoformat(dt_str)
+                if last_seen.tzinfo is None:
+                    last_seen = last_seen.replace(tzinfo=timezone.utc)
+                now = datetime.now(timezone.utc)
+                if (now - last_seen).total_seconds() < 45.0:
+                    return True
+            except Exception:
+                pass
+        return False
 
     async def notify_pairing_requested(self, user_id: int, device_info: dict):
         """
