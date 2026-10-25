@@ -195,6 +195,10 @@ function updateTrayMenu() {
     },
     { type: 'separator' },
     {
+      label: '🔄 Check for Updates...',
+      click: () => checkMinimumSupportedVersion(true)
+    },
+    {
       label: '✨ What\'s New',
       click: () => showWhatsNewWindow(app.getVersion())
     },
@@ -400,10 +404,20 @@ function isOlderVersion(current, minimum) {
   return false;
 }
 
-async function checkMinimumSupportedVersion() {
+async function checkMinimumSupportedVersion(isManual = false) {
   try {
-    const res = await fetch(`${config.BACKEND_URL}/api/app/version-check`, { cache: 'no-store' });
-    if (!res.ok) return;
+    const res = await fetch(`${config.BACKEND_URL}/api/app/version-check?t=${Date.now()}`, { cache: 'no-store' });
+    if (!res.ok) {
+      if (isManual) {
+        dialog.showMessageBox({
+          type: 'warning',
+          title: 'Update Check Failed',
+          message: 'Could not connect to update server.',
+          detail: 'Please check your internet connection and try again.'
+        });
+      }
+      return;
+    }
     const data = await res.json();
 
     // Requirement 4: Safety guard against accidental lockout
@@ -439,9 +453,24 @@ async function checkMinimumSupportedVersion() {
       if (isMandatory) {
         app.exit(0);
       }
+    } else if (isManual) {
+      dialog.showMessageBox({
+        type: 'info',
+        title: 'SINBHA is Up to Date 🌸',
+        message: `You're on the latest version of SINBHA (v${currentVersion})! ✨`,
+        detail: 'Everything is up to date with your companion.',
+        buttons: ['OK']
+      });
     }
   } catch (e) {
-    // Graceful network timeout fallback
+    if (isManual) {
+      dialog.showMessageBox({
+        type: 'warning',
+        title: 'Update Check Failed',
+        message: 'Could not connect to update server.',
+        detail: 'Please check your internet connection and try again.'
+      });
+    }
   }
 }
 

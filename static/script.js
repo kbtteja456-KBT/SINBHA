@@ -2389,13 +2389,26 @@ document.addEventListener("DOMContentLoaded", () => {
       return false;
     }
 
-    async function checkAppVersionGate() {
+    async function checkAppVersionGate(isManual = false) {
+      const checkBtn = document.getElementById("manualCheckUpdateBtn");
+      const statusText = document.getElementById("updateStatusText");
+      const installedText = document.getElementById("installedVersionText");
+      const versionBadge = document.getElementById("currentAppVersionBadge");
+
+      if (isManual && checkBtn) {
+        checkBtn.disabled = true;
+        checkBtn.textContent = "Checking...";
+      }
+
       try {
-        const res = await fetch("/api/app/version-check");
-        if (!res.ok) return;
+        const res = await fetch("/api/app/version-check?t=" + Date.now(), { cache: "no-store" });
+        if (!res.ok) {
+          if (isManual) showToast("Could not reach update server. Please check your internet connection.");
+          return;
+        }
         const data = await res.json();
 
-        // Requirement 4: Safety guard against accidental lockout
+        // Safety guard against accidental lockout
         if (data.min_version_android && data.latest_version_android) {
           if (isOlderVersion(data.latest_version_android, data.min_version_android)) {
             console.warn("⚠️ [SAFETY LOCKOUT PREVENTED] min_version_android cannot exceed latest_version_android. Ignoring check.");
@@ -2404,75 +2417,105 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         let isNative = false;
-        let current = "1.0.0";
+        let current = "1.0.7";
         let minRequired = "1.0.0";
-        let latestAvail = "1.0.0";
+        let latestAvail = "1.0.7";
         let downloadUrl = "";
-        let platformName = "App";
+        let platformName = "Web";
 
         if (window.electronAPI && typeof window.electronAPI.getAppStatus === "function") {
           isNative = true;
           platformName = "Windows";
           minRequired = data.min_version_desktop || "1.0.0";
-          latestAvail = data.latest_version_desktop || "1.0.6";
+          latestAvail = data.latest_version_desktop || "1.0.7";
           downloadUrl = data.download_url_desktop || "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA-Setup.exe";
           try {
             const st = await window.electronAPI.getAppStatus();
-            current = (st && st.version) ? st.version : "1.0.0";
+            current = (st && st.version) ? st.version : "1.0.7";
           } catch (e) {
-            current = "1.0.0";
+            current = "1.0.7";
           }
         } else if (window.Capacitor && (window.Capacitor.isNativePlatform() || (typeof window.Capacitor.isPluginAvailable === "function" && window.Capacitor.isPluginAvailable("SinbhaNative")))) {
           isNative = true;
           platformName = "Android";
           minRequired = data.min_version_android || "1.0.0";
-          latestAvail = data.latest_version_android || "1.0.6";
+          latestAvail = data.latest_version_android || "1.0.7";
           downloadUrl = data.download_url_android || "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA.apk";
           try {
             if (window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative && typeof window.Capacitor.Plugins.SinbhaNative.getAppVersion === "function") {
               const vInfo = await window.Capacitor.Plugins.SinbhaNative.getAppVersion();
-              current = (vInfo && vInfo.versionName) ? vInfo.versionName : "1.0.0";
+              current = (vInfo && vInfo.versionName) ? vInfo.versionName : "1.0.7";
             }
           } catch (e) {
-            current = "1.0.0";
+            current = "1.0.7";
           }
+        } else {
+          // Web Client
+          current = "1.0.7";
+          minRequired = data.min_version_desktop || "1.0.0";
+          latestAvail = data.latest_version_desktop || "1.0.7";
+          downloadUrl = data.download_url_desktop || "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA-Setup.exe";
         }
 
-        if (isNative) {
-          const isMandatory = isOlderVersion(current, minRequired);
-          const isUpdateAvailable = isOlderVersion(current, latestAvail);
+        // Update settings card badges
+        if (versionBadge) versionBadge.textContent = `v${current}`;
+        if (installedText) installedText.textContent = `SINBHA ${platformName} (v${current})`;
 
-          if (isMandatory || isUpdateAvailable) {
-            const gateModal = document.getElementById("appUpdateGateModal");
-            const gateTitle = document.getElementById("appUpdateGateTitle");
-            const gateDesc = document.getElementById("appUpdateGateDesc");
-            const gateLink = document.getElementById("appUpdateDownloadLink");
-            const laterBtn = document.getElementById("appUpdateLaterBtn");
+        const isMandatory = isOlderVersion(current, minRequired);
+        const isUpdateAvailable = isOlderVersion(current, latestAvail);
 
-            if (gateModal) {
-              gateModal.style.display = "flex";
-              if (gateTitle) {
-                gateTitle.textContent = isMandatory ? `Update Required for ${platformName}` : `New ${platformName} Version Available! 🌸`;
-              }
-              if (gateDesc) {
-                gateDesc.innerHTML = isMandatory
-                  ? `SINBHA v${minRequired} is required to continue.<br>Your installed app (v${current}) is outdated. Please update now.`
-                  : `A newer version of SINBHA (v${latestAvail}) is available.<br>You have v${current}. Tap "Update Now" to get the latest features and companion enhancements!`;
-              }
-              if (gateLink) {
-                gateLink.href = downloadUrl;
-              }
-              if (laterBtn) {
-                laterBtn.style.display = isMandatory ? "none" : "block";
-                laterBtn.onclick = () => {
-                  gateModal.style.display = "none";
-                };
-              }
+        if (isMandatory || isUpdateAvailable) {
+          if (statusText) {
+            statusText.textContent = `⚡ Update available: v${latestAvail}`;
+            statusText.style.color = "#d97706";
+          }
+
+          const gateModal = document.getElementById("appUpdateGateModal");
+          const gateTitle = document.getElementById("appUpdateGateTitle");
+          const gateDesc = document.getElementById("appUpdateGateDesc");
+          const gateLink = document.getElementById("appUpdateDownloadLink");
+          const laterBtn = document.getElementById("appUpdateLaterBtn");
+
+          if (gateModal) {
+            gateModal.style.display = "flex";
+            if (gateTitle) {
+              gateTitle.textContent = isMandatory ? `Update Required for ${platformName}` : `New ${platformName} Version Available! 🌸`;
             }
+            if (gateDesc) {
+              gateDesc.innerHTML = isMandatory
+                ? `SINBHA v${minRequired} is required to continue.<br>Your installed app (v${current}) is outdated. Please update now.`
+                : `A newer version of SINBHA (v${latestAvail}) is available.<br>You have v${current}. Tap "Update Now" to get the latest companion features!`;
+            }
+            if (gateLink) {
+              gateLink.href = downloadUrl;
+            }
+            if (laterBtn) {
+              laterBtn.style.display = isMandatory ? "none" : "block";
+              laterBtn.onclick = () => {
+                gateModal.style.display = "none";
+              };
+            }
+          }
+          if (isManual) {
+            showToast(`⚡ New version v${latestAvail} is available!`);
+          }
+        } else {
+          if (statusText) {
+            statusText.textContent = `● You're already up to date (v${current}) ✨`;
+            statusText.style.color = "#16a34a";
+          }
+          if (isManual) {
+            showToast(`🌸 You're up to date! SINBHA is running the latest version (v${current}).`);
           }
         }
       } catch (e) {
         console.warn("Version check failed:", e);
+        if (isManual) showToast("Could not complete version check. Please try again.");
+      } finally {
+        if (checkBtn) {
+          checkBtn.disabled = false;
+          checkBtn.innerHTML = "🔄 Check for Updates";
+        }
       }
     }
 
@@ -3723,9 +3766,17 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     }
 
+    // Manual App Update Check Button
+    const manualUpdateBtn = document.getElementById("manualCheckUpdateBtn");
+    if (manualUpdateBtn) {
+      manualUpdateBtn.addEventListener("click", () => {
+        checkAppVersionGate(true);
+      });
+    }
+
     // Startup: Verify Authentication status first
     checkAuthStatus();
-    checkAppVersionGate();
+    checkAppVersionGate(false);
 
     // Hook session sync and device init after auth
     const origShowAppScreen = showAppScreen;

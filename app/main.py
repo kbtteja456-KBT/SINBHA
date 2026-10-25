@@ -36,6 +36,12 @@ from app.search import (
     detect_search_intent,
     detect_search_intent_smart,
 )
+from app.web_intelligence import (
+    agent_instance,
+    ResearchSearchRequest,
+    ResearchSearchResponse,
+    SearchDecisionEngine,
+)
 from app.device_relay import relay_manager
 from app.security import (
     is_production,
@@ -716,8 +722,34 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
     is_external_content = bool(re.search(r"(http[s]?://|forwarded message|from:|<email>|content from web)", user_msg, re.IGNORECASE))
     if not is_external_content:
         lower_m = user_msg.lower()
+        is_list_devices = bool(re.search(r"\b(what|which|show|list)\s+(are\s+)?(my\s+)?(devices|connected devices|devices connected)\b", lower_m))
+        is_sync_intent = bool(re.search(r"\b(sync|synchronize)\s+(all\s+)?(my\s+)?(devices|phone and laptop|laptop and phone)\b", lower_m))
         is_ring_intent = bool(re.search(r"\b(ring|find|buzz|ping)\s+(my\s+)?(phone|device|mobile)\b", lower_m))
         is_send_note_intent = bool(re.search(r"\b(send|push)\s+(a\s+)?(note|link|message)\s+to\s+(my\s+)?(phone|device|laptop|other\s+device)\b", lower_m))
+
+        if is_list_devices:
+            devs = db.get_user_devices(user_id)
+            if not devs:
+                reply = "You don't have any devices connected yet! Log into your account on your phone or laptop and they will auto-connect 🌸"
+            else:
+                lines = ["Here are your connected companion devices in your network: 🌸"]
+                for d in devs:
+                    icon = "📱" if d.get("platform") == "android" else ("💻" if d.get("platform") == "windows" else "🌐")
+                    lines.append(f"- {icon} **{d.get('name')}** ({d.get('status').capitalize()})")
+                reply = "\n".join(lines)
+            db.save_message(user_id, "user", user_msg)
+            db.save_message(user_id, "assistant", reply)
+            return JSONResponse({"reply": reply, "proposal": None})
+
+        if is_sync_intent:
+            devs = db.get_user_devices(user_id)
+            for d in devs:
+                if d.get("status") == "trusted":
+                    await relay_manager.broadcast_event(user_id, "sync_tasks", {"reason": "chat_command"})
+            reply = "🌸 Sent an instant synchronization signal to all your connected devices!"
+            db.save_message(user_id, "user", user_msg)
+            db.save_message(user_id, "assistant", reply)
+            return JSONResponse({"reply": reply, "proposal": None})
 
         if is_ring_intent or is_send_note_intent:
             all_user_devices = db.get_user_devices(user_id)
@@ -871,12 +903,6 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
         user_timezone=user_tz
     )
     ai_reply = brain_result.get("reply", "I'm right here with you 🌸")
-
-    if web_search_meta and not web_search_meta.get("searched") and web_search_meta.get("error") == "missing_api_key":
-        ai_reply = (
-            "I tried to search the web for you, but my search key (`TAVILY_API_KEY`) isn't configured in the server environment yet! 🌸\n\n"
-            "If your backend is running on Render, please add `TAVILY_API_KEY` in your Render Dashboard under **Environment Variables**. Once added, I'll be able to look up live prices, news, and match updates for you right away!"
-        )
 
     # 8. Check if AI proposed a structured task
     task_proposal_obj = None
@@ -1284,9 +1310,9 @@ async def app_version_check_endpoint():
             pass
 
     min_android = os.getenv("MIN_APP_VERSION_ANDROID", "1.0.0")
-    latest_android = os.getenv("LATEST_APP_VERSION_ANDROID", pkg_version)
+    latest_android = os.getenv("LATEST_APP_VERSION_ANDROID", "1.0.8")
     min_desktop = os.getenv("MIN_APP_VERSION_DESKTOP", "1.0.0")
-    latest_desktop = os.getenv("LATEST_APP_VERSION_DESKTOP", pkg_version)
+    latest_desktop = os.getenv("LATEST_APP_VERSION_DESKTOP", "1.0.8")
 
     # Safety clamp: min_version must never exceed latest_version
     if is_semver_higher(min_android, latest_android):
@@ -1297,13 +1323,16 @@ async def app_version_check_endpoint():
         print(f"⚠️ [WARNING] Config error prevented: MIN_APP_VERSION_DESKTOP ({min_desktop}) was higher than LATEST_APP_VERSION_DESKTOP ({latest_desktop}). Clamping to latest to prevent accidental user lockout.")
         min_desktop = latest_desktop
 
+    download_android = os.getenv("DOWNLOAD_URL_ANDROID", "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA.apk")
+    download_desktop = os.getenv("DOWNLOAD_URL_DESKTOP", "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA-Setup.exe")
+
     return {
         "min_version_android": min_android,
         "latest_version_android": latest_android,
         "min_version_desktop": min_desktop,
         "latest_version_desktop": latest_desktop,
-        "download_url_android": "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA.apk",
-        "download_url_desktop": "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA-Setup.exe",
+        "download_url_android": download_android,
+        "download_url_desktop": download_desktop,
         "releases_repo": "https://github.com/kbtteja456-KBT/sinbha-releases",
         "message": "A newer version of SINBHA is available. Please update to continue enjoying your companion."
     }
@@ -1780,6 +1809,23 @@ async def health_check():
             "version": "1.0.0"
         }
     )
+
+# ----------------- Web Intelligence Agent Subsystem Endpoint -----------------
+
+@app.post("/api/v1/research/search", response_model=ResearchSearchResponse)
+async def research_search_endpoint(payload: ResearchSearchRequest, user: dict = Depends(get_current_user)):
+    """
+    Dedicated Master Web Intelligence Agent Endpoint.
+    Performs autonomous search decision, multi-provider search, safe reading,
+    claim verification, and citation validation.
+    """
+    res = await agent_instance.research_and_answer(
+        question=payload.question,
+        depth=payload.research_depth or "normal",
+        user_timezone=user.get("timezone") or "UTC"
+    )
+    db.log_audit(user["id"], "WEB_RESEARCH_COMPLETED", f"Query: {payload.question[:60]}... (Sources: {len(res.sources)})")
+    return res
 
 # Serve static UI files
 app.mount("/static", StaticFiles(directory="static"), name="static")

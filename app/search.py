@@ -323,83 +323,16 @@ async def detect_search_intent_smart(message: str, chat_history: list = None) ->
             if not re.search(r"\b(search|look\s*up|google|check\s+online)\b", lower):
                 return False, None, None
 
-    # 3. Call LLM Search Router (Perplexity / ChatGPT logic)
-    from app.ai_brain import get_llm_credentials
-    creds = get_llm_credentials()
-    if not creds:
-        # Fall back to synchronous rule-based detection
-        return detect_search_intent(message)
-
-    today_str = datetime.date.today().strftime("%B %d, %Y")
-    router_sys = f"""You are the search router of SINBHA AI. Today is {today_str}.
-Decide if the user's message needs external real-time web search or up-to-date facts.
-
-NEVER search for:
-- Chit-chat, greetings, emotional support ("hi", "how are you", "im sad")
-- Memory/companion questions ("what is my name", "what do you remember about me", "who are you")
-- Tasks/reminders ("remind me at 5pm to buy milk", "i have homework")
-
-ALWAYS search for:
-- Live sports, scores, match schedules, tournaments
-- Current news, world events, recent politics, announcements
-- Weather, temperature, forecasts
-- Prices, shopping, product releases, specs
-- Up-to-date facts about real-world entities, people, movies, companies, or events
-- Any request to look up, search, verify, or check something online
-
-Search query guidelines (Perplexity / ChatGPT standard):
-- Produce concise, high-yield keyword queries.
-- For sports schedules/matches ("when is the cricket match", "india match brooo"), use upcoming schedule keywords: "India cricket upcoming match schedule fixtures" (do NOT restrict with specific month/day unless user specifically gave one).
-- For scores/results ("who won yesterday"), include team names and match score.
-- For prices, include the item and "price".
-
-Return ONLY a JSON object:
-{{"needs_search": true, "query": "optimal keyword search query"}}
-OR
-{{"needs_search": false, "query": ""}}
-"""
+    # 3. Call Upgraded Search Decision Engine
     try:
-        headers = {
-            "Authorization": f"Bearer {creds['api_key']}",
-            "Content-Type": "application/json"
-        }
-        if creds.get("provider") == "openrouter":
-            headers["HTTP-Referer"] = "http://localhost:8080"
-            headers["X-Title"] = "SINBHA Search Router"
-
-        messages = [{"role": "system", "content": router_sys}]
-        
-        # Include contextual context if last message might be relevant
-        if chat_history and len(chat_history) > 0:
-            last_assistant = chat_history[-1].get("content", "")
-            if len(last_assistant) > 5 and len(clean_msg.split()) <= 6:
-                messages.append({"role": "assistant", "content": last_assistant[:250]})
-        messages.append({"role": "user", "content": clean_msg})
-
-        payload = {
-            "model": creds["model"],
-            "messages": messages,
-            "temperature": 0.0,
-            "max_tokens": 250
-        }
-        if creds.get("reasoning_effort"):
-            payload["reasoning_effort"] = creds["reasoning_effort"]
-
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.post(creds["endpoint"], headers=headers, json=payload)
-            if resp.status_code == 200:
-                data = resp.json()
-                raw_json = data["choices"][0]["message"].get("content", "").strip()
-                raw_json = re.sub(r"^```(?:json)?", "", raw_json, flags=re.MULTILINE)
-                raw_json = re.sub(r"```$", "", raw_json, flags=re.MULTILINE).strip()
-                parsed = json.loads(raw_json)
-                if parsed.get("needs_search"):
-                    q = parsed.get("query") or clean_msg
-                    return True, q.strip(), None
-                else:
-                    return False, None, None
+        from app.web_intelligence import SearchDecisionEngine, SearchDecisionType
+        dec = await SearchDecisionEngine.decide(message, chat_history)
+        if dec.decision in (SearchDecisionType.SEARCH_REQUIRED, SearchDecisionType.SEARCH_RECOMMENDED):
+            q_term = dec.query_plan[0] if dec.query_plan else clean_msg
+            return True, q_term, None
+        elif dec.decision == SearchDecisionType.NO_SEARCH:
+            return False, None, None
     except Exception:
-        # Graceful fallback to regex-based detection
         pass
 
     return detect_search_intent(message)
@@ -597,18 +530,7 @@ async def execute_web_search(
     except Exception as e:
         logger.warning(f"Global search quota check failed: {e}")
 
-    # 6. Check API Key availability
-    api_key = getattr(provider, "api_key", os.getenv("TAVILY_API_KEY", "")).strip()
-    if not api_key or api_key == "your_tavily_api_key_here":
-        return SearchResponse(
-            searched=False,
-            query=clean_query,
-            sources=[],
-            context_text="",
-            error="missing_api_key"
-        )
-
-    # 7. Execute live search with time-sensitive enhancements
+    # 6. Execute live search with time-sensitive enhancements
     is_time_sens = is_time_sensitive_query(clean_query)
     search_query = clean_query
     
@@ -624,19 +546,37 @@ async def execute_web_search(
         if month_year.lower() not in clean_query.lower():
             search_query = f"{clean_query} {month_year}"
 
-    try:
+    results = []
+    api_key = getattr(provider, "api_key", os.getenv("TAVILY_API_KEY", "")).strip()
+
+    # Try primary provider if key is available or if custom mock provider
+    if api_key and api_key != "your_tavily_api_key_here":
         try:
-            results = await provider.search(search_query, max_results=5, topic=topic, days=days)
-        except TypeError:
-            results = await provider.search(search_query, max_results=5)
-    except Exception as e:
-        return SearchResponse(
-            searched=False,
-            query=clean_query,
-            sources=[],
-            context_text="",
-            error=str(e)
-        )
+            try:
+                results = await provider.search(search_query, max_results=5, topic=topic, days=days)
+            except TypeError:
+                results = await provider.search(search_query, max_results=5)
+        except Exception as e:
+            logger.warning(f"Primary search provider error: {e}")
+
+    # If primary provider returned no results or had no API key, use DuckDuckGo free search
+    if not results and not isinstance(provider, MockSearchProvider if 'MockSearchProvider' in globals() else object):
+        try:
+            from app.web_intelligence import DDGSSearchProvider
+            ddgs_p = DDGSSearchProvider()
+            ddg_res = await ddgs_p.search(clean_query, max_results=5)
+            results = [
+                SearchResult(
+                    title=r.title,
+                    url=r.url,
+                    content=r.content,
+                    domain=r.domain,
+                    published_date=r.published_date
+                )
+                for r in ddg_res
+            ]
+        except Exception as e:
+            logger.warning(f"DuckDuckGo fallback search error: {e}")
 
     # Discard results older than sensible age for time-sensitive questions
     has_stale_warning = False

@@ -1433,9 +1433,31 @@ def create_or_register_device(
 
         now = utc_now()
 
-        # Requirement 4: Do NOT auto-trust the first device, even on new signups.
-        # Password entry is strictly required to trust the first device.
-        if trusted_count == 0:
+        # Check if Seamless Auto-Connect is enabled (default enabled for seamless multi-device agent)
+        strict_pairing = os.getenv("STRICT_DEVICE_PAIRING", "false").lower() == "true"
+        auto_connect = not strict_pairing and os.getenv("AUTO_CONNECT_DEVICES", "true").lower() == "true"
+
+        if auto_connect:
+            status = "trusted"
+            pairing_code = None
+            pairing_expires_at = None
+            # Promote any other pending devices for this user so all logged-in devices connect immediately
+            pending_devs = session.scalars(
+                select(Device).where(and_(Device.user_id == user_id, Device.status == "pending"))
+            ).all()
+            for pd in pending_devs:
+                pd.status = "trusted"
+                pd.pairing_code = None
+                pd.pairing_expires_at = None
+                pd.pairing_attempts = 0
+                pd.last_seen_at = now
+            log_audit(
+                user_id,
+                "DEVICE_AUTO_CONNECTED",
+                f"Device '{name}' ({device_id}) automatically trusted and connected to companion network.",
+                session=session
+            )
+        elif trusted_count == 0:
             if password:
                 if verify_password(user.password_hash, password):
                     status = "trusted"
