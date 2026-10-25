@@ -1,11 +1,11 @@
-﻿// ========================================================
+// ========================================================
 // SINBHA Desktop Configuration
 // Single source of truth for backend URL and desktop settings.
 // ========================================================
 
 module.exports = {
   // Hosted backend URL (change here if you ever update your domain)
-  BACKEND_URL: 'https://sinbha-backend.onrender.com',
+  BACKEND_URL: process.env.BACKEND_URL || 'https://sinbha-backend.onrender.com',
 
   // Application metadata
   APP_NAME: 'SINBHA',
