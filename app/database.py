@@ -1394,8 +1394,17 @@ def create_or_register_device(
                 .where(and_(Device.user_id == user_id, Device.status == "trusted"))
             ) or 0
 
+            # Check if Seamless Auto-Connect is enabled (default enabled for seamless multi-device agent)
+            strict_pairing = os.getenv("STRICT_DEVICE_PAIRING", "false").lower() == "true"
+            auto_connect = not strict_pairing and os.getenv("AUTO_CONNECT_DEVICES", "true").lower() == "true"
+
+            if auto_connect:
+                dev.status = "trusted"
+                dev.pairing_code = None
+                dev.pairing_expires_at = None
+                dev.pairing_attempts = 0
             # If pending and user provides password for account verification
-            if dev.status == "pending" and password:
+            elif dev.status == "pending" and password:
                 if verify_password(user.password_hash, password):
                     dev.status = "trusted"
                     dev.pairing_code = None
