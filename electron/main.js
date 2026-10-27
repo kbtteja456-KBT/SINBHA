@@ -792,6 +792,25 @@ function setupIpcHandlers() {
     }
   });
 
+  ipcMain.handle('type-input', async (_event, payload) => {
+    try {
+      const text = typeof payload === 'string' ? payload : (payload.text || '');
+      const pressEnter = typeof payload === 'object' && (payload.press_enter || payload.enter);
+
+      if (text) {
+        clipboard.writeText(text);
+      }
+
+      const enterKey = pressEnter ? '~' : '';
+      const pasteAction = text ? '^v' : '';
+      const script = `$ws = New-Object -ComObject WScript.Shell; Start-Sleep -Milliseconds 300; $ws.SendKeys('${pasteAction}${enterKey}')`;
+      exec(`powershell -NoProfile -Command "${script}"`);
+      return { success: true, text: text, enter: pressEnter };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
   ipcMain.handle('lock-workstation', async () => {
     try {
       exec('rundll32.exe user32.dll,LockWorkStation');

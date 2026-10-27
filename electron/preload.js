@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Step 16c: Full Cross-Device App Launcher & Control
   launchDesktopApp: (appName) => ipcRenderer.invoke('launch-desktop-app', appName),
+  typeInput: (payload) => ipcRenderer.invoke('type-input', payload),
   lockWorkstation: () => ipcRenderer.invoke('lock-workstation'),
   getDesktopBattery: () => ipcRenderer.invoke('get-desktop-battery')
 });

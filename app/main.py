@@ -753,6 +753,11 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
         ) or (
             app_match and len(lower_m.split()) <= 4 and not bool(re.search(r"\b(how|what|why|is|are|tell|who|can)\b", lower_m))
         )
+        is_type_intent = bool(
+            re.search(r"^\s*(?:type|write|input)\s+", lower_m) or
+            re.search(r"\b(?:type|write)\s+([\"']?)(.+?)\b(?:\s+(?:and|then)\s+(?:press\s+)?(?:enter|send|return))\b", lower_m) or
+            re.search(r"\b(?:press|hit)\s+enter\b", lower_m)
+        )
         is_lock_intent = bool(re.search(r"\b(lock|secure)\s+(my\s+)?(laptop|pc|desktop|computer|screen|workstation)\b", lower_m))
         is_battery_intent = bool(re.search(r"\b(check|what\s+is|show|get)\s+(the\s+)?(battery|battery\s+percentage|battery\s+level|charge)\b|\b(phone|laptop)\s+battery\b", lower_m))
         is_read_notifs_intent = bool(re.search(r"\b(read|check|show|get|what\s+are)\s+(my\s+)?(phone\s+)?(notifications|messages|notifs|whatsapp\s+messages|emails|mails|sms)\b|\bwhat\s+(messages|emails|notifications)\s+(do\s+i\s+have|came)\b", lower_m))
@@ -996,6 +1001,57 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
                     reply = f"🌸 Done! Opened {app_clean.capitalize()} command sent to your {target_dev['name']} (queued offline — will launch automatically as soon as the device is active/connected)!"
             else:
                 reply = f"I'd love to open {app_clean.capitalize()}, but you don't have a paired companion device online to open it on! 🌸"
+            db.save_message(user_id, "assistant", reply)
+            return JSONResponse({"reply": reply, "proposal": None})
+
+        if is_type_intent and not is_open_app_intent:
+            all_user_devices = db.get_user_devices(user_id)
+            trusted_devices = [d for d in all_user_devices if d.get("status") == "trusted"]
+            
+            # Extract text to type
+            type_match = re.search(r"\b(?:type|write|input)\s+([\"']?)(.+?)\1(?:\s+(?:and|then)\s+(?:press\s+)?(?:enter|send|return)|$|\.)", user_msg, re.IGNORECASE)
+            text_to_type = type_match.group(2).strip() if type_match else ""
+            if not text_to_type and ("enter" in lower_m or "send" in lower_m):
+                press_only_enter = True
+            else:
+                press_only_enter = False
+            press_enter = bool(re.search(r"\b(enter|send|return)\b", lower_m))
+
+            target_dev = None
+            wants_phone = bool(re.search(r"\b(phone|mobile|android|cell)\b", lower_m))
+            if wants_phone:
+                for d in trusted_devices:
+                    if d.get("platform", "").lower() in ("android", "mobile"):
+                        target_dev = d
+                        break
+            else:
+                for d in trusted_devices:
+                    if d.get("platform", "").lower() in ("windows", "desktop", "laptop"):
+                        target_dev = d
+                        break
+                if not target_dev and trusted_devices:
+                    target_dev = trusted_devices[0]
+
+            db.save_message(user_id, "user", user_msg)
+            if target_dev:
+                is_online = relay_manager.is_device_connected(user_id, target_dev["device_id"])
+                cmd_id = f"cmd_type_{int(time.time()*1000)}"
+                await relay_manager.relay_command(user_id, {
+                    "id": cmd_id,
+                    "sender_device": trusted_devices[0]["device_id"],
+                    "target_device": target_dev["device_id"],
+                    "type": "type_input",
+                    "payload": {
+                        "text": text_to_type,
+                        "press_enter": press_enter
+                    },
+                    "created_at": time.time(),
+                    "expiry": 86400
+                })
+                enter_note = " and pressed Enter ↵" if press_enter else ""
+                reply = f"🌸 Done! Typed '{text_to_type}'{enter_note} on your {target_dev['name']}."
+            else:
+                reply = f"I'd love to type that, but no companion device is connected! 🌸"
             db.save_message(user_id, "assistant", reply)
             return JSONResponse({"reply": reply, "proposal": None})
 

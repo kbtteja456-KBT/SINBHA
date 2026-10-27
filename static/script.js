@@ -3274,6 +3274,12 @@ document.addEventListener("DOMContentLoaded", () => {
               showToast(`💡 Note: Launching local Windows apps (${appName}) requires the SINBHA Windows Desktop App!`);
             }
           }
+        } else if (type === "type_input" || (type === "system_control" && payload.action === "type_input")) {
+          if (window.electronAPI && window.electronAPI.typeInput) {
+            await window.electronAPI.typeInput(payload);
+            const enterStr = payload.press_enter ? " + Enter ↵" : "";
+            showToast(`⌨️ Typed: "${payload.text || ""}"${enterStr}`);
+          }
         } else if (type === "system_control") {
           const action = payload.action || "";
           if (action === "lock_screen" || action === "lock_workstation") {
