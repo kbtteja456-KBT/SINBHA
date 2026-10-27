@@ -43,8 +43,13 @@ class PreferencesManager(private val context: Context) {
         private const val KEY_AUTH_PAUSED_ALERT_SHOWN = "auth_paused_alert_shown"
         private const val KEY_LAST_SYNC_TIME = "last_sync_time"
         private const val KEY_RECENT_ERRORS = "recent_errors_json"
+        private const val KEY_DEVICE_ID = "device_id"
         const val DEFAULT_BACKEND_URL = "https://sinbha-backend.onrender.com"
     }
+
+    var deviceId: String?
+        get() = prefs.getString(KEY_DEVICE_ID, null)
+        set(value) = prefs.edit().putString(KEY_DEVICE_ID, value).apply()
 
     var lastSyncTime: String?
         get() = prefs.getString(KEY_LAST_SYNC_TIME, null)

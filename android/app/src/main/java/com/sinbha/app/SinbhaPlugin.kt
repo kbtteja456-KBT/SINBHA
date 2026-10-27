@@ -46,6 +46,74 @@ class SinbhaPlugin : Plugin() {
                 e.printStackTrace()
             }
         }
+
+        fun startAlarmRing(ctx: Context, sender: String = "Paired Companion"): Boolean {
+            stopCurrentAlarmRing(ctx)
+            return try {
+                val alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                    ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+
+                val player = MediaPlayer().apply {
+                    setDataSource(ctx, alarmUri)
+                    setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_ALARM)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .build()
+                    )
+                    isLooping = true
+                    prepare()
+                    start()
+                }
+                activeRingPlayer = player
+
+                val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val channel = NotificationChannel(
+                        DEVICE_COMMANDS_CHANNEL_ID,
+                        "SINBHA Device Commands",
+                        NotificationManager.IMPORTANCE_HIGH
+                    ).apply {
+                        description = "Notifications from paired companion devices"
+                    }
+                    nm.createNotificationChannel(channel)
+                }
+
+                val stopIntent = Intent(ctx, ReminderActionReceiver::class.java).apply {
+                    action = ReminderActionReceiver.ACTION_STOP_RING
+                }
+                val stopPi = PendingIntent.getBroadcast(
+                    ctx,
+                    8888,
+                    stopIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+
+                val openIntent = Intent(ctx, MainActivity::class.java)
+                val openPi = PendingIntent.getActivity(
+                    ctx,
+                    8889,
+                    openIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+
+                val notif = NotificationCompat.Builder(ctx, DEVICE_COMMANDS_CHANNEL_ID)
+                    .setSmallIcon(R.mipmap.ic_launcher)
+                    .setContentTitle("🔔 Ringing this Device")
+                    .setContentText("Triggered by $sender")
+                    .setOngoing(true)
+                    .setPriority(NotificationCompat.PRIORITY_MAX)
+                    .setContentIntent(openPi)
+                    .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop Ringing", stopPi)
+                    .build()
+
+                nm.notify(RING_NOTIFICATION_ID, notif)
+                true
+            } catch (e: Exception) {
+                e.printStackTrace()
+                false
+            }
+        }
     }
 
     private lateinit var prefs: PreferencesManager
@@ -53,6 +121,9 @@ class SinbhaPlugin : Plugin() {
     override fun load() {
         super.load()
         prefs = PreferencesManager(context)
+        try {
+            SinbhaCompanionService.start(context)
+        } catch (e: Exception) {}
     }
 
     /**
@@ -72,12 +143,22 @@ class SinbhaPlugin : Plugin() {
         prefs.isEmergencyStopped = call.getBoolean("emergency_stopped", false) ?: false
         prefs.isAuthPausedAlertShown = false
 
+        val devId = call.getString("deviceId")
+        if (!devId.isNullOrEmpty()) {
+            prefs.deviceId = devId
+        }
+
         val qObj = call.getObject("quiet_hours")
         if (qObj != null) {
             prefs.isQuietHoursEnabled = qObj.optString("enabled", "true") == "true"
             prefs.quietHoursStart = qObj.optString("start", "22:00")
             prefs.quietHoursEnd = qObj.optString("end", "08:00")
         }
+
+        // Start persistent companion service
+        try {
+            SinbhaCompanionService.start(context)
+        } catch (e: Exception) {}
 
         // Trigger immediate alarm sync with new session token
         CoroutineScope(Dispatchers.IO).launch {
@@ -385,73 +466,12 @@ class SinbhaPlugin : Plugin() {
      */
     @PluginMethod
     fun startAlarmRing(call: PluginCall) {
-        val ctx = context
         val sender = call.getString("sender") ?: "Paired Companion"
-
-        stopCurrentAlarmRing(ctx)
-
-        try {
-            val alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-
-            val player = MediaPlayer().apply {
-                setDataSource(ctx, alarmUri)
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
-                isLooping = true
-                prepare()
-                start()
-            }
-            activeRingPlayer = player
-
-            val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val channel = NotificationChannel(
-                    DEVICE_COMMANDS_CHANNEL_ID,
-                    "SINBHA Device Commands",
-                    NotificationManager.IMPORTANCE_HIGH
-                ).apply {
-                    description = "Notifications from paired companion devices"
-                }
-                nm.createNotificationChannel(channel)
-            }
-
-            val stopIntent = Intent(ctx, ReminderActionReceiver::class.java).apply {
-                action = ReminderActionReceiver.ACTION_STOP_RING
-            }
-            val stopPi = PendingIntent.getBroadcast(
-                ctx,
-                8888,
-                stopIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
-            val openIntent = Intent(ctx, MainActivity::class.java)
-            val openPi = PendingIntent.getActivity(
-                ctx,
-                8889,
-                openIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
-            val notif = NotificationCompat.Builder(ctx, DEVICE_COMMANDS_CHANNEL_ID)
-                .setSmallIcon(R.mipmap.ic_launcher)
-                .setContentTitle("🔔 Ringing this Device")
-                .setContentText("Triggered by $sender")
-                .setOngoing(true)
-                .setPriority(NotificationCompat.PRIORITY_MAX)
-                .setContentIntent(openPi)
-                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop Ringing", stopPi)
-                .build()
-
-            nm.notify(RING_NOTIFICATION_ID, notif)
+        val ok = startAlarmRing(context, sender)
+        if (ok) {
             call.resolve(JSObject().put("success", true))
-        } catch (e: Exception) {
-            call.reject("Failed to play alarm ring: ${e.message}")
+        } else {
+            call.reject("Failed to play alarm ring")
         }
     }
 
@@ -569,49 +589,21 @@ class SinbhaPlugin : Plugin() {
     }
 
     /**
-     * Step 16c: Launches native apps on Android by app name or package.
+     * Step 16c: Launches native apps on Android by app name, package, search query, or URL.
      */
     @PluginMethod
     fun openApp(call: PluginCall) {
-        val appName = call.getString("app", "")?.lowercase()?.trim() ?: ""
-        val pkgName = when (appName) {
-            "whatsapp" -> "com.whatsapp"
-            "gmail", "mail", "email" -> "com.google.android.gm"
-            "youtube" -> "com.google.android.youtube"
-            "spotify" -> "com.spotify.music"
-            "camera" -> {
-                try {
-                    val intent = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE).apply {
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-                    context.startActivity(intent)
-                    call.resolve(JSObject().put("success", true).put("app", "camera"))
-                    return
-                } catch (e: Exception) {
-                    null
-                }
-            }
-            "settings" -> "com.android.settings"
-            "maps", "google maps" -> "com.google.android.apps.maps"
-            "chrome" -> "com.android.chrome"
-            else -> if (appName.contains(".")) appName else null
-        }
+        val appName = call.getString("app", "")?.trim() ?: ""
+        val searchQuery = call.getString("search_query", null) ?: call.getString("query", null)
+        val url = call.getString("url", null)
+        val text = call.getString("type_text", null) ?: call.getString("text", null)
 
-        if (pkgName != null) {
-            try {
-                val launchIntent = context.packageManager.getLaunchIntentForPackage(pkgName)
-                if (launchIntent != null) {
-                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    context.startActivity(launchIntent)
-                    call.resolve(JSObject().put("success", true).put("package", pkgName))
-                    return
-                }
-            } catch (e: Exception) {
-                call.reject("Failed to open app $pkgName: ${e.message}")
-                return
-            }
+        val success = SinbhaAppLauncher.launchApp(context, appName, searchQuery, url, text)
+        if (success) {
+            call.resolve(JSObject().put("success", true).put("app", appName))
+        } else {
+            call.reject("Could not find or launch matching app for '$appName'")
         }
-        call.reject("Could not find matching app for '$appName'")
     }
 
     /**

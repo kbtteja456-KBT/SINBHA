@@ -27,6 +27,34 @@
     <!-- Foreground Service (Android 14 & 15 compatible) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!-- Universal App Launching & Discovery (Android 11+) -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.WEB_SEARCH" />
+        </intent>
+        <package android:name="com.whatsapp" />
+        <package android:name="com.google.android.youtube" />
+        <package android:name="com.snapchat.android" />
+        <package android:name="com.instagram.android" />
+        <package android:name="org.telegram.messenger" />
+        <package android:name="com.spotify.music" />
+        <package android:name="com.android.chrome" />
+        <package android:name="com.google.android.gm" />
+        <package android:name="com.google.android.apps.maps" />
+        <package android:name="com.anthropic.claude" />
+        <package android:name="com.openai.chatgpt" />
+    </queries>
 
     <application
         android:allowBackup="false"
@@ -52,6 +80,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Persistent Background Companion Service (Keeps device online & catches remote commands) -->
+        <service
+            android:name=".SinbhaCompanionService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Persistent cross-device communication and offline command sync" />
+        </service>
 
         <!-- Floating Overlay Bird Service -->
         <service

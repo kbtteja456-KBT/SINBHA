@@ -44,50 +44,27 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
         val taskTitle = intent.getStringExtra(AlarmScheduler.EXTRA_TASK_TITLE) ?: "Task Reminder"
         val dueText = intent.getStringExtra(AlarmScheduler.EXTRA_DUE_TEXT) ?: "Due now 🌸"
 
-        // 2. Respect Quiet Hours
-        if (isQuietHoursActive(prefs)) {
-            // Suppress non-critical alerts during quiet hours
-            return
-        }
-
-        // 3. Respect System Do Not Disturb (DND)
-        val notifManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val filter = notifManager.currentInterruptionFilter
-            if (filter == NotificationManager.INTERRUPTION_FILTER_NONE ||
-                filter == NotificationManager.INTERRUPTION_FILTER_ALARMS
-            ) {
-                // System DND is strictly blocking notifications
-                return
-            }
-        }
-
-        // 4. Wake up device screen briefly so user sees the reminder alert immediately
+        // 2. Wake up device screen briefly so user sees the reminder alert immediately
         try {
             val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
             val wakeLock = pm?.newWakeLock(
                 PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
                 "sinbha:reminder_alarm_wake"
             )
-            wakeLock?.acquire(8000L) // 8 seconds to light up screen
+            wakeLock?.acquire(10000L) // 10 seconds to light up screen
         } catch (e: Exception) {}
 
-        // 5. Always display high-priority sound, vibration, and heads-up notification!
+        // 3. Always display high-priority sound, vibration, and heads-up notification!
         showHighPriorityNotification(context, taskId, taskTitle, dueText)
 
-        // 6. If screen is active, unlocked, and user allowed overlay: launch floating bird
+        // 4. If user allowed overlay: launch floating bird over active apps/lockscreen
         val canOverlay = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             Settings.canDrawOverlays(context)
         } else {
             true
         }
 
-        val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
-        val keyguardManager = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
-        val isInteractive = powerManager?.isInteractive ?: false
-        val isLocked = keyguardManager?.isKeyguardLocked ?: false
-
-        if (canOverlay && isInteractive && !isLocked) {
+        if (canOverlay) {
             OverlayBirdService.launch(context, taskId, taskTitle, dueText)
         }
     }

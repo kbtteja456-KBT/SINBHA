@@ -23,6 +23,10 @@ class MainActivity : BridgeActivity() {
         registerPlugin(SinbhaPlugin::class.java)
         super.onCreate(savedInstanceState)
 
+        try {
+            SinbhaCompanionService.start(this)
+        } catch (e: Exception) {}
+
         // Security Requirement 6: Disable WebView remote debugging in production release builds
         if (!BuildConfig.DEBUG) {
             WebView.setWebContentsDebuggingEnabled(false)
@@ -42,9 +46,22 @@ class MainActivity : BridgeActivity() {
                         return false // Allow WebView to load
                     }
 
+                    // Handle intent: URIs (e.g. intent:#Intent;package=com.whatsapp...)
+                    if (url.scheme == "intent") {
+                        try {
+                            val parsed = Intent.parseUri(url.toString(), Intent.URI_INTENT_SCHEME).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            startActivity(parsed)
+                            return true
+                        } catch (e: Exception) {}
+                    }
+
                     // Open any external URLs safely in external browser
                     try {
-                        val externalIntent = Intent(Intent.ACTION_VIEW, url)
+                        val externalIntent = Intent(Intent.ACTION_VIEW, url).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
                         startActivity(externalIntent)
                     } catch (e: Exception) {}
                     return true

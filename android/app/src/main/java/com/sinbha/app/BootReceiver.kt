@@ -23,7 +23,12 @@ class BootReceiver : BroadcastReceiver() {
             // 1. Immediate local restore from cache
             AlarmScheduler.rescheduleFromCache(context)
 
-            // 2. Cloud sync in background
+            // 2. Start persistent background companion service
+            try {
+                SinbhaCompanionService.start(context)
+            } catch (e: Exception) {}
+
+            // 3. Cloud sync in background
             val scope = CoroutineScope(Dispatchers.IO)
             scope.launch {
                 try {

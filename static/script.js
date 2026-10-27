@@ -1107,8 +1107,13 @@ document.addEventListener("DOMContentLoaded", () => {
         setStopUiState(true);
       }
 
-      if (data.task_confirmed || data.task_action_performed) {
+      if (data.task_confirmed || data.task_action_performed || (data.reply && data.reply.includes("Saved! I've added"))) {
         loadTasks();
+        if (window.Capacitor?.Plugins?.SinbhaNative) {
+          try {
+            window.Capacitor.Plugins.SinbhaNative.syncReminders();
+          } catch (e) {}
+        }
         if (data.task_action_performed) {
           showToast("🌸 Tasks updated!");
         } else {
@@ -2280,11 +2285,12 @@ document.addEventListener("DOMContentLoaded", () => {
           });
           if (res.ok) {
             const tData = await res.json();
-            if (tData.device_token && window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative) {
+            if (tData.device_token && window.Capacitor?.Plugins?.SinbhaNative) {
               await window.Capacitor.Plugins.SinbhaNative.syncSession({
                 token: tData.device_token,
                 userId: tData.user_id,
                 email: tData.email,
+                deviceId: typeof getOrCreateDeviceId === "function" ? getOrCreateDeviceId() : null,
                 emergency_stopped: tData.emergency_stopped,
                 quiet_hours: {
                   enabled: quietHoursToggle ? (quietHoursToggle.checked ? "true" : "false") : "true",
@@ -3180,7 +3186,7 @@ document.addEventListener("DOMContentLoaded", () => {
           // 1. If running inside Electron desktop app (Windows)
           if (window.electronAPI && window.electronAPI.launchDesktopApp) {
             try {
-              const res = await window.electronAPI.launchDesktopApp(appName);
+              const res = await window.electronAPI.launchDesktopApp(payload);
               if (res && res.success) {
                 showToast(`✨ Launched ${appName} on laptop!`);
                 opened = true;
@@ -3193,7 +3199,7 @@ document.addEventListener("DOMContentLoaded", () => {
           // 2. If running inside Capacitor Android app via native SinbhaPlugin
           if (!opened && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative) {
             try {
-              await window.Capacitor.Plugins.SinbhaNative.openApp({ app: appName });
+              await window.Capacitor.Plugins.SinbhaNative.openApp(payload);
               showToast(`✨ Opened ${appName} on phone!`);
               opened = true;
             } catch (e) {
@@ -3201,7 +3207,22 @@ document.addEventListener("DOMContentLoaded", () => {
             }
           }
 
-          // 3. Direct Android Package Intent Launcher (works on all Android WebViews and browsers)
+          // 3. Direct URL / Search Query handling in browser / WebView
+          if (!opened && (payload.url || payload.search_query)) {
+            if (payload.url) {
+              window.open(payload.url.startsWith("http") ? payload.url : `https://${payload.url}`, "_blank");
+              opened = true;
+            } else if (payload.search_query) {
+              if (lowerApp.includes("youtube")) {
+                window.open(`https://www.youtube.com/results?search_query=${encodeURIComponent(payload.search_query)}`, "_blank");
+              } else {
+                window.open(`https://www.google.com/search?q=${encodeURIComponent(payload.search_query)}`, "_blank");
+              }
+              opened = true;
+            }
+          }
+
+          // 4. Direct Android Package Intent Launcher
           if (!opened && /Android/i.test(navigator.userAgent || "")) {
             const androidIntentMap = {
               whatsapp: "intent:#Intent;package=com.whatsapp;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
@@ -3209,6 +3230,10 @@ document.addEventListener("DOMContentLoaded", () => {
               spotify: "spotify://",
               gmail: "intent:#Intent;package=com.google.android.gm;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
               chrome: "intent:#Intent;package=com.android.chrome;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
+              snapchat: "intent:#Intent;package=com.snapchat.android;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
+              instagram: "intent:#Intent;package=com.instagram.android;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
+              claude: "intent:#Intent;package=com.anthropic.claude;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
+              chatgpt: "intent:#Intent;package=com.openai.chatgpt;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
               maps: "geo:0,0",
               camera: "intent:#Intent;action=android.media.action.IMAGE_CAPTURE;end;"
             };
@@ -3229,7 +3254,7 @@ document.addEventListener("DOMContentLoaded", () => {
             }
           }
 
-          // 4. Web browser fallback: protocol or web link
+          // 5. Web browser fallback: protocol or web link
           if (!opened) {
             const webMap = {
               whatsapp: "https://web.whatsapp.com",
@@ -3237,7 +3262,11 @@ document.addEventListener("DOMContentLoaded", () => {
               youtube: "https://youtube.com",
               gmail: "https://mail.google.com",
               maps: "https://maps.google.com",
-              chrome: "https://google.com"
+              chrome: "https://google.com",
+              snapchat: "https://web.snapchat.com",
+              instagram: "https://www.instagram.com",
+              claude: "https://claude.ai",
+              chatgpt: "https://chatgpt.com"
             };
             if (webMap[lowerApp]) {
               window.open(webMap[lowerApp], "_blank");

@@ -732,7 +732,10 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
             clean_lower
         ))
         is_sync_intent = bool(re.search(r"\b(sync|synchronize)\s+(all\s+)?(my\s+)?(devices|phone and laptop|laptop and phone)\b", lower_m))
-        app_match = re.search(r"\b(whatsapp|whatsap|watsapp|google\s+chrome|chrome|spotify|spotfy|youtube|youtub|gmail|camera|notepad|notepade|notpad|calculator|calclator|calc|vscode|code|explorer|terminal|cmd|settings|maps)\b", lower_m)
+        app_match = re.search(
+            r"\b(whatsapp|whatsap|watsapp|google\s+chrome|chrome|chrom|spotify|spotfy|youtube|youtub|gmail|camera|notepad|notepade|notpad|calculator|calclator|calc|vscode|code|explorer|files|file\s+explorer|terminal|cmd|settings|maps|snapchat|instagram|insta|telegram|claude|chatgpt|antigravity)\b",
+            lower_m
+        )
         is_open_app_intent = bool(
             re.search(r"\b(open|launch|start|run|play)\b", lower_m) and app_match
         ) or (
@@ -893,8 +896,32 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
                 "watsapp": "whatsapp",
                 "youtub": "youtube",
                 "spotfy": "spotify",
+                "insta": "instagram",
+                "file explorer": "files",
             }
             app_clean = app_map.get(raw_app, raw_app)
+
+            # Extract search query (e.g. "search whatsapp", "search vignan portal")
+            search_match = re.search(r"\bsearch(?:\s+for)?\s+([a-zA-Z0-9_\s.-]+?)(?:\s+in|\s+on|\s+and|$|\.)", lower_m)
+            search_query = search_match.group(1).strip() if search_match else None
+
+            # Extract text to type (e.g. "type x", "type 'hello'")
+            type_match = re.search(r"\btype\s+([\"']?)(.+?)\1(?:\s+in|\s+and|$|\.)", lower_m)
+            type_text = type_match.group(2).strip() if type_match else None
+
+            # Extract URL or web query
+            url_match = re.search(r"https?://[^\s]+|(?:\b[a-zA-Z0-9-]+\.(?:com|org|edu|in|net|ai|io)\b[^\s]*)", lower_m)
+            target_url = url_match.group(0).strip() if url_match else None
+            if not target_url:
+                if "vignan" in lower_m:
+                    target_url = "https://www.google.com/search?q=vignan+student+portal"
+                    if not search_query:
+                        search_query = "vignan student portal"
+                elif "claude" in lower_m and ("chrome" in lower_m or "browser" in lower_m):
+                    target_url = "https://claude.ai"
+                elif "chatgpt" in lower_m and ("chrome" in lower_m or "browser" in lower_m):
+                    target_url = "https://chatgpt.com"
+
             target_dev = None
             wants_phone = bool(re.search(r"\b(phone|mobile|android|cell)\b", lower_m))
             wants_laptop = bool(re.search(r"\b(laptop|pc|desktop|windows|computer)\b", lower_m))
@@ -909,12 +936,12 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
                         target_dev = d
                         break
             else:
-                if app_clean in ("camera",):
+                if app_clean in ("camera", "snapchat", "instagram"):
                     for d in trusted_devices:
                         if d.get("platform", "").lower() in ("android", "mobile"):
                             target_dev = d
                             break
-                elif app_clean in ("notepad", "calculator", "code", "explorer", "terminal", "cmd"):
+                elif app_clean in ("notepad", "calculator", "code", "explorer", "files", "terminal", "cmd", "antigravity"):
                     for d in trusted_devices:
                         if d.get("platform", "").lower() in ("windows", "desktop", "laptop"):
                             target_dev = d
@@ -931,12 +958,25 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
                     "sender_device": trusted_devices[0]["device_id"],
                     "target_device": target_dev["device_id"],
                     "type": "open_app",
-                    "payload": {"app": app_clean},
+                    "payload": {
+                        "app": app_clean,
+                        "search_query": search_query,
+                        "url": target_url,
+                        "type_text": type_text,
+                    },
                     "created_at": time.time(),
                     "expiry": 86400
                 })
+                extra_note = ""
+                if search_query:
+                    extra_note = f" (searching '{search_query}')"
+                elif type_text:
+                    extra_note = f" (typing '{type_text}')"
+                elif target_url:
+                    extra_note = f" ({target_url})"
+
                 if is_online:
-                    reply = f"🌸 Done! Opened {app_clean.capitalize()} on your {target_dev['name']}."
+                    reply = f"🌸 Done! Opened {app_clean.capitalize()} on your {target_dev['name']}{extra_note}."
                 else:
                     reply = f"🌸 Done! Opened {app_clean.capitalize()} command sent to your {target_dev['name']} (queued offline — will launch automatically as soon as the device is active/connected)!"
             else:

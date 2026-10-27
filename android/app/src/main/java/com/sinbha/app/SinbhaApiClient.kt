@@ -249,4 +249,35 @@ class SinbhaApiClient(private val context: Context) {
             null
         }
     }
+
+    suspend fun fetchPendingCommands(deviceId: String): List<JSONObject> = withContext(Dispatchers.IO) {
+        val token = prefs.sessionToken ?: return@withContext emptyList()
+        val list = mutableListOf<JSONObject>()
+        try {
+            val encodedId = java.net.URLEncoder.encode(deviceId, "UTF-8")
+            val url = URL("${prefs.backendUrl}/api/devices/commands/pending?device_id=$encodedId")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                setRequestProperty("Authorization", "Bearer $token")
+                setRequestProperty("Cookie", "sinbha_session=$token")
+                setRequestProperty("X-Requested-With", "XMLHttpRequest")
+                connectTimeout = 6000
+                readTimeout = 6000
+            }
+
+            if (conn.responseCode in 200..299) {
+                val responseText = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
+                val root = JSONObject(responseText)
+                val arr = root.optJSONArray("commands") ?: JSONArray()
+                for (i in 0 until arr.length()) {
+                    list.add(arr.getJSONObject(i))
+                }
+            }
+            conn.disconnect()
+        } catch (e: Exception) {
+            // Silently catch network timeouts in background polling
+        }
+        return@withContext list
+    }
 }
+

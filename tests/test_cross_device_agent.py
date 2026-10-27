@@ -8,9 +8,16 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-from app.main import app
+import tempfile
 from app import database as db
 from app.device_relay import relay_manager
+
+temp_dir = tempfile.mkdtemp()
+temp_db = os.path.join(temp_dir, "test_cross_device.db")
+db.set_engine_url(f"sqlite:///{temp_db}")
+db.init_db()
+
+from app.main import app
 
 client = TestClient(app)
 
