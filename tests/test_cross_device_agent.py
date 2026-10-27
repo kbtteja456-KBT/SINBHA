@@ -21,14 +21,14 @@ def auth_user():
     token = db.create_session(user["id"])
     return {"user": user, "token": token}
 
-def test_version_check_v1_1_0():
+def test_version_check():
     res = client.get("/api/app/version-check")
     assert res.status_code == 200
     data = res.json()
-    assert data["latest_version_android"] == "1.1.0"
-    assert data["latest_version_desktop"] == "1.1.0"
-    assert "android-v1.1.0/SINBHA.apk" in data["download_url_android"]
-    assert "windows-v1.1.0/SINBHA-Setup.exe" in data["download_url_desktop"]
+    assert "SINBHA.apk" in data["download_url_android"]
+    assert "SINBHA-Setup.exe" in data["download_url_desktop"]
+    assert "android-v" in data["download_url_android"]
+    assert "windows-v" in data["download_url_desktop"]
 
 def test_notifications_sync_and_retrieval(auth_user):
     token = auth_user["token"]

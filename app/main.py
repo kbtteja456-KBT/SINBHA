@@ -726,11 +726,20 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
         is_list_devices = bool(re.search(
             r"\b(how\s+many|what|which|show|list|tell\s+me|check|status\s+of|count|are\s+there\s+any)\b.*?\b(devices?|laptop|phone|pc|mobile)\b"
             r"|\b(devices?)\b.*?\b(connected|paired|online|count|status)\b"
-            r"|\b(is|are)\s+(my\s+)?(phone|laptop|pc|mobile|devices?)\s+(connected|paired|online)\b",
+            r"|\b(is|are)\s+(my\s+)?(phone|laptop|pc|mobile|devices?)\s+(connected|paired|online)\b"
+            r"|\b(both\s+(devices\s+)?(are\s+)?(online|offline|connected))\b"
+            r"|\b(are\s+they\s+online)\b",
             clean_lower
         ))
         is_sync_intent = bool(re.search(r"\b(sync|synchronize)\s+(all\s+)?(my\s+)?(devices|phone and laptop|laptop and phone)\b", lower_m))
-        is_open_app_intent = bool(re.search(r"\b(open|launch|start|run)\s+(the\s+)?(whatsapp|chrome|google\s+chrome|spotify|youtube|gmail|camera|notepad|calculator|calc|vscode|code|explorer|terminal|cmd|settings|maps)\b|\b(on\s+(my\s+)?(phone|mobile|android|laptop|pc|desktop)\s+(open|launch|start|run))\b", lower_m))
+        app_match = re.search(r"\b(whatsapp|whatsap|watsapp|google\s+chrome|chrome|spotify|spotfy|youtube|youtub|gmail|camera|notepad|notepade|notpad|calculator|calclator|calc|vscode|code|explorer|terminal|cmd|settings|maps)\b", lower_m)
+        is_open_app_intent = bool(
+            re.search(r"\b(open|launch|start|run|play)\b", lower_m) and app_match
+        ) or (
+            bool(re.search(r"\b(on\s+(my\s+)?(phone|mobile|android|laptop|pc|desktop)\s+(open|launch|start|run))\b", lower_m))
+        ) or (
+            app_match and len(lower_m.split()) <= 4 and not bool(re.search(r"\b(how|what|why|is|are|tell|who|can)\b", lower_m))
+        )
         is_lock_intent = bool(re.search(r"\b(lock|secure)\s+(my\s+)?(laptop|pc|desktop|computer|screen|workstation)\b", lower_m))
         is_battery_intent = bool(re.search(r"\b(check|what\s+is|show|get)\s+(the\s+)?(battery|battery\s+percentage|battery\s+level|charge)\b|\b(phone|laptop)\s+battery\b", lower_m))
         is_read_notifs_intent = bool(re.search(r"\b(read|check|show|get|what\s+are)\s+(my\s+)?(phone\s+)?(notifications|messages|notifs|whatsapp\s+messages|emails|mails|sms)\b|\bwhat\s+(messages|emails|notifications)\s+(do\s+i\s+have|came)\b", lower_m))
@@ -848,6 +857,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
                     break
             db.save_message(user_id, "user", user_msg)
             if target_dev:
+                is_online = relay_manager.is_device_connected(user_id, target_dev["device_id"])
                 cmd_id = f"cmd_lock_{int(time.time()*1000)}"
                 await relay_manager.relay_command(user_id, {
                     "id": cmd_id,
@@ -856,9 +866,12 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
                     "type": "system_control",
                     "payload": {"action": "lock_screen"},
                     "created_at": time.time(),
-                    "expiry": 60
+                    "expiry": 86400
                 })
-                reply = f"🔒 Done! I've locked your {target_dev['name']} screen."
+                if is_online:
+                    reply = f"🔒 Done! I've locked your {target_dev['name']} screen."
+                else:
+                    reply = f"🔒 Done! I've locked your {target_dev['name']} screen (queued offline — will lock as soon as the laptop is connected)!"
             else:
                 reply = "I couldn't find a trusted Windows laptop/PC connected to lock! Please make sure your laptop is logged in to your account 🌸"
             db.save_message(user_id, "assistant", reply)
@@ -867,12 +880,19 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
         if is_open_app_intent:
             all_user_devices = db.get_user_devices(user_id)
             trusted_devices = [d for d in all_user_devices if d.get("status") == "trusted"]
-            app_match = re.search(r"\b(whatsapp|google\s+chrome|chrome|spotify|youtube|gmail|camera|notepad|calculator|calc|vscode|code|explorer|terminal|cmd|settings|maps)\b", lower_m)
             raw_app = app_match.group(1).lower() if app_match else "whatsapp"
             app_map = {
                 "google chrome": "chrome",
+                "chrom": "chrome",
                 "calc": "calculator",
-                "vscode": "code"
+                "calclator": "calculator",
+                "vscode": "code",
+                "notepade": "notepad",
+                "notpad": "notepad",
+                "whatsap": "whatsapp",
+                "watsapp": "whatsapp",
+                "youtub": "youtube",
+                "spotfy": "spotify",
             }
             app_clean = app_map.get(raw_app, raw_app)
             target_dev = None
@@ -904,6 +924,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
 
             db.save_message(user_id, "user", user_msg)
             if target_dev:
+                is_online = relay_manager.is_device_connected(user_id, target_dev["device_id"])
                 cmd_id = f"cmd_app_{int(time.time()*1000)}"
                 await relay_manager.relay_command(user_id, {
                     "id": cmd_id,
@@ -912,9 +933,12 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
                     "type": "open_app",
                     "payload": {"app": app_clean},
                     "created_at": time.time(),
-                    "expiry": 60
+                    "expiry": 86400
                 })
-                reply = f"🌸 Done! Opened {app_clean.capitalize()} on your {target_dev['name']}."
+                if is_online:
+                    reply = f"🌸 Done! Opened {app_clean.capitalize()} on your {target_dev['name']}."
+                else:
+                    reply = f"🌸 Done! Opened {app_clean.capitalize()} command sent to your {target_dev['name']} (queued offline — will launch automatically as soon as the device is active/connected)!"
             else:
                 reply = f"I'd love to open {app_clean.capitalize()}, but you don't have a paired companion device online to open it on! 🌸"
             db.save_message(user_id, "assistant", reply)
@@ -1490,9 +1514,9 @@ async def app_version_check_endpoint():
             pass
 
     min_android = os.getenv("MIN_APP_VERSION_ANDROID", "1.0.0")
-    latest_android = os.getenv("LATEST_APP_VERSION_ANDROID", "1.1.0")
+    latest_android = os.getenv("LATEST_APP_VERSION_ANDROID", pkg_version)
     min_desktop = os.getenv("MIN_APP_VERSION_DESKTOP", "1.0.0")
-    latest_desktop = os.getenv("LATEST_APP_VERSION_DESKTOP", "1.1.0")
+    latest_desktop = os.getenv("LATEST_APP_VERSION_DESKTOP", pkg_version)
 
     # Safety clamp: min_version must never exceed latest_version
     if is_semver_higher(min_android, latest_android):

@@ -166,8 +166,8 @@ class CommandRelayManager:
         valid_commands = []
         for cmd in queue:
             created = cmd.get("created_at", now)
-            # 60s expiry window
-            if (now - created) <= 60.0:
+            expiry = float(cmd.get("expiry") if cmd.get("expiry") is not None else 60.0)
+            if (now - created) <= expiry:
                 valid_commands.append(cmd)
 
         # Clear queue after draining
@@ -258,9 +258,10 @@ class CommandRelayManager:
             }
         self.seen_command_ids[cmd_id] = now
 
-        # 3. 60-second command expiry check (Rule 3 & 8)
+        # 3. Command expiry check
+        cmd_expiry = float(cmd_data.get("expiry") if cmd_data.get("expiry") is not None else 60.0)
         age = now - created_at
-        if age > 60.0 or age < -5.0:  # Allow 5s clock skew
+        if age > cmd_expiry or age < -5.0:  # Allow 5s clock skew
             db.log_audit(
                 user_id,
                 "DEVICE_COMMAND_RELAY",
@@ -275,7 +276,7 @@ class CommandRelayManager:
             return {
                 "success": False,
                 "error": "EXPIRED",
-                "message": f"Command expired ({int(age)}s old > 60s limit)."
+                "message": f"Command expired ({int(age)}s old > {int(cmd_expiry)}s limit)."
             }
 
         # 4. Per-user rate limiting check (Rule 8)
@@ -420,6 +421,7 @@ class CommandRelayManager:
             "command_type": cmd_type,
             "payload": payload,
             "created_at": created_at,
+            "expiry": cmd_expiry,
             "permission_level": perm_level,
             "requires_confirmation": requires_confirmation,
         }
@@ -459,8 +461,8 @@ class CommandRelayManager:
             # Queue offline (max 10 commands per device)
             q_key = (user_id, target_id)
             current_q = self.offline_queues.get(q_key, [])
-            # Prune expired (> 60s)
-            current_q = [c for c in current_q if (now - c.get("created_at", now)) <= 60.0]
+            # Prune expired
+            current_q = [c for c in current_q if (now - c.get("created_at", now)) <= float(c.get("expiry", 60.0))]
             if len(current_q) >= 10:
                 current_q.pop(0)  # Drop oldest
             current_q.append(packet)

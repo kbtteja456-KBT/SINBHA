@@ -1,5 +1,7 @@
 package com.sinbha.app
 
+import android.app.KeyguardManager
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -7,7 +9,10 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import java.text.SimpleDateFormat
@@ -17,8 +22,9 @@ import java.util.Locale
 /**
  * Receiver invoked by AlarmManager when an exact reminder fires.
  * Enforces STOP rules, Quiet Hours, and system DND.
- * Launches the floating bird overlay if permitted; otherwise falls back
- * to a high-priority heads-up notification with direct action buttons.
+ * Guarantees high-priority sound, vibration, and lockscreen alerts even
+ * when phone is asleep or app is swiped away. Launches the floating bird
+ * overlay when the user is actively using the phone.
  */
 class ReminderAlarmReceiver : BroadcastReceiver() {
 
@@ -56,19 +62,33 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
             }
         }
 
-        // 4. Check Overlay Permission
+        // 4. Wake up device screen briefly so user sees the reminder alert immediately
+        try {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            val wakeLock = pm?.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "sinbha:reminder_alarm_wake"
+            )
+            wakeLock?.acquire(8000L) // 8 seconds to light up screen
+        } catch (e: Exception) {}
+
+        // 5. Always display high-priority sound, vibration, and heads-up notification!
+        showHighPriorityNotification(context, taskId, taskTitle, dueText)
+
+        // 6. If screen is active, unlocked, and user allowed overlay: launch floating bird
         val canOverlay = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             Settings.canDrawOverlays(context)
         } else {
             true
         }
 
-        if (canOverlay) {
-            // Launch floating bird companion
+        val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val keyguardManager = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        val isInteractive = powerManager?.isInteractive ?: false
+        val isLocked = keyguardManager?.isKeyguardLocked ?: false
+
+        if (canOverlay && isInteractive && !isLocked) {
             OverlayBirdService.launch(context, taskId, taskTitle, dueText)
-        } else {
-            // Fallback to High-Priority Heads-Up Notification
-            showHighPriorityNotification(context, taskId, taskTitle, dueText)
         }
     }
 
@@ -87,6 +107,8 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
 
     private fun showHighPriorityNotification(context: Context, taskId: Int, title: String, dueText: String) {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -96,8 +118,15 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
             ).apply {
                 description = "Urgent reminder alerts with Done and Snooze actions"
                 enableVibration(true)
+                vibrationPattern = longArrayOf(0, 500, 200, 500, 200, 500)
                 enableLights(true)
                 lightColor = Color.parseColor("#EC4899")
+                val audioAttributes = AudioAttributes.Builder()
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .setUsage(AudioAttributes.USAGE_ALARM)
+                    .build()
+                setSound(soundUri, audioAttributes)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
             manager.createNotificationChannel(channel)
         }
@@ -158,7 +187,11 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
             .setContentText(dueText)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setColor(Color.parseColor("#EC4899"))
+            .setSound(soundUri)
+            .setVibrate(longArrayOf(0, 500, 200, 500, 200, 500))
+            .setDefaults(Notification.DEFAULT_ALL)
             .setAutoCancel(true)
             .setContentIntent(pOpen)
             .addAction(R.drawable.ic_sinbha, "✓ Done", pDone)

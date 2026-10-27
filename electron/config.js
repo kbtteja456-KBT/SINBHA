@@ -19,6 +19,12 @@ module.exports = {
 
   // Version features for "What's New" popup
   WHATS_NEW: {
+    '1.1.2': [
+      '🔔 High-priority loud sound & vibration alerts for Android reminders (even when locked or app is closed)',
+      '⚡ Persistent 24h cross-device action queue (actions execute automatically as soon as device is active/connected)',
+      '📱 Typo-tolerant app launcher & real-time connection status across phone and laptop',
+      '🕊️ Smart screen-wake lock: lights up phone screen to show due reminders immediately'
+    ],
     '1.1.0': [
       '⚡ Omnipresent Cross-Device Agent (Control phone from laptop & laptop from phone)',
       '📱 Remote native app launching (WhatsApp, YouTube, Spotify, Gmail, Chrome, etc.)',
