@@ -736,8 +736,18 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
             r"\b(whatsapp|whatsap|watsapp|google\s+chrome|chrome|chrom|spotify|spotfy|youtube|youtub|gmail|camera|notepad|notepade|notpad|calculator|calclator|calc|vscode|code|explorer|files|file\s+explorer|terminal|cmd|settings|maps|snapchat|instagram|insta|telegram|claude|chatgpt|antigravity)\b",
             lower_m
         )
+        generic_open_match = re.search(
+            r"\b(?:open|launch|start|run|play)\s+(?:the\s+)?([a-zA-Z0-9_\-\.]+)(?:\s+(?:in|on|at)\s+(?:my\s+)?(?:phone|mobile|android|laptop|pc|desktop|windows)|$|\.|\band\b)",
+            lower_m
+        )
+        is_generic_app = False
+        if generic_open_match:
+            cand = generic_open_match.group(1).lower().strip()
+            if cand and cand not in ("task", "tasks", "reminder", "reminders", "drawer", "modal", "tab", "screen", "session", "menu", "chat", "conversation", "note", "notes", "it", "this", "that", "something", "anything"):
+                is_generic_app = True
+
         is_open_app_intent = bool(
-            re.search(r"\b(open|launch|start|run|play)\b", lower_m) and app_match
+            re.search(r"\b(open|launch|start|run|play)\b", lower_m) and (app_match or is_generic_app)
         ) or (
             bool(re.search(r"\b(on\s+(my\s+)?(phone|mobile|android|laptop|pc|desktop)\s+(open|launch|start|run))\b", lower_m))
         ) or (
@@ -883,7 +893,12 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
         if is_open_app_intent:
             all_user_devices = db.get_user_devices(user_id)
             trusted_devices = [d for d in all_user_devices if d.get("status") == "trusted"]
-            raw_app = app_match.group(1).lower() if app_match else "whatsapp"
+            if app_match:
+                raw_app = app_match.group(1).lower()
+            elif generic_open_match and is_generic_app:
+                raw_app = generic_open_match.group(1).lower().strip()
+            else:
+                raw_app = "whatsapp"
             app_map = {
                 "google chrome": "chrome",
                 "chrom": "chrome",
