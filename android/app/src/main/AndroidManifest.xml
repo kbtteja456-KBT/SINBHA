@@ -91,7 +91,8 @@
             android:screenOrientation="portrait"
             android:excludeFromRecents="true"
             android:launchMode="singleInstance"
-            android:exported="false" />
+            android:exported="false"
+            tools:targetApi="27" />
 
         <!-- Persistent Background Companion Service (Keeps device online & catches remote commands) -->
         <service

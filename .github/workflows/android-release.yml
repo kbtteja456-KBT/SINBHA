@@ -71,7 +71,17 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           cd android
-          ./gradlew assembleRelease --no-daemon
+          ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee ../gradle_build.log || {
+            echo "::error::Android Release Build Failed!"
+            echo "## ❌ Android Gradle Release Build Failed" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            tail -n 120 ../gradle_build.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            tail -n 25 ../gradle_build.log | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            exit 1
+          }
 
       - name: Shred and Remove Keystore File
         if: always()
