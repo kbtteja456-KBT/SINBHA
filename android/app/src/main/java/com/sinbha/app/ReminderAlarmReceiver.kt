@@ -143,7 +143,6 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
                     .build()
                 setSound(soundUri, audioAttributes)
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-                setBypassDnd(true)
             }
             manager.createNotificationChannel(channel)
         }
