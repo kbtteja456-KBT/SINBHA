@@ -32,6 +32,16 @@ import java.util.TimerTask
  */
 class AlarmActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
+    companion object {
+        const val EXTRA_TASK_ID = "extra_task_id"
+        const val EXTRA_TASK_TITLE = "extra_task_title"
+        const val EXTRA_DUE_TEXT = "extra_due_text"
+        const val EXTRA_SOUND_OPTION = "extra_sound_option"
+        const val EXTRA_SONG_URI = "extra_song_uri"
+        const val EXTRA_USER_NAME = "extra_user_name"
+        const val EXTRA_SPOKEN_TEXT = "extra_spoken_text"
+    }
+
     private var taskId: Int = -1
     private var taskTitle: String = "Task Reminder"
     private var dueText: String = "Due now"

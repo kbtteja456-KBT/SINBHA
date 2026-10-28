@@ -9,9 +9,11 @@ Validates:
 6. Safe fallback when options are unspecified.
 """
 
+import os
+os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+
 import pytest
 import sqlite3
-import os
 from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 

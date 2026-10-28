@@ -59,6 +59,7 @@ object AlarmScheduler {
         val showIntent = Intent(context, AlarmActivity::class.java).apply {
             putExtra(AlarmActivity.EXTRA_TASK_ID, taskId)
             putExtra(AlarmActivity.EXTRA_TASK_TITLE, taskTitle)
+            putExtra(AlarmActivity.EXTRA_DUE_TEXT, dueText)
             putExtra(AlarmActivity.EXTRA_SOUND_OPTION, soundOption)
             putExtra(AlarmActivity.EXTRA_SONG_URI, songUri)
             putExtra(AlarmActivity.EXTRA_USER_NAME, userName)

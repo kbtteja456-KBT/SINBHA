@@ -117,6 +117,8 @@ class SinbhaPlugin : Plugin() {
     }
 
     private lateinit var prefs: PreferencesManager
+    private var previewPlayer: MediaPlayer? = null
+    private var previewTts: android.speech.tts.TextToSpeech? = null
 
     override fun load() {
         super.load()

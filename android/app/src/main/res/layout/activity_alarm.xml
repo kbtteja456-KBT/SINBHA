@@ -2,7 +2,7 @@
 <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#0d0c10"
+    android:background="#ffffff"
     android:padding="28dp">
 
     <!-- Top Branding -->
@@ -14,7 +14,7 @@
         android:layout_centerHorizontal="true"
         android:gravity="center"
         android:orientation="horizontal"
-        android:layout_marginTop="24dp">
+        android:layout_marginTop="28dp">
 
         <ImageView
             android:layout_width="28dp"
@@ -28,12 +28,12 @@
             android:layout_marginStart="8dp"
             android:text="SINBHA ALARM"
             android:textColor="#f25f85"
-            android:textSize="16sp"
+            android:textSize="15sp"
             android:textStyle="bold"
-            android:letterSpacing="0.1" />
+            android:letterSpacing="0.08" />
     </LinearLayout>
 
-    <!-- Center Content: Clock, Elephant, Title -->
+    <!-- Center Content: Clock, Elephant Mascot, Title, Subtitle, Due Pill -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -47,7 +47,7 @@
             android:layout_height="wrap_content"
             android:format12Hour="hh:mm a"
             android:format24Hour="HH:mm"
-            android:textColor="#ffffff"
+            android:textColor="#1e293b"
             android:textSize="54sp"
             android:textStyle="bold" />
 
@@ -55,8 +55,8 @@
             android:id="@+id/alarmElephantImg"
             android:layout_width="140dp"
             android:layout_height="140dp"
-            android:layout_marginTop="20dp"
-            android:layout_marginBottom="20dp"
+            android:layout_marginTop="18dp"
+            android:layout_marginBottom="18dp"
             android:src="@drawable/elephant_logo"
             android:contentDescription="SINBHA Mascot" />
 
@@ -66,7 +66,7 @@
             android:layout_height="wrap_content"
             android:gravity="center"
             android:text="Task Title"
-            android:textColor="#ffffff"
+            android:textColor="#0f172a"
             android:textSize="24sp"
             android:textStyle="bold"
             android:maxLines="3" />
@@ -78,7 +78,7 @@
             android:layout_marginTop="10dp"
             android:gravity="center"
             android:text="Hey friend, it is time to complete your task"
-            android:textColor="#a39ca8"
+            android:textColor="#64748b"
             android:textSize="15sp"
             android:maxLines="4" />
 
@@ -86,23 +86,24 @@
             android:id="@+id/alarmDueText"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:background="#211c2a"
-            android:paddingHorizontal="14dp"
-            android:paddingVertical="4dp"
+            android:layout_marginTop="12dp"
+            android:background="#fdf2f4"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="6dp"
             android:text="Due now"
             android:textColor="#f25f85"
-            android:textSize="13sp" />
+            android:textSize="13sp"
+            android:textStyle="bold" />
     </LinearLayout>
 
-    <!-- Bottom Actions: Dismiss & Snooze -->
+    <!-- Bottom Actions: Dismiss (Vibrant Pink) & Snooze (Soft White/Pink border) -->
     <LinearLayout
         android:id="@+id/alarmActions"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_alignParentBottom="true"
         android:orientation="vertical"
-        android:layout_marginBottom="20dp"
+        android:layout_marginBottom="24dp"
         android:gravity="center">
 
         <Button
@@ -112,7 +113,7 @@
             android:backgroundTint="#f25f85"
             android:text="DISMISS ALARM"
             android:textColor="#ffffff"
-            android:textSize="17sp"
+            android:textSize="16sp"
             android:textStyle="bold"
             android:letterSpacing="0.05" />
 
@@ -121,10 +122,11 @@
             android:layout_width="match_parent"
             android:layout_height="50dp"
             android:layout_marginTop="12dp"
-            android:backgroundTint="#211c2a"
+            android:backgroundTint="#fce7f3"
             android:text="SNOOZE (+10m)"
-            android:textColor="#ffffff"
-            android:textSize="15sp" />
+            android:textColor="#be185d"
+            android:textSize="15sp"
+            android:textStyle="bold" />
     </LinearLayout>
 
 </RelativeLayout>
