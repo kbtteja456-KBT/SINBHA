@@ -22,7 +22,10 @@ from urllib.parse import urlparse
 from dataclasses import dataclass, asdict
 
 import httpx
+import logging
 from app import database as db
+
+logger = logging.getLogger(__name__)
 
 # Quota limits
 USER_DAILY_SEARCH_LIMIT = 15
