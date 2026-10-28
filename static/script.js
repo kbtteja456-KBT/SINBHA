@@ -1391,12 +1391,14 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // Settings & Purge handling
-  openSettingsBtn.addEventListener("click", () => {
-    syncViewportMetrics();
-    settingsModal.style.display = "flex";
-    const modalBody = settingsModal.querySelector(".settings-modal-body");
-    if (modalBody) modalBody.scrollTop = 0;
-  });
+  if (openSettingsBtn) {
+    openSettingsBtn.addEventListener("click", () => {
+      syncViewportMetrics();
+      settingsModal.style.display = "flex";
+      const modalBody = settingsModal.querySelector(".settings-modal-body");
+      if (modalBody) modalBody.scrollTop = 0;
+    });
+  }
 
   closeSettingsBtn.addEventListener("click", () => {
     settingsModal.style.display = "none";
@@ -4090,9 +4092,12 @@ document.addEventListener("DOMContentLoaded", () => {
     if (topRefreshCodeBtn) topRefreshCodeBtn.addEventListener("click", triggerCodeRefresh);
 
     const topOpenSettingsBtn = document.getElementById("topOpenPairSettingsBtn");
-    if (topOpenSettingsBtn && openSettingsBtn) {
+    if (topOpenSettingsBtn) {
       topOpenSettingsBtn.addEventListener("click", () => {
-        openSettingsBtn.click();
+        if (settingsModal) {
+          settingsModal.style.display = "flex";
+          loadSettings();
+        }
       });
     }
 

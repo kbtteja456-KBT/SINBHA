@@ -144,6 +144,14 @@ def init_db():
                     conn.commit()
             else:
                 conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN IF NOT EXISTS thread_id VARCHAR(64) DEFAULT 'default'")
+                # Ensure chat_threads allows multiple users to each have 'default' thread
+                try:
+                    conn.exec_driver_sql("DROP INDEX IF EXISTS ix_chat_threads_thread_id CASCADE")
+                    conn.exec_driver_sql("ALTER TABLE chat_threads DROP CONSTRAINT IF EXISTS ix_chat_threads_thread_id CASCADE")
+                    conn.exec_driver_sql("ALTER TABLE chat_threads DROP CONSTRAINT IF EXISTS chat_threads_thread_id_key CASCADE")
+                    conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_user_thread_id ON chat_threads (user_id, thread_id)")
+                except Exception as mig_err:
+                    print(f"Chat threads migration notice: {mig_err}")
                 conn.commit()
     except Exception:
         pass

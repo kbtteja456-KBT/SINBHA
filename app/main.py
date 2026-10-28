@@ -808,10 +808,12 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
         ) or (
             app_match and len(lower_m.split()) <= 4 and not bool(re.search(r"\b(how|what|why|is|are|tell|who|can)\b", lower_m))
         )
-        is_type_intent = bool(
-            re.search(r"^\s*(?:type|write|input)\s+", lower_m) or
-            re.search(r"\b(?:type|write)\s+([\"']?)(.+?)\b(?:\s+(?:and|then)\s+(?:press\s+)?(?:enter|send|return))\b", lower_m) or
-            re.search(r"\b(?:press|hit)\s+enter\b", lower_m)
+        is_not_note_or_creative = not bool(re.search(r"\b(notes?|reminder|task|essay|summary|story|code|email|poem|article|transition|dbms)\b", lower_m))
+        is_type_intent = is_not_note_or_creative and bool(
+            re.search(r"\btype\s+([\"']?)(.+?)\1\s+(?:on\s+my\s+(?:phone|laptop|pc|computer|device|desktop))\b", lower_m) or
+            re.search(r"\b(?:type|write)\s+([\"']?)(.+?)\b(?:\s+(?:and|then)\s+(?:press|hit)\s+(?:enter|send|return))\b", lower_m) or
+            re.search(r"\b(?:press|hit)\s+enter\b", lower_m) or
+            re.search(r"^\s*(?:type|input)\s+[\"']", lower_m)
         )
         is_lock_intent = bool(re.search(r"\b(lock|secure)\s+(my\s+)?(laptop|pc|desktop|computer|screen|workstation)\b", lower_m))
         is_battery_intent = bool(re.search(r"\b(check|what\s+is|show|get)\s+(the\s+)?(battery|battery\s+percentage|battery\s+level|charge)\b|\b(phone|laptop)\s+battery\b", lower_m))
