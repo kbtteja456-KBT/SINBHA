@@ -49,10 +49,10 @@ class TestC1ToolRegistry:
         assert default_registry.get("list_devices").risk_level == 0
 
         # Risk 1: safe side-effect
-        assert default_registry.get("create_task").risk_level == 1
         assert default_registry.get("remember_fact").risk_level == 1
 
-        # Risk 2: confirm
+        # Risk 2: confirm (create_task shows Confirm / Cancel card as before)
+        assert default_registry.get("create_task").risk_level == 2
         assert default_registry.get("complete_task").risk_level == 2
         assert default_registry.get("forget_fact").risk_level == 2
         assert default_registry.get("send_note").risk_level == 2
@@ -152,6 +152,8 @@ class TestC1AgentLoop:
         from unittest.mock import MagicMock
         mock_db = MagicMock()
         mock_db.is_emergency_stopped.return_value = False
+        mock_db.get_emergency_stopped.return_value = False
+        mock_db.get_active_ai_provider.return_value = "auto"
         mock_db.set_pending_proposal.return_value = 123
         mock_db.get_setting.return_value = "alarm_tone"
 

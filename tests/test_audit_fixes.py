@@ -14,6 +14,7 @@ os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 os.environ["ENV"] = "development"
 os.environ["DEV_MODE"] = "true"
 os.environ["DATA_ENCRYPTION_KEY"] = "6FGReUnNbpK-4Rw3UJVh8pbnyWI-GbWxnlkVwi_1o2U="
+os.environ["STRICT_DEVICE_PAIRING"] = "true"
 
 from fastapi.testclient import TestClient
 import app.database as db

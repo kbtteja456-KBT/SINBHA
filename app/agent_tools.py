@@ -249,14 +249,62 @@ async def handle_delete_task(user_id: int, args: dict, ctx: dict) -> dict:
     }
 
 
+
+def is_sensitive_fact(fact_text: str) -> bool:
+    """Returns True if the fact covers sensitive topics (medical, health, finances, family fights)."""
+    if not fact_text:
+        return False
+    lower = fact_text.lower()
+    sensitive_words = [
+        "health", "medical", "doctor", "diagnos", "depress", "anxiety", "suicid",
+        "hospital", "illness", "disease", "medicine", "medication", "pill",
+        "salary", "income", "money", "debt", "loan", "bank account", "credit card",
+        "divorce", "fight with", "abuse", "password", "secret", "cvv"
+    ]
+    return any(w in lower for w in sensitive_words)
+
+def user_explicitly_requested_remember(user_message: str) -> bool:
+    """Returns True if the user explicitly commanded the assistant to remember/save."""
+    if not user_message:
+        return False
+    lower = user_message.lower()
+    return any(p in lower for p in [
+        "remember this", "please remember", "remember that", "save this",
+        "don't forget this", "note this down", "keep this in mind", "remember"
+    ])
+
 async def handle_remember_fact(user_id: int, args: dict, ctx: dict) -> dict:
-    """Saves or updates a fact in the user's memory."""
+    """Saves or updates a fact in the user's memory following strict sensitivity and confirmation rules."""
     db = ctx["db"]
     fact_text = sanitize_text_arg(args.get("fact", ""), 300)
     category = sanitize_text_arg(args.get("category", "general"), 50)
+    user_msg = ctx.get("user_message", "")
 
     if not fact_text or len(fact_text) < 3:
         return {"success": False, "error": "Fact text must be at least 3 characters."}
+
+    # Rule 1: Sensitive facts only saved if user explicitly stated "remember this"
+    if is_sensitive_fact(fact_text) and not user_explicitly_requested_remember(user_msg):
+        return {
+            "success": False,
+            "error": "Sensitive personal facts (medical, health, financial, or personal conflicts) are only remembered when you explicitly say 'remember this'."
+        }
+
+    # Rule 2: Check for fact correction against existing facts
+    from app.ai_brain import detect_fact_correction
+    existing_facts = db.get_all_facts(user_id) if db else []
+    target_id, updated_fact, old_fact = detect_fact_correction(user_msg, existing_facts)
+    if target_id and updated_fact:
+        db.set_pending_action(user_id, "correct_fact", target_id=target_id, target_text=updated_fact)
+        return {
+            "success": True,
+            "needs_user_confirmation": True,
+            "action": "correction_pending",
+            "fact_id": target_id,
+            "old_fact": old_fact,
+            "new_fact": updated_fact,
+            "message": f"Did you want me to update your memory from '{old_fact}' to '{updated_fact}'?",
+        }
 
     result = db.update_or_add_fact(user_id, fact_text, category)
     return {
@@ -931,7 +979,7 @@ def build_default_registry() -> ToolRegistry:
         name="create_task",
         description="Create a new task or reminder for the user. Use when they mention an assignment, deadline, to-do, or ask to be reminded of something.",
         parameters=_SCHEMA_CREATE_TASK,
-        risk_level=1,
+        risk_level=2,
         handler=handle_create_task,
         confirmation_template="Create task: '{title}'",
     ))

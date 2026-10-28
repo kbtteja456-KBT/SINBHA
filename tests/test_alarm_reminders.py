@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from unittest import mock
 import tempfile
 import json
 from datetime import datetime, timezone, timedelta
@@ -138,7 +139,29 @@ class TestAlarmReminders(unittest.TestCase):
         self.assertIn("Review quarterly report", matched.get("speech_text", ""))
         self.assertEqual(matched.get("sound_mode"), "tts_voice")
 
-    def test_05_ai_chat_intent_sound_mode_detection(self):
+    @mock.patch("app.agent_loop._call_llm_with_tools")
+    def test_05_ai_chat_intent_sound_mode_detection(self, mock_llm):
+        async def mock_call_llm(messages, tools, creds):
+            last_content = messages[-1].get("content", "").lower()
+            if "voice" in last_content:
+                args = {"title": "submit tax forms", "due_date": "5pm"}
+            else:
+                args = {"title": "call John", "due_date": "in 20 minutes"}
+            return {
+                "success": True,
+                "message": {
+                    "role": "assistant",
+                    "content": "I'll set that reminder for you 🌸",
+                    "tool_calls": [{
+                        "id": "tc_test_rem",
+                        "type": "function",
+                        "function": {"name": "create_task", "arguments": json.dumps(args)}
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }
+        mock_llm.side_effect = mock_call_llm
+
         # Test voice sound mode in chat
         chat_req = {
             "message": "remind me with voice to submit tax forms at 5pm",

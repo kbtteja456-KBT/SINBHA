@@ -100,6 +100,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const birdChatBtn = document.getElementById("birdChatBtn");
 
   const persistenceSelect = document.getElementById("persistenceSelect");
+  const aiProviderSelect = document.getElementById("aiProviderSelect");
   const countrySelect = document.getElementById("countrySelect");
   const timezoneSelect = document.getElementById("timezoneSelect");
   const quietHoursToggle = document.getElementById("quietHoursToggle");
@@ -1432,6 +1433,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const payload = {
         persistence: persistenceSelect ? persistenceSelect.value : "normal",
+      active_ai_provider: aiProviderSelect ? aiProviderSelect.value : "auto",
         country: countrySelect ? countrySelect.value : "US",
         timezone: timezoneSelect ? timezoneSelect.value : (Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"),
         quiet_hours_enabled: quietHoursToggle ? (quietHoursToggle.checked ? "true" : "false") : "true",
@@ -1454,6 +1456,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   if (persistenceSelect) persistenceSelect.addEventListener("change", saveSettings);
+  if (aiProviderSelect) aiProviderSelect.addEventListener("change", saveSettings);
   if (countrySelect) countrySelect.addEventListener("change", saveSettings);
   if (timezoneSelect) timezoneSelect.addEventListener("change", saveSettings);
   if (quietHoursToggle) {

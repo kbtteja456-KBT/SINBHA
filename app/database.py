@@ -1086,6 +1086,7 @@ def get_all_settings(user_id: int) -> dict:
         "country": "US",
         "timezone": "UTC",
         "web_search_enabled": "true",
+        "active_ai_provider": "auto",
         "reminder_sound_mode": "alarm_tone",
         "reminder_custom_song_uri": "",
         "user_display_name": "",
@@ -1776,17 +1777,22 @@ def update_device_permissions(
             and int(permission_level) > dev.permission_level
         )
 
-        # Check if enabling "open_link"
+        # Check if enabling "open_link" or "allow_without_asking"
         current_caps = json.loads(dev.capabilities_json) if dev.capabilities_json else {}
         is_enabling_open_link = (
             capabilities is not None
             and capabilities.get("open_link") is True
             and not current_caps.get("open_link", False)
         )
+        is_enabling_allow_without_asking = (
+            capabilities is not None
+            and capabilities.get("allow_without_asking") is True
+            and not current_caps.get("allow_without_asking", False)
+        )
 
-        if is_raising_level or is_enabling_open_link:
+        if is_raising_level or is_enabling_open_link or is_enabling_allow_without_asking:
             if not password or not verify_password(user.password_hash, password):
-                raise ValueError("PASSWORD_REQUIRED: Re-entering your password is required to raise permission to Level 2+ or enable open link.")
+                raise ValueError("PASSWORD_REQUIRED: Re-entering your password is required to raise permission, enable open link, or enable Allow without asking.")
 
         if permission_level is not None:
             dev.permission_level = max(0, min(4, int(permission_level)))
@@ -1935,3 +1941,60 @@ def count_global_searches_this_month() -> int:
 
 
 
+
+def get_device_settings(user_id: int, device_id: str) -> dict:
+    """Returns capabilities and settings for a specific device."""
+    dev = get_device_by_id(user_id, device_id)
+    if not dev:
+        return {"allow_without_asking": False, "preferred_browser": "chrome"}
+    caps = dev.get("capabilities", {})
+    return {
+        "allow_without_asking": bool(caps.get("allow_without_asking", False)),
+        "preferred_browser": caps.get("preferred_browser", "chrome"),
+        "open_link": bool(caps.get("open_link", True)),
+        "note": bool(caps.get("note", True)),
+        "ring": bool(caps.get("ring", True)),
+    }
+
+def update_device_settings(
+    user_id: int,
+    device_id: str,
+    settings: dict,
+    password: Optional[str] = None
+) -> dict:
+    """Updates per-device settings including allow_without_asking and preferred_browser."""
+    with get_db_session() as session:
+        user = session.scalar(select(User).where(User.id == user_id))
+        if not user:
+            raise ValueError("User not found.")
+        dev = session.scalar(
+            select(Device).where(and_(Device.user_id == user_id, Device.device_id == device_id))
+        )
+        if not dev:
+            raise ValueError("Device not found.")
+
+        current_caps = json.loads(dev.capabilities_json) if dev.capabilities_json else {}
+        
+        # Enabling allow_without_asking strictly requires password
+        if settings.get("allow_without_asking") is True and not current_caps.get("allow_without_asking", False):
+            if not password or not verify_password(user.password_hash, password):
+                raise ValueError("PASSWORD_REQUIRED: Password is required to enable 'Allow without asking'.")
+
+        for k, v in settings.items():
+            current_caps[k] = v
+
+        dev.capabilities_json = json.dumps(current_caps)
+        session.flush()
+        return _device_to_dict(dev)
+
+def get_active_ai_provider(user_id: int) -> str:
+    """Returns active AI provider: 'auto', 'groq', 'openrouter', or 'disabled'."""
+    return get_setting(user_id, "active_ai_provider", "auto")
+
+def set_active_ai_provider(user_id: int, provider: str) -> str:
+    """Sets active AI provider: 'auto', 'groq', 'openrouter', or 'disabled'."""
+    clean = (provider or "auto").strip().lower()
+    if clean not in ("auto", "groq", "openrouter", "disabled"):
+        clean = "auto"
+    set_setting(user_id, "active_ai_provider", clean)
+    return clean

@@ -268,6 +268,19 @@
           <p>Customize how your feathered companion delivers gentle check-ins.</p>
 
           <div class="setting-field-group">
+            <label for="aiProviderSelect" class="setting-label">
+              <strong>Approved AI Model Provider</strong>
+              <span class="setting-desc">Select which provider processes your chats, or disable external AI calls</span>
+            </label>
+            <select id="aiProviderSelect" class="setting-select">
+              <option value="auto" selected>Auto (Groq / OpenRouter)</option>
+              <option value="groq">Groq Cloud (Ultra-Fast Llama)</option>
+              <option value="openrouter">OpenRouter AI (Multi-Model Gateway)</option>
+              <option value="disabled">Disable External AI (Local Only)</option>
+            </select>
+          </div>
+
+          <div class="setting-field-group">
             <label for="persistenceSelect" class="setting-label">
               <strong>Reminder Persistence</strong>
               <span class="setting-desc">How often the bird revisits pending or overdue tasks</span>
@@ -772,7 +785,7 @@
       <div class="modal-scroll-body modal-text-content">
         <p><strong>1. Strict User Isolation:</strong> Every message, fact, task, and reminder is bound to your user account and never shared with other users. Admins cannot read your chat contents.</p>
         <p><strong>2. Encryption at Rest:</strong> Sensitive message contents and memory facts are stored encrypted at rest in our database using Fernet symmetric encryption.</p>
-        <p><strong>3. AI Processing:</strong> Messages are processed by third-party AI models to interpret tasks and reply warmly. Plain passwords and tokens are never logged.</p>
+        <p><strong>3. AI Processing & Approved Providers:</strong> Messages are processed exclusively by your approved AI model providers: <strong>Groq Cloud</strong> (free, ultra-fast frontier open-weight models) and <strong>OpenRouter AI</strong> (multi-model gateway). No other third party receives your conversation text. Plain passwords, OTP codes, and credit cards are strictly blocked and never sent. You can switch providers or disable third-party AI processing entirely in Settings &amp; Privacy.</p>
         <p><strong>4. Data Rights:</strong> You can download a complete JSON archive of all your data (Settings → Download My Data) or permanently delete your account and all associated data at any time.</p>
       </div>
       <div class="modal-sticky-footer" style="margin-top: 16px; text-align: right;">

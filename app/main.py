@@ -29,6 +29,7 @@ from app.web_intelligence import (
     SearchDecisionEngine,
 )
 from app.device_relay import relay_manager
+from app.ai_brain import call_sinbha_brain, extract_explicit_facts
 from app.security import (
     is_production,
     is_dev_mode_allowed,
@@ -135,6 +136,7 @@ class SettingsUpdateRequest(BaseModel):
     reminder_custom_song_uri: Optional[str] = ""
     user_display_name: Optional[str] = ""
     dnd_allow_alarms: Optional[Any] = "true"
+    active_ai_provider: Optional[str] = "auto"
 
 class TaskStatusUpdateRequest(BaseModel):
     status: str  # "pending" or "completed"
@@ -1142,6 +1144,39 @@ async def get_settings_endpoint(user: dict = Depends(get_current_user)):
     """Returns settings for the logged-in user."""
     return {"settings": db.get_all_settings(user["id"])}
 
+
+@app.get("/api/settings/ai-provider")
+async def get_ai_provider_endpoint(user: dict = Depends(get_current_user)):
+    """Returns transparency metadata and active AI provider selection."""
+    user_id = user["id"]
+    active = db.get_active_ai_provider(user_id)
+    return {
+        "active_provider": active,
+        "available_providers": [
+            {
+                "id": "auto",
+                "name": "Auto (Groq / OpenRouter)",
+                "description": "Uses Groq (free, ultra-fast Llama) when configured, with OpenRouter fallback.",
+            },
+            {
+                "id": "groq",
+                "name": "Groq Cloud Only",
+                "description": "Sends messages exclusively to Groq API (openai/gpt-oss-120b or Llama 3.3).",
+            },
+            {
+                "id": "openrouter",
+                "name": "OpenRouter AI Only",
+                "description": "Sends messages exclusively to OpenRouter API (Gemini / Claude / OpenRouter models).",
+            },
+            {
+                "id": "disabled",
+                "name": "Disable External AI (Local Only)",
+                "description": "Stops sending any message text to third-party AI models. Operates in local/offline companion mode.",
+            },
+        ],
+        "transparency_note": "SINBHA only sends message text to your chosen model provider (Groq or OpenRouter). No other third party receives your conversations.",
+    }
+
 @app.post("/api/settings")
 async def update_settings_endpoint(payload: SettingsUpdateRequest, user: dict = Depends(get_current_user)):
     """Updates settings for the logged-in user."""
@@ -1165,6 +1200,8 @@ async def update_settings_endpoint(payload: SettingsUpdateRequest, user: dict = 
     if payload.dnd_allow_alarms is not None:
         val_str = "true" if str(payload.dnd_allow_alarms).lower() in ("true", "1") else "false"
         db.set_setting(user_id, "dnd_allow_alarms", val_str)
+    if payload.active_ai_provider is not None:
+        db.set_active_ai_provider(user_id, payload.active_ai_provider)
     db.log_audit(user_id, "SETTINGS_UPDATED", f"Persistence: {payload.persistence}, Quiet hours: {payload.quiet_hours_start}-{payload.quiet_hours_end}, Web Search: {payload.web_search_enabled}, Sound: {payload.reminder_sound_mode}")
     return {"success": True, "settings": db.get_all_settings(user_id)}
 

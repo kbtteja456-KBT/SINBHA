@@ -522,18 +522,25 @@ def extract_fallback_task_proposal(user_message: str) -> dict | None:
         "notes": None
     }
 
-def get_llm_credentials() -> Optional[dict]:
+def get_llm_credentials(active_provider: Optional[str] = None) -> Optional[dict]:
     """
     Returns active LLM credentials.
-    Prioritizes GROQ_API_KEY (100% free, ultra-fast frontier models),
-    and falls back to OPENROUTER_API_KEY.
+    Respects user's active_provider setting ('groq', 'openrouter', 'disabled', or 'auto').
+    If active_provider == 'disabled', returns None (disables external AI models).
     """
+    provider_pref = (active_provider or os.getenv("ACTIVE_AI_PROVIDER", "auto")).strip().lower()
+    if provider_pref == "disabled":
+        return None
+
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
     groq_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b").strip()
     openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
     openrouter_model = os.getenv("OPENROUTER_MODEL", "google/gemini-2.5-flash").strip()
 
-    if groq_key and groq_key != "your_groq_api_key_here":
+    has_groq = bool(groq_key and groq_key != "your_groq_api_key_here")
+    has_openrouter = bool(openrouter_key and openrouter_key != "your_openrouter_api_key_here")
+
+    if provider_pref == "groq" and has_groq:
         return {
             "provider": "groq",
             "api_key": groq_key,
@@ -542,7 +549,26 @@ def get_llm_credentials() -> Optional[dict]:
             "reasoning_effort": "low" if "gpt-oss-120b" in groq_model else None
         }
 
-    if openrouter_key and openrouter_key != "your_openrouter_api_key_here":
+    if provider_pref == "openrouter" and has_openrouter:
+        return {
+            "provider": "openrouter",
+            "api_key": openrouter_key,
+            "model": openrouter_model,
+            "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+            "reasoning_effort": None
+        }
+
+    # Auto: Groq first (free, ultra-fast), then OpenRouter
+    if has_groq:
+        return {
+            "provider": "groq",
+            "api_key": groq_key,
+            "model": groq_model,
+            "endpoint": "https://api.groq.com/openai/v1/chat/completions",
+            "reasoning_effort": "low" if "gpt-oss-120b" in groq_model else None
+        }
+
+    if has_openrouter:
         return {
             "provider": "openrouter",
             "api_key": openrouter_key,
