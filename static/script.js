@@ -154,6 +154,35 @@ document.addEventListener("DOMContentLoaded", () => {
   let activeReminderId = null;
   let remindersPaused = false;
   let birdFlightTimer = null;
+  let activeThreadId = "default";
+  let activeChatMode = "normal";
+
+  // ChatGPT layout & thread selectors
+  const threadEmptyState = document.getElementById("threadEmptyState");
+  const recentThreadsList = document.getElementById("recentThreadsList");
+  const activeThreadTitle = document.getElementById("activeThreadTitle");
+  const sidebarNewChatBtn = document.getElementById("sidebarNewChatBtn");
+  const mobileNewChatBtn = document.getElementById("mobileNewChatBtn");
+  const mobile2LinesBtn = document.getElementById("mobile2LinesBtn");
+  const chatSidebar = document.getElementById("chatSidebar");
+  const sidebarBackdrop = document.getElementById("sidebarBackdrop");
+  const sidebarProfileBtn = document.getElementById("sidebarProfileBtn");
+  const profileMenuPopup = document.getElementById("profileMenuPopup");
+  const menuItemSettings = document.getElementById("menuItemSettings");
+  const menuItemLogout = document.getElementById("menuItemLogout");
+  const desktopSidebarToggleBtn = document.getElementById("desktopSidebarToggleBtn");
+  const desktopSidebarOpenBtn = document.getElementById("desktopSidebarOpenBtn");
+
+  function updateEmptyStateVisibility() {
+    if (!threadEmptyState) return;
+    const hasMessages = chatMessages && chatMessages.children.length > 0;
+    if (hasMessages) {
+      threadEmptyState.classList.add("hidden");
+    } else {
+      threadEmptyState.classList.remove("hidden");
+      threadEmptyState.classList.remove("typing-fade");
+    }
+  }
 
   // Format time helper
   function formatTime(dateStr) {
@@ -181,11 +210,19 @@ document.addEventListener("DOMContentLoaded", () => {
     return div.innerHTML;
   }
 
-  // Enable/disable send button based on text
+  // Enable/disable send button based on text & trigger smooth fade on empty state cards
   messageInput.addEventListener("input", () => {
     messageInput.style.height = "auto";
     messageInput.style.height = Math.min(messageInput.scrollHeight, 140) + "px";
     sendBtn.disabled = messageInput.value.trim().length === 0;
+
+    if (threadEmptyState && !threadEmptyState.classList.contains("hidden")) {
+      if (messageInput.value.trim().length > 0) {
+        threadEmptyState.classList.add("typing-fade");
+      } else {
+        threadEmptyState.classList.remove("typing-fade");
+      }
+    }
   });
 
   // Handle Enter key (Shift+Enter for newline)
@@ -209,6 +246,7 @@ document.addEventListener("DOMContentLoaded", () => {
       </div>
     `;
     chatMessages.appendChild(group);
+    updateEmptyStateVisibility();
     scrollToBottom();
   }
 
@@ -441,6 +479,7 @@ document.addEventListener("DOMContentLoaded", () => {
       </div>
     `;
     chatMessages.appendChild(group);
+    updateEmptyStateVisibility();
 
     // Attach event listeners to task proposal buttons (Step 5 & 6B)
     if (proposal && proposal.type === "task_proposal") {
@@ -2020,14 +2059,184 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Load user data
     checkAppInfo();
+    loadUserThreads();
     loadChatHistory();
     loadTasks();
     loadSettings();
     checkDueReminders();
+    setupPromptChips();
     if (typeof syncSessionWithNativeApp === "function") syncSessionWithNativeApp();
     if (typeof checkNativeCompanionSettings === "function") checkNativeCompanionSettings();
     if (typeof initDeviceChannel === "function") initDeviceChannel();
     if (typeof loadDevices === "function") loadDevices();
+  }
+
+  // Load conversation history for current thread
+  async function loadChatHistory(threadId = null) {
+    if (threadId) {
+      activeThreadId = threadId;
+    }
+    try {
+      const url = activeThreadId ? `/api/messages?thread_id=${encodeURIComponent(activeThreadId)}` : "/api/messages";
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        chatMessages.innerHTML = "";
+        const msgs = data.messages || [];
+        msgs.forEach(m => {
+          if (m.role === "user") {
+            appendUserMessage(m.content, m.timestamp);
+          } else {
+            appendAiMessage(m.content, m.timestamp);
+          }
+        });
+        updateEmptyStateVisibility();
+        scrollToBottom();
+      }
+    } catch (e) {
+      console.warn("Could not load chat history:", e);
+    }
+  }
+
+  // Load and render user chat threads in sidebar
+  async function loadUserThreads() {
+    if (!recentThreadsList) return;
+    try {
+      const res = await fetch("/api/threads");
+      if (res.ok) {
+        const data = await res.json();
+        const threads = data.threads || [];
+        renderThreadsList(threads);
+      }
+    } catch (e) {
+      console.warn("Could not load threads:", e);
+    }
+  }
+
+  function renderThreadsList(threads) {
+    if (!recentThreadsList) return;
+    recentThreadsList.innerHTML = "";
+
+    threads.forEach(t => {
+      const tid = t.id || t.thread_id;
+      const item = document.createElement("div");
+      item.className = `thread-item ${tid === activeThreadId ? "active" : ""}`;
+      item.dataset.threadId = tid;
+
+      item.innerHTML = `
+        <span class="thread-title">${escapeHtml(t.title || "Chat")}</span>
+        <div class="thread-actions">
+          <button type="button" class="thread-action-btn pin-btn" title="${t.is_pinned ? "Unpin" : "Pin"}">
+            ${t.is_pinned ? "📌" : "📍"}
+          </button>
+          <button type="button" class="thread-action-btn del-btn" title="Delete">
+            🗑️
+          </button>
+        </div>
+      `;
+
+      item.addEventListener("click", (e) => {
+        if (e.target.closest(".thread-action-btn")) return;
+        switchThread(tid, t.title || "Chat");
+      });
+
+      const pinBtn = item.querySelector(".pin-btn");
+      if (pinBtn) {
+        pinBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          try {
+            await fetch(`/api/threads/${encodeURIComponent(tid)}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ is_pinned: !t.is_pinned })
+            });
+            loadUserThreads();
+          } catch (err) {}
+        });
+      }
+
+      const delBtn = item.querySelector(".del-btn");
+      if (delBtn) {
+        delBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          if (confirm(`Delete '${t.title}'?`)) {
+            try {
+              await fetch(`/api/threads/${encodeURIComponent(tid)}`, { method: "DELETE" });
+              if (activeThreadId === tid) {
+                activeThreadId = "default";
+              }
+              loadUserThreads();
+              loadChatHistory();
+            } catch (err) {}
+          }
+        });
+      }
+
+      recentThreadsList.appendChild(item);
+    });
+  }
+
+  async function switchThread(threadId, title) {
+    activeThreadId = threadId;
+    if (activeThreadTitle) activeThreadTitle.textContent = title || "SINBHA";
+    chatMessages.innerHTML = "";
+    await loadChatHistory(threadId);
+    loadUserThreads();
+    if (chatSidebar) chatSidebar.classList.remove("is-drawer-open");
+    if (sidebarBackdrop) sidebarBackdrop.style.display = "none";
+  }
+
+  async function createNewThread() {
+    try {
+      const res = await fetch("/api/threads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: "New Chat" })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const newT = data.thread;
+        const newId = newT ? (newT.id || newT.thread_id) : "default";
+        await switchThread(newId, "New Chat");
+      }
+    } catch (e) {
+      console.warn("Create thread failed:", e);
+    }
+  }
+
+  function setupPromptChips() {
+    const chips = document.querySelectorAll(".prompt-chip");
+    chips.forEach(chip => {
+      chip.addEventListener("click", () => {
+        const promptTemplate = chip.getAttribute("data-prompt") || "";
+        const label = chip.querySelector(".chip-label")?.textContent.trim() || "";
+
+        if (label.includes("voice")) {
+          messageInput.value = "Remind me with voice to ";
+          messageInput.placeholder = "What should I remind you with voice, and at what time?";
+        } else if (label.includes("song")) {
+          messageInput.value = "Remind me with a song to ";
+          messageInput.placeholder = "What should I remind you with your chosen song, and at what time?";
+        } else if (label.includes("notes")) {
+          messageInput.value = "Write or edit my notes for today: ";
+          messageInput.placeholder = "What notes would you like me to write or edit for today?";
+        } else if (label.includes("web")) {
+          messageInput.value = "Search the web for ";
+          messageInput.placeholder = "What would you like me to search on the web?";
+        } else {
+          messageInput.value = promptTemplate;
+        }
+
+        messageInput.focus();
+        messageInput.style.height = "auto";
+        messageInput.style.height = Math.min(messageInput.scrollHeight, 140) + "px";
+        sendBtn.disabled = false;
+
+        if (threadEmptyState) {
+          threadEmptyState.classList.add("typing-fade");
+        }
+      });
+    });
   }
 
   async function checkAuthStatus() {
@@ -4543,7 +4752,75 @@ document.addEventListener("DOMContentLoaded", () => {
       allowAlarmsToggle.addEventListener("change", saveSettings);
     }
 
+    // Mobile Drawer Navigation (2 Lines Button)
+    if (mobile2LinesBtn) {
+      mobile2LinesBtn.addEventListener("click", () => {
+        if (chatSidebar) chatSidebar.classList.add("is-drawer-open");
+        if (sidebarBackdrop) sidebarBackdrop.style.display = "block";
+      });
+    }
+
+    if (sidebarBackdrop) {
+      sidebarBackdrop.addEventListener("click", () => {
+        if (chatSidebar) chatSidebar.classList.remove("is-drawer-open");
+        sidebarBackdrop.style.display = "none";
+      });
+    }
+
+    // New Chat Buttons
+    if (sidebarNewChatBtn) {
+      sidebarNewChatBtn.addEventListener("click", createNewThread);
+    }
+    if (mobileNewChatBtn) {
+      mobileNewChatBtn.addEventListener("click", createNewThread);
+    }
+
+    // Profile Popup Menu Toggle
+    if (sidebarProfileBtn && profileMenuPopup) {
+      sidebarProfileBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const isShown = profileMenuPopup.style.display === "block";
+        profileMenuPopup.style.display = isShown ? "none" : "block";
+      });
+
+      document.addEventListener("click", (e) => {
+        if (!profileMenuPopup.contains(e.target) && !sidebarProfileBtn.contains(e.target)) {
+          profileMenuPopup.style.display = "none";
+        }
+      });
+    }
+
+    if (menuItemSettings) {
+      menuItemSettings.addEventListener("click", () => {
+        if (profileMenuPopup) profileMenuPopup.style.display = "none";
+        if (settingsModal) settingsModal.style.display = "flex";
+        loadSettings();
+      });
+    }
+
+    if (menuItemLogout) {
+      menuItemLogout.addEventListener("click", () => {
+        if (profileMenuPopup) profileMenuPopup.style.display = "none";
+        performLogout();
+      });
+    }
+
+    if (desktopSidebarToggleBtn) {
+      desktopSidebarToggleBtn.addEventListener("click", () => {
+        if (chatSidebar) chatSidebar.style.display = "none";
+        if (desktopSidebarOpenBtn) desktopSidebarOpenBtn.style.display = "inline-flex";
+      });
+    }
+
+    if (desktopSidebarOpenBtn) {
+      desktopSidebarOpenBtn.addEventListener("click", () => {
+        if (chatSidebar) chatSidebar.style.display = "flex";
+        desktopSidebarOpenBtn.style.display = "none";
+      });
+    }
+
     loadUserThreads();
+    setupPromptChips();
     // Startup: Verify Authentication status first
     checkAuthStatus();
     checkAppVersionGate(false);
