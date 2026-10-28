@@ -12,7 +12,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <link rel="stylesheet" href="/static/style.css?v=1.3.0">
+  <link rel="stylesheet" href="/static/style.css?v=1.3.1">
 </head>
 <body>
 
@@ -1373,9 +1373,22 @@
               }
               if (link) {
                 link.href = downloadUrl;
+                link.onclick = function(e) {
+                  // Ensure Android Capacitor or Electron opens the download in external browser
+                  if (window.electronAPI && typeof window.electronAPI.openExternal === 'function') {
+                    e.preventDefault();
+                    window.electronAPI.openExternal(downloadUrl);
+                  } else if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Browser) {
+                    e.preventDefault();
+                    window.Capacitor.Plugins.Browser.open({ url: downloadUrl });
+                  } else {
+                    // Let default anchor open or fallback to location.href
+                    window.open(downloadUrl, '_system');
+                  }
+                };
               }
               if (laterBtn) {
-                laterBtn.style.display = isMandatory ? 'none' : 'block';
+                laterBtn.style.display = 'block';
                 laterBtn.onclick = function() {
                   modal.style.display = 'none';
                 };
@@ -1401,6 +1414,6 @@
     })();
   </script>
 
-  <script src="/static/script.js?v=1.3.0"></script>
+  <script src="/static/script.js?v=1.3.1"></script>
 </body>
 </html>

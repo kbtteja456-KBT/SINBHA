@@ -156,6 +156,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let birdFlightTimer = null;
   let activeThreadId = "default";
   let activeChatMode = "normal";
+  let activeChipMode = null;
 
   // ChatGPT layout & thread selectors
   const threadEmptyState = document.getElementById("threadEmptyState");
@@ -181,6 +182,7 @@ document.addEventListener("DOMContentLoaded", () => {
     } else {
       threadEmptyState.classList.remove("hidden");
       threadEmptyState.classList.remove("typing-fade");
+      threadEmptyState.classList.remove("typing-hidden");
     }
   }
 
@@ -218,9 +220,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (threadEmptyState && !threadEmptyState.classList.contains("hidden")) {
       if (messageInput.value.trim().length > 0) {
-        threadEmptyState.classList.add("typing-fade");
-      } else {
-        threadEmptyState.classList.remove("typing-fade");
+        threadEmptyState.classList.add("typing-hidden");
+      } else if (!chatMessages || chatMessages.children.length === 0) {
+        threadEmptyState.classList.remove("typing-hidden");
       }
     }
   });
@@ -1215,17 +1217,34 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Send message function
   async function sendMessage() {
-    const text = messageInput.value.trim();
-    if (!text) return;
+    const rawText = messageInput.value.trim();
+    if (!rawText) return;
+
+    if (threadEmptyState) {
+      threadEmptyState.classList.add("hidden");
+    }
+
+    let payloadText = rawText;
+    if (activeChipMode === "voice" && !/^(remind|voice)/i.test(rawText)) {
+      payloadText = "Remind me with voice to " + rawText;
+    } else if (activeChipMode === "song" && !/^(remind|song)/i.test(rawText)) {
+      payloadText = "Remind me with a song to " + rawText;
+    } else if (activeChipMode === "notes" && !/^(write|notes?)/i.test(rawText)) {
+      payloadText = "Write or edit my notes for today: " + rawText;
+    } else if (activeChipMode === "web" && !/^(search|look up|google)/i.test(rawText)) {
+      payloadText = "Search the web for " + rawText;
+    }
+    activeChipMode = null;
+    messageInput.placeholder = "Ask SINBHA...";
 
     messageInput.value = "";
     messageInput.style.height = "auto";
     sendBtn.disabled = true;
 
-    appendUserMessage(text);
+    appendUserMessage(rawText);
 
     // If user sent STOP in chat
-    if (text.toUpperCase() === "STOP") {
+    if (rawText.toUpperCase() === "STOP") {
       setStopUiState(true);
       triggerEmergencyStop();
       return;
@@ -1233,7 +1252,7 @@ document.addEventListener("DOMContentLoaded", () => {
       setStopUiState(false);
     }
 
-    const isSearchQuery = /https?:\/\/|\b(search|look up|price|cost|how much|latest|news|weather|who won)\b/i.test(text);
+    const isSearchQuery = /https?:\/\/|\b(search|look up|price|cost|how much|latest|news|weather|who won)\b/i.test(payloadText);
     const indicatorGroup = document.createElement("div");
     indicatorGroup.className = "message-group ai-group searching-indicator-group";
     indicatorGroup.innerHTML = `
@@ -1251,7 +1270,7 @@ document.addEventListener("DOMContentLoaded", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: text,
+          message: payloadText,
           tz_offset_minutes: new Date().getTimezoneOffset(),
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           thread_id: activeThreadId
@@ -2209,33 +2228,35 @@ document.addEventListener("DOMContentLoaded", () => {
     const chips = document.querySelectorAll(".prompt-chip");
     chips.forEach(chip => {
       chip.addEventListener("click", () => {
-        const promptTemplate = chip.getAttribute("data-prompt") || "";
         const label = chip.querySelector(".chip-label")?.textContent.trim() || "";
 
-        if (label.includes("voice")) {
-          messageInput.value = "Remind me with voice to ";
-          messageInput.placeholder = "What should I remind you with voice, and at what time?";
-        } else if (label.includes("song")) {
-          messageInput.value = "Remind me with a song to ";
-          messageInput.placeholder = "What should I remind you with your chosen song, and at what time?";
-        } else if (label.includes("notes")) {
-          messageInput.value = "Write or edit my notes for today: ";
-          messageInput.placeholder = "What notes would you like me to write or edit for today?";
-        } else if (label.includes("web")) {
-          messageInput.value = "Search the web for ";
-          messageInput.placeholder = "What would you like me to search on the web?";
-        } else {
-          messageInput.value = promptTemplate;
+        if (threadEmptyState) {
+          threadEmptyState.classList.add("hidden");
         }
 
+        if (label.includes("voice")) {
+          activeChipMode = "voice";
+          appendAiMessage("What would you like me to remind you with voice, and at what time? 🗣️🐘");
+          messageInput.placeholder = "e.g. remind me to drink water at 5:00 PM";
+        } else if (label.includes("song")) {
+          activeChipMode = "song";
+          appendAiMessage("What would you like me to remind you with your chosen song, and at what time? 🎵🐘");
+          messageInput.placeholder = "e.g. remind me to workout at 7:00 AM";
+        } else if (label.includes("notes")) {
+          activeChipMode = "notes";
+          appendAiMessage("What notes would you like me to write or edit for today? 📝🐘");
+          messageInput.placeholder = "e.g. write notes on DBMS transaction ACID properties";
+        } else if (label.includes("web")) {
+          activeChipMode = "web";
+          appendAiMessage("What would you like me to search the web for? 🌐🐘");
+          messageInput.placeholder = "e.g. latest tech news or price of iPhone 16";
+        }
+
+        messageInput.value = "";
         messageInput.focus();
         messageInput.style.height = "auto";
-        messageInput.style.height = Math.min(messageInput.scrollHeight, 140) + "px";
-        sendBtn.disabled = false;
-
-        if (threadEmptyState) {
-          threadEmptyState.classList.add("typing-fade");
-        }
+        sendBtn.disabled = true;
+        scrollToBottom();
       });
     });
   }

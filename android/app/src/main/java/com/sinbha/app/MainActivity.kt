@@ -34,12 +34,34 @@ class MainActivity : BridgeActivity() {
 
         // Configure WebView security & error recovery
         bridge?.webView?.let { webView ->
+            // Support downloading APKs and external files directly through system download manager / browser
+            webView.setDownloadListener { url, _, _, _, _ ->
+                try {
+                    val downloadIntent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    startActivity(downloadIntent)
+                } catch (e: Exception) {}
+            }
+
             val existingClient = webView.webViewClient
             webView.webViewClient = object : WebViewClient() {
 
                 override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                     val url = request?.url ?: return false
                     val host = url.host ?: ""
+                    val urlString = url.toString()
+
+                    // If user is clicking an APK download link or GitHub release, launch external browser directly
+                    if (urlString.endsWith(".apk") || host.contains("github.com")) {
+                        try {
+                            val externalIntent = Intent(Intent.ACTION_VIEW, url).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            startActivity(externalIntent)
+                            return true
+                        } catch (e: Exception) {}
+                    }
 
                     // Restrict navigation strictly to our domain or local assets
                     if (host == TRUSTED_HOST || url.scheme == "file" || url.scheme == "capacitor") {

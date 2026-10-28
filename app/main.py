@@ -1725,9 +1725,10 @@ async def app_version_check_endpoint():
         except Exception:
             pass
 
-    min_android = os.getenv("MIN_APP_VERSION_ANDROID", pkg_version)
+    # Minimum version allows older clients to continue chatting without being blocked
+    min_android = os.getenv("MIN_APP_VERSION_ANDROID", "1.0.0")
     latest_android = os.getenv("LATEST_APP_VERSION_ANDROID", pkg_version)
-    min_desktop = os.getenv("MIN_APP_VERSION_DESKTOP", pkg_version)
+    min_desktop = os.getenv("MIN_APP_VERSION_DESKTOP", "1.0.0")
     latest_desktop = os.getenv("LATEST_APP_VERSION_DESKTOP", pkg_version)
 
     # Safety clamp: min_version must never exceed latest_version

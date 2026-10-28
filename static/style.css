@@ -4211,6 +4211,16 @@ html, body {
   transform: translateY(-6px) scale(0.99);
 }
 
+.thread-empty-state.typing-hidden {
+  opacity: 0 !important;
+  transform: translateY(-16px) scale(0.97) !important;
+  pointer-events: none !important;
+  max-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  transition: opacity 0.35s ease, transform 0.35s ease, max-height 0.4s ease, margin 0.35s ease, padding 0.35s ease;
+}
+
 .empty-state-hero {
   display: flex;
   flex-direction: column;
