@@ -133,7 +133,7 @@ def check_endpoint_rate_limits(request: Request, user_id: int = None):
         if not allowed:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Whoa, you're typing really fast! Let's pause for a breath and try again in a few seconds. 🌸"
+                detail="Whoa, you're typing really fast! Let's pause for a breath and try again in a few seconds. 🐘"
             )
 
     # General endpoints: 120 requests / minute per IP
@@ -171,7 +171,7 @@ def check_ai_usage_caps(user_today_count: int, global_today_count: int):
         return (
             False,
             "SINBHA is taking a short rest right now to cool down its circuits! "
-            "Please check back in a little while, or manage your tasks normally. 🌸"
+            "Please check back in a little while, or manage your tasks normally. 🐘"
         )
 
     # 2. Per-User Daily Limit
@@ -179,7 +179,7 @@ def check_ai_usage_caps(user_today_count: int, global_today_count: int):
         return (
             False,
             "I want to make sure you get some restful time today! We've had a wonderful "
-            "conversation today, so let's pause and continue tomorrow. You can still check your tasks and notes! 🌸"
+            "conversation today, so let's pause and continue tomorrow. You can still check your tasks and notes! 🐘"
         )
 
     return True, ""

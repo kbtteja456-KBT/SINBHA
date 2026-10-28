@@ -24,7 +24,11 @@ data class ReminderItem(
     val reminderId: String?,
     val reminderTime: String,
     val label: String,
-    val isExplicit: Boolean
+    val isExplicit: Boolean,
+    val soundOption: String = "voice_then_tone",
+    val songUri: String = "",
+    val userName: String = "",
+    val spokenText: String = ""
 )
 
 data class VersionInfo(
@@ -207,7 +211,11 @@ class SinbhaApiClient(private val context: Context) {
                             reminderId = obj.optString("reminder_id", null),
                             reminderTime = obj.getString("time"),
                             label = obj.optString("label", "Task Reminder"),
-                            isExplicit = obj.optBoolean("is_explicit", true)
+                            isExplicit = obj.optBoolean("is_explicit", true),
+                            soundOption = obj.optString("sound_option", "voice_then_tone"),
+                            songUri = obj.optString("song_uri", ""),
+                            userName = obj.optString("user_name", ""),
+                            spokenText = obj.optString("spoken_text", "")
                         )
                     )
                 }

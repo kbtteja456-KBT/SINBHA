@@ -68,7 +68,7 @@ class OverlayBirdService : Service() {
 
     private var currentTaskId: Int = -1
     private var currentTaskTitle: String = "Reminder"
-    private var currentDueText: String = "Due now 🌸"
+    private var currentDueText: String = "Due now 🐘"
 
     companion object {
         const val ACTION_SHOW_BIRD = "com.sinbha.app.ACTION_SHOW_BIRD"
@@ -115,7 +115,7 @@ class OverlayBirdService : Service() {
             ACTION_SHOW_BIRD -> {
                 currentTaskId = intent.getIntExtra(EXTRA_TASK_ID, -1)
                 currentTaskTitle = intent.getStringExtra(EXTRA_TASK_TITLE) ?: "Reminder"
-                currentDueText = intent.getStringExtra(EXTRA_DUE_TEXT) ?: "Due now 🌸"
+                currentDueText = intent.getStringExtra(EXTRA_DUE_TEXT) ?: "Due now 🐘"
 
                 if (canDrawOverlays()) {
                     showOverlayBird()

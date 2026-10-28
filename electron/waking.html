@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -144,7 +144,7 @@
       <div class="pulse-ring"></div>
       <img src="icon.png" alt="SINBHA Logo" class="logo-img" onerror="this.src='tray_icon.png'">
     </div>
-    <h1>SINBHA is <span>Waking Up</span> 🌸</h1>
+    <h1>SINBHA is <span>Waking Up</span> 🐘</h1>
     <p>
       Your personal AI companion is warming up in the cloud.<br>
       This only takes a few seconds—hang tight!
@@ -176,7 +176,7 @@
       try {
         const res = await fetch(`${BACKEND_URL}/api/health`, { cache: 'no-store' });
         if (res.ok) {
-          statusText.innerHTML = 'Connected! Loading app... 🌸';
+          statusText.innerHTML = 'Connected! Loading app... 🐘';
           window.location.href = BACKEND_URL;
           return;
         }

@@ -101,7 +101,7 @@ class SinbhaCompanionService : Service() {
 
         return NotificationCompat.Builder(this, PERSISTENT_CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("SINBHA Companion Connected 🌸")
+            .setContentTitle("SINBHA Companion Connected 🐘")
             .setContentText("Listening for phone & laptop commands in background")
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)

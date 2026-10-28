@@ -50,6 +50,7 @@ class User(Base):
     pending_actions = relationship("PendingAction", back_populates="user", cascade="all, delete-orphan")
     device_tokens = relationship("DeviceToken", back_populates="user", cascade="all, delete-orphan")
     devices = relationship("Device", back_populates="user", cascade="all, delete-orphan")
+    chat_threads = relationship("ChatThread", back_populates="user", cascade="all, delete-orphan")
 
 class Session(Base):
     __tablename__ = "sessions"
@@ -105,19 +106,38 @@ class UserSetting(Base):
         Index("ix_user_settings_user_key", "user_id", "key", unique=True),
     )
 
+class ChatThread(Base):
+    __tablename__ = "chat_threads"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    thread_id = Column(String(64), unique=True, nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    title = Column(String(255), nullable=False, default="New Chat")
+    is_pinned = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, server_default=func.now(), onupdate=utc_now, nullable=False)
+
+    user = relationship("User", back_populates="chat_threads")
+
+    __table_args__ = (
+        Index("ix_chat_threads_user_updated", "user_id", "updated_at"),
+    )
+
 class Message(Base):
     __tablename__ = "messages"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    thread_id = Column(String(64), default="default", nullable=False, index=True)
     role = Column(String(32), nullable=False)
     content = Column(Text, nullable=False)
     timestamp = Column(DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False)
 
     user = relationship("User", back_populates="messages")
 
-    # Compound index on user_id + time column for fast per-user conversation retrieval
+    # Compound index on user_id + thread_id + time column for fast per-user conversation retrieval
     __table_args__ = (
+        Index("ix_messages_user_thread_time", "user_id", "thread_id", "timestamp"),
         Index("ix_messages_user_time", "user_id", "timestamp"),
     )
 

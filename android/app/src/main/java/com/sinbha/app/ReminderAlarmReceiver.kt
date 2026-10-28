@@ -42,9 +42,13 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
 
         val taskId = intent.getIntExtra(AlarmScheduler.EXTRA_TASK_ID, -1)
         val taskTitle = intent.getStringExtra(AlarmScheduler.EXTRA_TASK_TITLE) ?: "Task Reminder"
-        val dueText = intent.getStringExtra(AlarmScheduler.EXTRA_DUE_TEXT) ?: "Due now 🌸"
+        val dueText = intent.getStringExtra(AlarmScheduler.EXTRA_DUE_TEXT) ?: "Due now"
+        val soundOption = intent.getStringExtra(AlarmScheduler.EXTRA_SOUND_OPTION) ?: "voice_then_tone"
+        val songUri = intent.getStringExtra(AlarmScheduler.EXTRA_SONG_URI) ?: ""
+        val userName = intent.getStringExtra(AlarmScheduler.EXTRA_USER_NAME) ?: ""
+        val spokenText = intent.getStringExtra(AlarmScheduler.EXTRA_SPOKEN_TEXT) ?: ""
 
-        // 2. Wake up device screen briefly so user sees the reminder alert immediately
+        // 2. Wake up device screen so user sees the clock alarm immediately
         try {
             val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
             val wakeLock = pm?.newWakeLock(
@@ -54,10 +58,35 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
             wakeLock?.acquire(10000L) // 10 seconds to light up screen
         } catch (e: Exception) {}
 
-        // 3. Always display high-priority sound, vibration, and heads-up notification!
-        showHighPriorityNotification(context, taskId, taskTitle, dueText)
+        // 3. Launch full-screen AlarmActivity immediately (over lockscreen & screen-off)
+        val alarmIntent = Intent(context, AlarmActivity::class.java).apply {
+            putExtra(AlarmActivity.EXTRA_TASK_ID, taskId)
+            putExtra(AlarmActivity.EXTRA_TASK_TITLE, taskTitle)
+            putExtra(AlarmActivity.EXTRA_SOUND_OPTION, soundOption)
+            putExtra(AlarmActivity.EXTRA_SONG_URI, songUri)
+            putExtra(AlarmActivity.EXTRA_USER_NAME, userName)
+            putExtra(AlarmActivity.EXTRA_SPOKEN_TEXT, spokenText)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_NO_USER_ACTION
+        }
 
-        // 4. If user allowed overlay: launch floating bird over active apps/lockscreen
+        try {
+            context.startActivity(alarmIntent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        // 4. Also trigger full-screen intent heads-up notification with sound & vibration
+        showHighPriorityNotification(
+            context = context,
+            taskId = taskId,
+            title = taskTitle,
+            dueText = dueText,
+            alarmIntent = alarmIntent
+        )
+
+        // 5. If user allowed overlay: launch floating bird over active apps
         val canOverlay = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             Settings.canDrawOverlays(context)
         } else {
@@ -82,33 +111,48 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
         }
     }
 
-    private fun showHighPriorityNotification(context: Context, taskId: Int, title: String, dueText: String) {
+    private fun showHighPriorityNotification(
+        context: Context,
+        taskId: Int,
+        title: String,
+        dueText: String,
+        alarmIntent: Intent
+    ) {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+        val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 REMINDER_CHANNEL_ID,
-                "SINBHA Task Reminders",
+                "SINBHA Task Alarms",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Urgent reminder alerts with Done and Snooze actions"
+                description = "Urgent reminder alarms with full-screen clock display, Dismiss, and Snooze"
                 enableVibration(true)
                 vibrationPattern = longArrayOf(0, 500, 200, 500, 200, 500)
                 enableLights(true)
-                lightColor = Color.parseColor("#EC4899")
+                lightColor = Color.parseColor("#F25F85")
                 val audioAttributes = AudioAttributes.Builder()
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                     .setUsage(AudioAttributes.USAGE_ALARM)
                     .build()
                 setSound(soundUri, audioAttributes)
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                setBypassDnd(true)
             }
             manager.createNotificationChannel(channel)
         }
 
-        // Action: Done
+        // Full Screen Pending Intent: opens AlarmActivity directly on lockscreen or heads-up banner
+        val pFullScreen = PendingIntent.getActivity(
+            context,
+            taskId * 10 + 9,
+            alarmIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // Action: Done / Dismiss
         val doneIntent = Intent(context, ReminderActionReceiver::class.java).apply {
             action = ReminderActionReceiver.ACTION_MARK_DONE
             putExtra(ReminderActionReceiver.EXTRA_TASK_ID, taskId)
@@ -120,29 +164,16 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // Action: Snooze 2m
-        val snooze2Intent = Intent(context, ReminderActionReceiver::class.java).apply {
+        // Action: Snooze 5m
+        val snooze5Intent = Intent(context, ReminderActionReceiver::class.java).apply {
             action = ReminderActionReceiver.ACTION_SNOOZE
             putExtra(ReminderActionReceiver.EXTRA_TASK_ID, taskId)
-            putExtra(ReminderActionReceiver.EXTRA_MINUTES, 2)
+            putExtra(ReminderActionReceiver.EXTRA_MINUTES, 5)
         }
-        val pSnooze2 = PendingIntent.getBroadcast(
+        val pSnooze5 = PendingIntent.getBroadcast(
             context,
             taskId * 10 + 4,
-            snooze2Intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        // Action: Snooze 15m
-        val snooze15Intent = Intent(context, ReminderActionReceiver::class.java).apply {
-            action = ReminderActionReceiver.ACTION_SNOOZE
-            putExtra(ReminderActionReceiver.EXTRA_TASK_ID, taskId)
-            putExtra(ReminderActionReceiver.EXTRA_MINUTES, 15)
-        }
-        val pSnooze15 = PendingIntent.getBroadcast(
-            context,
-            taskId * 10 + 2,
-            snooze15Intent,
+            snooze5Intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -160,20 +191,20 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
 
         val notif = NotificationCompat.Builder(context, REMINDER_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_sinbha)
-            .setContentTitle("🕊️ $title")
+            .setContentTitle("⏰ $title")
             .setContentText(dueText)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setColor(Color.parseColor("#EC4899"))
+            .setColor(Color.parseColor("#F25F85"))
             .setSound(soundUri)
             .setVibrate(longArrayOf(0, 500, 200, 500, 200, 500))
             .setDefaults(Notification.DEFAULT_ALL)
             .setAutoCancel(true)
             .setContentIntent(pOpen)
-            .addAction(R.drawable.ic_sinbha, "✓ Done", pDone)
-            .addAction(R.drawable.ic_sinbha, "⏰ 2m", pSnooze2)
-            .addAction(R.drawable.ic_sinbha, "⏰ 15m", pSnooze15)
+            .setFullScreenIntent(pFullScreen, true)
+            .addAction(R.drawable.ic_sinbha, "✓ Dismiss", pDone)
+            .addAction(R.drawable.ic_sinbha, "⏰ Snooze 5m", pSnooze5)
             .build()
 
         manager.notify(taskId, notif)

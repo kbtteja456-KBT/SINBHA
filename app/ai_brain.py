@@ -26,7 +26,7 @@ HOW YOU CARE & REMEMBER:
 - Never recite memories like a robotic checklist.
 - WHEN ASKED ABOUT MEMORIES OR THEMSELVES:
   - If your friend asks what you remember about them, what you know about them, or asks specific personal questions (e.g. "what do you remember about me?", "what is my name?", "what do you know about me?", "what's my favorite drink?"):
-    Answer warmly, directly, and naturally in 1 to 3 short sentences from your saved memories, just like a caring friend would (e.g., "I remember your name is Ravi, and you love matcha tea! 🌸").
+    Answer warmly, directly, and naturally in 1 to 3 short sentences from your saved memories, just like a caring friend would (e.g., "I remember your name is Ravi, and you love matcha tea! 🐘").
   - If you have NO saved memories yet, answer warmly that you don't have any specific facts noted down yet and invite them to share whenever they like.
 - Celebrate small wins. Notice when they've been overworking and encourage a break.
 - Encourage real-life connections (friends, family) without lecturing.
@@ -39,7 +39,7 @@ TASK PROPOSING & DUE TIME GUIDELINES (STEP 5 & 6B):
      <<<TASK_PROPOSAL>>>
      {"title": "Clear concise task title in English", "due_date": "Exact relative date and time mentioned (e.g. tomorrow at 8am, in 2 minutes, Friday at 5pm) or null", "notes": "Optional short note or null"}
      <<<END_TASK_PROPOSAL>>>
-  3. If the user mentions a deadline but DOES NOT specify a time (e.g. "I need to do my report tomorrow"), gently ask them in your message what time they would like to aim for (e.g. "What time are you aiming to get it done by? 🌸").
+  3. If the user mentions a deadline but DOES NOT specify a time (e.g. "I need to do my report tomorrow"), gently ask them in your message what time they would like to aim for (e.g. "What time are you aiming to get it done by? 🐘").
 - VENTING ALONE MUST NEVER CREATE A PROPOSAL:
   If the user is just venting, tired, overwhelmed, anxious, or complaining without stating a specific actionable task (e.g. "I have so much work today", "College is exhausting", "I feel overwhelmed", "Work was crazy today"), DO NOT output any task proposal block! Just listen, empathize, and support them warmly.
 - If a task has an ambiguous or unclear deadline (e.g. "sometime", "soon", "later"), do not guess a date; ask them gently in your message when they'd like to get it done by, and set "due_date" to null.
@@ -316,7 +316,7 @@ def parse_relative_datetime(raw_str: str, base_dt: datetime.datetime = None, use
         if target_dt < base_dt and not is_ambiguous:
             is_past = True
             time_label = target_dt.strftime("%I:%M %p").lstrip("0")
-            past_message = f"That requested time ({time_label}) was earlier today. Would you like me to schedule it for tomorrow at {time_label}, or a different time? 🌸"
+            past_message = f"That requested time ({time_label}) was earlier today. Would you like me to schedule it for tomorrow at {time_label}, or a different time? 🐘"
 
         due_datetime_str = target_dt.strftime("%Y-%m-%d %H:%M")
         target_dt_utc = target_dt.astimezone(datetime.timezone.utc)
@@ -343,7 +343,20 @@ def parse_relative_datetime(raw_str: str, base_dt: datetime.datetime = None, use
         "suggested_reminders": suggested
     }
 
-def generate_suggested_reminders(target_dt: datetime.datetime, now_dt: datetime.datetime) -> list:
+def detect_sound_option(user_message: str) -> str:
+    """Detects requested reminder sound mode from user's message."""
+    lower = user_message.lower()
+    if re.search(r"\b(with\s+(?:a\s+)?song|play\s+(?:a\s+)?song|sing\s+(?:a\s+)?song|song\s+reminder|music\s+reminder)\b", lower):
+        return "song"
+    if re.search(r"\b(with\s+voice|with\s+speech|speak\s+to\s+me|spoken\s+voice|voice\s+reminder|voice\s+only)\b", lower):
+        return "spoken_voice"
+    if re.search(r"\b(voice\s+then\s+tone|voice\s+and\s+tone|speech\s+and\s+alarm)\b", lower):
+        return "voice_then_tone"
+    if re.search(r"\b(with\s+alarm|alarm\s+tone|with\s+tone|tone\s+only|bell\s+tone|classic\s+alarm)\b", lower):
+        return "alarm_tone"
+    return "voice_then_tone"
+
+def generate_suggested_reminders(target_dt: datetime.datetime, now_dt: datetime.datetime, sound_option: str = "voice_then_tone") -> list:
     """Generates suggested reminder choices based on due datetime."""
     reminders = []
 
@@ -354,7 +367,8 @@ def generate_suggested_reminders(target_dt: datetime.datetime, now_dt: datetime.
             "time": target_dt.strftime("%Y-%m-%d %H:%M"),
             "label": f"At due time ({target_dt.strftime('%I:%M %p').lstrip('0')})",
             "default": True,
-            "explicit": True
+            "explicit": True,
+            "sound_option": sound_option
         })
     
     # 1. 15 minutes before
@@ -563,7 +577,7 @@ async def call_sinbha_brain(user_message: str, chat_history: list = None, rememb
     if not creds:
         return {
             "success": False,
-            "reply": "I'm not quite connected to my brain yet! 🌸 Please paste your Groq or OpenRouter API key into your .env file on your computer.",
+            "reply": "I'm not quite connected to my brain yet! 🐘 Please paste your Groq or OpenRouter API key into your .env file on your computer.",
             "error": "missing_api_key"
         }
 
@@ -598,7 +612,7 @@ async def call_sinbha_brain(user_message: str, chat_history: list = None, rememb
         facts_list_text = "\n".join([f"- {f['fact']}" for f in remembered_facts])
         system_content += f"\n\nSAVED FACTS ABOUT YOUR FRIEND (MEMORIES):\n{facts_list_text}\n(Bring these up naturally when helpful, and answer directly from them if your friend asks what you remember or know about them! Never recite as a robotic checklist.)"
     else:
-        system_content += "\n\nSAVED FACTS ABOUT YOUR FRIEND (MEMORIES):\nNone saved yet. If they ask what you remember, let them know your memory is a clean slate right now 🌸"
+        system_content += "\n\nSAVED FACTS ABOUT YOUR FRIEND (MEMORIES):\nNone saved yet. If they ask what you remember, let them know your memory is a clean slate right now 🐘"
 
     if user_devices is not None:
         if len(user_devices) == 0:
@@ -701,32 +715,32 @@ async def call_sinbha_brain(user_message: str, chat_history: list = None, rememb
             provider_name = creds["provider"].capitalize()
             return {
                 "success": False,
-                "reply": f"It looks like my {provider_name} API key isn't recognized. Could you please double-check your key in the .env file? 🌸",
+                "reply": f"It looks like my {provider_name} API key isn't recognized. Could you please double-check your key in the .env file? 🐘",
                 "error": "invalid_api_key"
             }
         elif response.status_code == 402:
             return {
                 "success": False,
-                "reply": "It looks like your AI account has run out of credits. Once you top it up or switch to a free Groq key, I'll be right back! 🌸",
+                "reply": "It looks like your AI account has run out of credits. Once you top it up or switch to a free Groq key, I'll be right back! 🐘",
                 "error": "insufficient_credits"
             }
         else:
             return {
                 "success": False,
-                "reply": f"I had a brief hiccup connecting with my thoughts (status {response.status_code}). Give me a moment and try again? 🌸",
+                "reply": f"I had a brief hiccup connecting with my thoughts (status {response.status_code}). Give me a moment and try again? 🐘",
                 "error": f"status_{response.status_code}"
             }
 
     except httpx.TimeoutException:
         return {
             "success": False,
-            "reply": "My thoughts took a little too long to travel over the wire! Please try sending your message again 🌸",
+            "reply": "My thoughts took a little too long to travel over the wire! Please try sending your message again 🐘",
             "error": "timeout"
         }
     except Exception as e:
         return {
             "success": False,
-            "reply": "I'm having a little trouble connecting to my brain right now. Please check your internet connection and try again 🌸",
+            "reply": "I'm having a little trouble connecting to my brain right now. Please check your internet connection and try again 🐘",
             "error": str(e)
         }
 

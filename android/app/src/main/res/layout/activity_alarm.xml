@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0d0c10"
+    android:padding="28dp">
+
+    <!-- Top Branding -->
+    <LinearLayout
+        android:id="@+id/alarmHeader"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentTop="true"
+        android:layout_centerHorizontal="true"
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:layout_marginTop="24dp">
+
+        <ImageView
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:src="@drawable/elephant_logo"
+            android:contentDescription="SINBHA Elephant" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:text="SINBHA ALARM"
+            android:textColor="#f25f85"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.1" />
+    </LinearLayout>
+
+    <!-- Center Content: Clock, Elephant, Title -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_centerInParent="true"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <TextClock
+            android:id="@+id/alarmClock"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:format12Hour="hh:mm a"
+            android:format24Hour="HH:mm"
+            android:textColor="#ffffff"
+            android:textSize="54sp"
+            android:textStyle="bold" />
+
+        <ImageView
+            android:id="@+id/alarmElephantImg"
+            android:layout_width="140dp"
+            android:layout_height="140dp"
+            android:layout_marginTop="20dp"
+            android:layout_marginBottom="20dp"
+            android:src="@drawable/elephant_logo"
+            android:contentDescription="SINBHA Mascot" />
+
+        <TextView
+            android:id="@+id/alarmTaskTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="Task Title"
+            android:textColor="#ffffff"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:maxLines="3" />
+
+        <TextView
+            android:id="@+id/alarmSpokenText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:gravity="center"
+            android:text="Hey friend, it is time to complete your task"
+            android:textColor="#a39ca8"
+            android:textSize="15sp"
+            android:maxLines="4" />
+
+        <TextView
+            android:id="@+id/alarmDueText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="#211c2a"
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="4dp"
+            android:text="Due now"
+            android:textColor="#f25f85"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <!-- Bottom Actions: Dismiss & Snooze -->
+    <LinearLayout
+        android:id="@+id/alarmActions"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_alignParentBottom="true"
+        android:orientation="vertical"
+        android:layout_marginBottom="20dp"
+        android:gravity="center">
+
+        <Button
+            android:id="@+id/btnDismissAlarm"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:backgroundTint="#f25f85"
+            android:text="DISMISS ALARM"
+            android:textColor="#ffffff"
+            android:textSize="17sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.05" />
+
+        <Button
+            android:id="@+id/btnSnoozeAlarm"
+            android:layout_width="match_parent"
+            android:layout_height="50dp"
+            android:layout_marginTop="12dp"
+            android:backgroundTint="#211c2a"
+            android:text="SNOOZE (+10m)"
+            android:textColor="#ffffff"
+            android:textSize="15sp" />
+    </LinearLayout>
+
+</RelativeLayout>

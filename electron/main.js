@@ -174,7 +174,7 @@ function updateTrayMenu() {
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: `🌸 Open SINBHA (v${app.getVersion()})`,
+      label: `🐘 Open SINBHA (v${app.getVersion()})`,
       click: () => showMainWindow()
     },
     { type: 'separator' },
@@ -361,7 +361,7 @@ function showWhatsNewWindow(version) {
   whatsNewWin.loadFile(path.join(__dirname, 'whats_new.html'));
   whatsNewWin.webContents.on('did-finish-load', () => {
     const features = config.WHATS_NEW[version] || [
-      '🌸 Improvements to habit memory & task intelligence',
+      '🐘 Improvements to habit memory & task intelligence',
       '⚡ Faster cloud synchronization & automated reminders'
     ];
     whatsNewWin.webContents.send('whats-new-data', { version, features });
@@ -382,7 +382,7 @@ function setupAutoUpdater() {
   autoUpdater.on('update-downloaded', (info) => {
     dialog.showMessageBox({
       type: 'info',
-      title: 'Update Ready 🌸',
+      title: 'Update Ready 🐘',
       message: `SINBHA v${info.version} is downloaded and ready!`,
       detail: 'Restart the app now to apply the update and see what\'s new.',
       buttons: ['Restart Now', 'Later'],
@@ -454,7 +454,7 @@ async function checkMinimumSupportedVersion(isManual = false) {
       const downloadLink = data.download_url_desktop || 'https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA-Setup.exe';
       const choice = await dialog.showMessageBox({
         type: isMandatory ? 'warning' : 'info',
-        title: isMandatory ? 'Update Required 🌸' : 'New Version Available! 🌸',
+        title: isMandatory ? 'Update Required 🐘' : 'New Version Available! 🐘',
         message: isMandatory ? 'Please update SINBHA to continue.' : `A newer version of SINBHA (v${latestAvail}) is available!`,
         detail: isMandatory
           ? `Your version (${currentVersion}) is no longer supported. Minimum required version is ${minRequired}.`
@@ -472,7 +472,7 @@ async function checkMinimumSupportedVersion(isManual = false) {
     } else if (isManual) {
       dialog.showMessageBox({
         type: 'info',
-        title: 'SINBHA is Up to Date 🌸',
+        title: 'SINBHA is Up to Date 🐘',
         message: `You're on the latest version of SINBHA (v${currentVersion})! ✨`,
         detail: 'Everything is up to date with your companion.',
         buttons: ['OK']

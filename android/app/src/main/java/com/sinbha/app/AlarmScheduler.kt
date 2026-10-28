@@ -17,6 +17,10 @@ object AlarmScheduler {
     const val EXTRA_TASK_TITLE = "extra_task_title"
     const val EXTRA_DUE_TEXT = "extra_due_text"
     const val EXTRA_REMINDER_ID = "extra_reminder_id"
+    const val EXTRA_SOUND_OPTION = "extra_sound_option"
+    const val EXTRA_SONG_URI = "extra_song_uri"
+    const val EXTRA_USER_NAME = "extra_user_name"
+    const val EXTRA_SPOKEN_TEXT = "extra_spoken_text"
 
     fun scheduleExactAlarm(
         context: Context,
@@ -24,7 +28,11 @@ object AlarmScheduler {
         taskTitle: String,
         dueText: String,
         reminderId: String?,
-        triggerAtMillis: Long
+        triggerAtMillis: Long,
+        soundOption: String = "voice_then_tone",
+        songUri: String = "",
+        userName: String = "",
+        spokenText: String = ""
     ) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
 
@@ -33,6 +41,10 @@ object AlarmScheduler {
             putExtra(EXTRA_TASK_TITLE, taskTitle)
             putExtra(EXTRA_DUE_TEXT, dueText)
             putExtra(EXTRA_REMINDER_ID, reminderId)
+            putExtra(EXTRA_SOUND_OPTION, soundOption)
+            putExtra(EXTRA_SONG_URI, songUri)
+            putExtra(EXTRA_USER_NAME, userName)
+            putExtra(EXTRA_SPOKEN_TEXT, spokenText)
         }
 
         val requestCode = (taskId * 31 + (reminderId?.hashCode() ?: 0)).let { if (it < 0) -it else it }
@@ -43,32 +55,45 @@ object AlarmScheduler {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (alarmManager.canScheduleExactAlarms()) {
+        // Show intent for AlarmClockInfo: opens AlarmActivity directly when user taps the alarm clock icon in system UI
+        val showIntent = Intent(context, AlarmActivity::class.java).apply {
+            putExtra(AlarmActivity.EXTRA_TASK_ID, taskId)
+            putExtra(AlarmActivity.EXTRA_TASK_TITLE, taskTitle)
+            putExtra(AlarmActivity.EXTRA_SOUND_OPTION, soundOption)
+            putExtra(AlarmActivity.EXTRA_SONG_URI, songUri)
+            putExtra(AlarmActivity.EXTRA_USER_NAME, userName)
+            putExtra(AlarmActivity.EXTRA_SPOKEN_TEXT, spokenText)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val showPendingIntent = PendingIntent.getActivity(
+            context,
+            requestCode + 1000,
+            showIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        try {
+            // AlarmManager.setAlarmClock is the gold standard for clock/alarm apps:
+            // - Wakes the CPU from deepest Doze mode
+            // - Starts even if the app was swiped from recents or killed
+            // - Highest reliability across all Android vendors (Samsung, Xiaomi, Pixel, OnePlus)
+            val clockInfo = AlarmManager.AlarmClockInfo(triggerAtMillis, showPendingIntent)
+            alarmManager.setAlarmClock(clockInfo, pendingIntent)
+        } catch (e: Exception) {
+            // Fallback if setAlarmClock has OS-level security restriction
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 alarmManager.setExactAndAllowWhileIdle(
                     AlarmManager.RTC_WAKEUP,
                     triggerAtMillis,
                     pendingIntent
                 )
             } else {
-                alarmManager.setAndAllowWhileIdle(
+                alarmManager.setExact(
                     AlarmManager.RTC_WAKEUP,
                     triggerAtMillis,
                     pendingIntent
                 )
             }
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            alarmManager.setExactAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP,
-                triggerAtMillis,
-                pendingIntent
-            )
-        } else {
-            alarmManager.setExact(
-                AlarmManager.RTC_WAKEUP,
-                triggerAtMillis,
-                pendingIntent
-            )
         }
     }
 
@@ -111,18 +136,26 @@ object AlarmScheduler {
                 put("time", item.reminderTime)
                 put("label", item.label)
                 put("is_explicit", item.isExplicit)
+                put("sound_option", item.soundOption)
+                put("song_uri", item.songUri)
+                put("user_name", item.userName)
+                put("spoken_text", item.spokenText)
             }
             jsonArray.put(jsonItem)
 
             val triggerMillis = parseDateTimeToMillis(item.reminderTime)
             if (triggerMillis != null && triggerMillis > now) {
                 scheduleExactAlarm(
-                    context,
-                    item.taskId,
-                    item.taskTitle,
-                    item.label,
-                    item.reminderId,
-                    triggerMillis
+                    context = context,
+                    taskId = item.taskId,
+                    taskTitle = item.taskTitle,
+                    dueText = item.label,
+                    reminderId = item.reminderId,
+                    triggerAtMillis = triggerMillis,
+                    soundOption = item.soundOption,
+                    songUri = item.songUri,
+                    userName = item.userName,
+                    spokenText = item.spokenText
                 )
             }
         }
@@ -143,12 +176,16 @@ object AlarmScheduler {
                 val triggerMillis = parseDateTimeToMillis(timeStr)
                 if (triggerMillis != null && triggerMillis > now) {
                     scheduleExactAlarm(
-                        context,
-                        item.getInt("task_id"),
-                        item.optString("task_title", "Reminder"),
-                        item.optString("label", "Due now 🌸"),
-                        item.optString("reminder_id", null),
-                        triggerMillis
+                        context = context,
+                        taskId = item.getInt("task_id"),
+                        taskTitle = item.optString("task_title", "Reminder"),
+                        dueText = item.optString("label", "Due now"),
+                        reminderId = item.optString("reminder_id", null),
+                        triggerAtMillis = triggerMillis,
+                        soundOption = item.optString("sound_option", "voice_then_tone"),
+                        songUri = item.optString("song_uri", ""),
+                        userName = item.optString("user_name", ""),
+                        spokenText = item.optString("spoken_text", "")
                     )
                 }
             }
@@ -163,7 +200,11 @@ object AlarmScheduler {
         taskTitle: String,
         label: String,
         reminderId: String?,
-        triggerAtMillis: Long
+        triggerAtMillis: Long,
+        soundOption: String = "voice_then_tone",
+        songUri: String = "",
+        userName: String = "",
+        spokenText: String = ""
     ) {
         val prefs = PreferencesManager(context)
         val cached = prefs.cachedRemindersJson
@@ -188,6 +229,10 @@ object AlarmScheduler {
                             put("time", formattedTime)
                             put("label", label)
                             put("is_explicit", true)
+                            put("sound_option", soundOption.ifEmpty { item.optString("sound_option", "voice_then_tone") })
+                            put("song_uri", songUri.ifEmpty { item.optString("song_uri", "") })
+                            put("user_name", userName.ifEmpty { item.optString("user_name", "") })
+                            put("spoken_text", spokenText.ifEmpty { item.optString("spoken_text", "") })
                         }
                         newArray.put(updatedItem)
                         updated = true
@@ -208,6 +253,10 @@ object AlarmScheduler {
                 put("time", formattedTime)
                 put("label", label)
                 put("is_explicit", true)
+                put("sound_option", soundOption)
+                put("song_uri", songUri)
+                put("user_name", userName)
+                put("spoken_text", spokenText)
             }
             newArray.put(newItem)
         }

@@ -19,4 +19,12 @@
         <item name="windowSplashScreenAnimatedIcon">@drawable/ic_sinbha</item>
         <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
     </style>
+
+    <style name="AppTheme.FullScreenAlarm" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">#0d0c10</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:navigationBarColor">#0d0c10</item>
+        <item name="android:statusBarColor">#0d0c10</item>
+    </style>
 </resources>

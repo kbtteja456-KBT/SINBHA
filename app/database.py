@@ -33,6 +33,7 @@ from app.models import (
     PendingAction,
     DeviceToken,
     Device,
+    ChatThread,
     SearchCache,
     SearchUsageLog,
     utc_now,
@@ -133,6 +134,19 @@ def set_engine_url(new_url: str):
 def init_db():
     """Initializes schema tables and indexes."""
     Base.metadata.create_all(bind=engine)
+    # Automatic migration: ensure thread_id column exists on messages table
+    try:
+        with engine.connect() as conn:
+            if "sqlite" in str(engine.url):
+                cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(messages)").fetchall()]
+                if cols and "thread_id" not in cols:
+                    conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN thread_id VARCHAR(64) DEFAULT 'default'")
+                    conn.commit()
+            else:
+                conn.exec_driver_sql("ALTER TABLE messages ADD COLUMN IF NOT EXISTS thread_id VARCHAR(64) DEFAULT 'default'")
+                conn.commit()
+    except Exception:
+        pass
 
 # ----------------- User Authentication & Account Operations (Step 9 & 10) -----------------
 
@@ -603,32 +617,155 @@ def get_global_today_message_count() -> int:
             )
         ) or 0
 
-# ----------------- Chat Messages Operations (Per-User, Encrypted at Rest) -----------------
+# ----------------- Chat Messages & Multi-Thread Operations (Per-User, Encrypted at Rest) -----------------
 
-def save_message(user_id: int, role: str, content: str):
+def create_chat_thread(user_id: int, title: str = "New Chat", thread_id: Optional[str] = None) -> dict:
+    """Creates a new named chat conversation thread."""
+    import uuid
+    tid = thread_id or f"thread_{uuid.uuid4().hex[:12]}"
+    with get_db_session() as session:
+        thread = ChatThread(
+            thread_id=tid,
+            user_id=user_id,
+            title=title.strip() or "New Chat",
+            is_pinned=False,
+            created_at=utc_now(),
+            updated_at=utc_now()
+        )
+        session.add(thread)
+        return {
+            "id": tid,
+            "thread_id": tid,
+            "title": thread.title,
+            "is_pinned": False,
+            "created_at": thread.created_at.isoformat(),
+            "updated_at": thread.updated_at.isoformat()
+        }
+
+def get_user_threads(user_id: int) -> list:
+    """Returns all chat threads for the user, sorted pinned first then updated."""
+    with get_db_session() as session:
+        query = (
+            select(ChatThread)
+            .where(ChatThread.user_id == user_id)
+            .order_by(ChatThread.is_pinned.desc(), ChatThread.updated_at.desc())
+        )
+        threads = session.scalars(query).all()
+        result = [
+            {
+                "id": t.thread_id,
+                "thread_id": t.thread_id,
+                "title": t.title,
+                "is_pinned": bool(t.is_pinned),
+                "created_at": t.created_at.isoformat() if t.created_at else "",
+                "updated_at": t.updated_at.isoformat() if t.updated_at else ""
+            }
+            for t in threads
+        ]
+        # Always ensure a default thread exists if empty
+        if not result:
+            default_t = create_chat_thread(user_id, title="General Chat", thread_id="default")
+            result = [default_t]
+        return result
+
+def get_chat_thread(user_id: int, thread_id: str) -> Optional[dict]:
+    """Returns a single chat thread by ID."""
+    with get_db_session() as session:
+        t = session.scalar(
+            select(ChatThread).where(ChatThread.user_id == user_id, ChatThread.thread_id == thread_id)
+        )
+        if t:
+            return {
+                "id": t.thread_id,
+                "thread_id": t.thread_id,
+                "title": t.title,
+                "is_pinned": bool(t.is_pinned),
+                "created_at": t.created_at.isoformat() if t.created_at else "",
+                "updated_at": t.updated_at.isoformat() if t.updated_at else ""
+            }
+        return None
+
+def rename_chat_thread(user_id: int, thread_id: str, title: str) -> bool:
+    """Renames an existing chat thread."""
+    with get_db_session() as session:
+        thread = session.scalar(
+            select(ChatThread).where(ChatThread.user_id == user_id, ChatThread.thread_id == thread_id)
+        )
+        if thread:
+            thread.title = title.strip() or "Chat"
+            thread.updated_at = utc_now()
+            return True
+        return False
+
+def pin_chat_thread(user_id: int, thread_id: str, is_pinned: bool) -> bool:
+    """Pins or unpins a chat thread in the sidebar."""
+    with get_db_session() as session:
+        thread = session.scalar(
+            select(ChatThread).where(ChatThread.user_id == user_id, ChatThread.thread_id == thread_id)
+        )
+        if thread:
+            thread.is_pinned = is_pinned
+            thread.updated_at = utc_now()
+            return True
+        return False
+
+def delete_chat_thread(user_id: int, thread_id: str) -> bool:
+    """Deletes a chat thread and all its associated messages."""
+    with get_db_session() as session:
+        session.execute(
+            delete(Message).where(Message.user_id == user_id, Message.thread_id == thread_id)
+        )
+        res = session.execute(
+            delete(ChatThread).where(ChatThread.user_id == user_id, ChatThread.thread_id == thread_id)
+        )
+        return res.rowcount > 0
+
+def save_message(user_id: int, role: str, content: str, thread_id: str = "default"):
     """
-    Saves a conversation message for the user.
+    Saves a conversation message for the user in a specific thread.
     Requirement 8: Sensitive message content is encrypted at rest using Fernet.
     """
     encrypted_content = encrypt_text(content)
     with get_db_session() as session:
-        msg = Message(user_id=user_id, role=role, content=encrypted_content, timestamp=utc_now())
-        session.add(msg)
-
-def get_recent_messages(user_id: int, limit: int = 20):
-    """Retrieves recent conversation messages with decrypted content."""
-    with get_db_session() as session:
-        query = (
-            select(Message)
-            .where(Message.user_id == user_id)
-            .order_by(desc(Message.timestamp), desc(Message.id))
-            .limit(limit)
+        msg = Message(
+            user_id=user_id,
+            thread_id=thread_id,
+            role=role,
+            content=encrypted_content,
+            timestamp=utc_now()
         )
+        session.add(msg)
+        # Update thread's updated_at
+        thread = session.scalar(
+            select(ChatThread).where(ChatThread.user_id == user_id, ChatThread.thread_id == thread_id)
+        )
+        if thread:
+            thread.updated_at = utc_now()
+        elif thread_id == "default":
+            # Auto-create default thread record if missing
+            new_thread = ChatThread(
+                thread_id="default",
+                user_id=user_id,
+                title="General Chat",
+                is_pinned=False,
+                created_at=utc_now(),
+                updated_at=utc_now()
+            )
+            session.add(new_thread)
+
+def get_recent_messages(user_id: int, limit: int = 20, thread_id: Optional[str] = None):
+    """Retrieves recent conversation messages with decrypted content, optionally filtered by thread."""
+    with get_db_session() as session:
+        query = select(Message).where(Message.user_id == user_id)
+        if thread_id:
+            query = query.where(Message.thread_id == thread_id)
+        query = query.order_by(desc(Message.timestamp), desc(Message.id)).limit(limit)
         msgs = session.scalars(query).all()
         # Return in chronological order
         return [
             {
                 "id": m.id,
+                "thread_id": getattr(m, "thread_id", "default"),
                 "role": m.role,
                 "content": decrypt_text(m.content),
                 "timestamp": m.timestamp.isoformat() if m.timestamp else ""
@@ -636,18 +773,18 @@ def get_recent_messages(user_id: int, limit: int = 20):
             for m in reversed(msgs)
         ]
 
-def get_all_messages(user_id: int):
-    """Returns all chat messages for this user with decrypted content."""
+def get_all_messages(user_id: int, thread_id: Optional[str] = None):
+    """Returns all chat messages for this user, optionally filtered by thread."""
     with get_db_session() as session:
-        query = (
-            select(Message)
-            .where(Message.user_id == user_id)
-            .order_by(Message.timestamp.asc(), Message.id.asc())
-        )
+        query = select(Message).where(Message.user_id == user_id)
+        if thread_id:
+            query = query.where(Message.thread_id == thread_id)
+        query = query.order_by(Message.timestamp.asc(), Message.id.asc())
         msgs = session.scalars(query).all()
         return [
             {
                 "id": m.id,
+                "thread_id": getattr(m, "thread_id", "default"),
                 "role": m.role,
                 "content": decrypt_text(m.content),
                 "timestamp": m.timestamp.isoformat() if m.timestamp else ""
@@ -1084,7 +1221,11 @@ def get_all_settings(user_id: int) -> dict:
         "quiet_hours_end": "08:00",
         "country": "US",
         "timezone": "UTC",
-        "web_search_enabled": "true"
+        "web_search_enabled": "true",
+        "reminder_sound": "voice_then_tone",
+        "custom_song_uri": "",
+        "allow_alarms_in_dnd": "true",
+        "user_display_name": ""
     }
     with get_db_session() as session:
         settings = session.scalars(select(UserSetting).where(UserSetting.user_id == user_id)).all()
@@ -1638,7 +1779,7 @@ def approve_device_pairing(user_id: int, code: str, approver_device_id: Optional
         )
         return {
             "success": True,
-            "message": f"Device '{matched_target.name}' is now paired and trusted! 🌸",
+            "message": f"Device '{matched_target.name}' is now paired and trusted! 🐘",
             "device": _device_to_dict(matched_target)
         }
 

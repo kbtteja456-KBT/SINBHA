@@ -498,7 +498,7 @@ async def execute_web_search(
         if user_today_count >= USER_DAILY_SEARCH_LIMIT:
             limit_msg = (
                 "I've reached my daily web search limit for today (15 searches). "
-                "I'm still right here to chat and help with your tasks, and my web search quota resets tomorrow! 🌸"
+                "I'm still right here to chat and help with your tasks, and my web search quota resets tomorrow! 🐘"
             )
             return SearchResponse(
                 searched=False,
@@ -517,7 +517,7 @@ async def execute_web_search(
         if global_month_count >= GLOBAL_MONTHLY_SEARCH_CAP:
             limit_msg = (
                 "I've reached our monthly web search cap to keep things within our free limit. "
-                "My web searches will be fresh again at the start of next month! 🌸"
+                "My web searches will be fresh again at the start of next month! 🐘"
             )
             return SearchResponse(
                 searched=False,

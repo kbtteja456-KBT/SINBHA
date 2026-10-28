@@ -354,7 +354,7 @@ class SinbhaPlugin : Plugin() {
     @PluginMethod
     fun testBird(call: PluginCall) {
         val title = call.getString("title") ?: "Drink water 💧"
-        val dueText = call.getString("dueText") ?: "Due now 🌸"
+        val dueText = call.getString("dueText") ?: "Due now 🐘"
         val taskId = call.getInt("taskId", 999) ?: 999
 
         OverlayBirdService.launch(context, taskId, title, dueText)
@@ -666,6 +666,172 @@ class SinbhaPlugin : Plugin() {
             call.resolve(JSObject().put("success", true))
         } catch (e: Exception) {
             call.reject("Failed to open notification settings: ${e.message}")
+        }
+    }
+
+    private var previewPlayer: MediaPlayer? = null
+    private var previewTts: android.speech.tts.TextToSpeech? = null
+
+    /**
+     * Step 17: Checks whether USE_FULL_SCREEN_INTENT is allowed on Android 14+ (API 34+).
+     */
+    @PluginMethod
+    fun checkFullScreenIntentPermission(call: PluginCall) {
+        val granted = if (Build.VERSION.SDK_INT >= 34) {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.canUseFullScreenIntent()
+        } else {
+            true
+        }
+        val res = JSObject().apply {
+            put("granted", granted)
+            put("sdkInt", Build.VERSION.SDK_INT)
+        }
+        call.resolve(res)
+    }
+
+    /**
+     * Step 17: Opens system Settings to grant USE_FULL_SCREEN_INTENT permission.
+     */
+    @PluginMethod
+    fun requestFullScreenIntentPermission(call: PluginCall) {
+        try {
+            if (Build.VERSION.SDK_INT >= 34) {
+                val intent = Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(intent)
+            } else {
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(intent)
+            }
+            call.resolve(JSObject().put("success", true))
+        } catch (e: Exception) {
+            call.reject("Failed to open permission settings: ${e.message}")
+        }
+    }
+
+    /**
+     * Step 17: Previews the chosen alarm sound (tone, song, voice, voice then tone).
+     */
+    @PluginMethod
+    fun previewAlarmSound(call: PluginCall) {
+        stopAlarmPreviewInternal()
+        val option = call.getString("soundOption") ?: "voice_then_tone"
+        val songUriStr = call.getString("songUri") ?: ""
+        val spokenText = call.getString("spokenText") ?: "Hey, it is time for your task."
+
+        try {
+            when (option) {
+                "alarm_tone" -> {
+                    playAlarmTonePreview()
+                    call.resolve(JSObject().put("playing", true))
+                }
+                "song" -> {
+                    if (songUriStr.isNotEmpty()) {
+                        try {
+                            val uri = Uri.parse(songUriStr)
+                            previewPlayer = MediaPlayer().apply {
+                                setDataSource(context, uri)
+                                setAudioAttributes(
+                                    AudioAttributes.Builder()
+                                        .setUsage(AudioAttributes.USAGE_ALARM)
+                                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                                        .build()
+                                )
+                                prepare()
+                                start()
+                            }
+                            call.resolve(JSObject().put("playing", true))
+                            return
+                        } catch (e: Exception) {}
+                    }
+                    playAlarmTonePreview()
+                    call.resolve(JSObject().put("playing", true).put("fallback", true))
+                }
+                "spoken_voice" -> {
+                    speakPreview(spokenText, onDone = {})
+                    call.resolve(JSObject().put("playing", true))
+                }
+                "voice_then_tone" -> {
+                    speakPreview(spokenText, onDone = {
+                        playAlarmTonePreview()
+                    })
+                    call.resolve(JSObject().put("playing", true))
+                }
+                else -> {
+                    playAlarmTonePreview()
+                    call.resolve(JSObject().put("playing", true))
+                }
+            }
+        } catch (e: Exception) {
+            call.reject("Preview failed: ${e.message}")
+        }
+    }
+
+    /**
+     * Step 17: Stops the alarm sound preview.
+     */
+    @PluginMethod
+    fun stopAlarmPreview(call: PluginCall) {
+        stopAlarmPreviewInternal()
+        call.resolve(JSObject().put("stopped", true))
+    }
+
+    private fun stopAlarmPreviewInternal() {
+        try {
+            previewPlayer?.stop()
+            previewPlayer?.release()
+            previewPlayer = null
+        } catch (e: Exception) {}
+        try {
+            previewTts?.stop()
+            previewTts?.shutdown()
+            previewTts = null
+        } catch (e: Exception) {}
+    }
+
+    private fun playAlarmTonePreview() {
+        val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+        previewPlayer = MediaPlayer().apply {
+            setDataSource(context, soundUri)
+            setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ALARM)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+            )
+            isLooping = false
+            prepare()
+            start()
+        }
+    }
+
+    private fun speakPreview(text: String, onDone: () -> Unit) {
+        previewTts = android.speech.tts.TextToSpeech(context) { status ->
+            if (status == android.speech.tts.TextToSpeech.SUCCESS) {
+                previewTts?.language = java.util.Locale.getDefault()
+                val params = android.os.Bundle().apply {
+                    putInt(android.speech.tts.TextToSpeech.Engine.KEY_PARAM_STREAM, android.media.AudioManager.STREAM_ALARM)
+                }
+                previewTts?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) {}
+                    override fun onDone(utteranceId: String?) {
+                        onDone()
+                    }
+                    override fun onError(utteranceId: String?) {
+                        onDone()
+                    }
+                })
+                previewTts?.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, params, "preview_alarm")
+            } else {
+                onDone()
+            }
         }
     }
 }

@@ -1,4 +1,4 @@
-# 🌸 SINBHA for Android — Complete Setup & Testing Guide
+# 🐘 SINBHA for Android — Complete Setup & Testing Guide
 
 This guide walks you through building, installing, and testing the **SINBHA Android App (APK)** on your **OnePlus / Oppo / Realme** phone running **Android 15**.
 
@@ -183,7 +183,7 @@ The signed APK will be at:
    - Tap **✓ Done**: confirm the bird swoops off the screen and dismisses gracefully.
 3. **2-Minute Alarm with App Closed**:
    - In chat, send: `"Remind me to test coffee in 2 minutes"`
-   - Tap **Confirm 🌸**.
+   - Tap **Confirm 🐘**.
    - Swipe away SINBHA from your recent apps list (force close it).
    - Lock your phone or use other apps.
    - After 2 minutes, verify that the exact alarm fires and the companion bird visits you right on cue!

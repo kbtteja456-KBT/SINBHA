@@ -432,7 +432,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     group.innerHTML = `
-      <div class="message-avatar">🌸</div>
+      <div class="message-avatar"><img src="/static/elephant_logo.png" class="elephant-avatar-img" alt="🐘" /></div>
       <div class="message-bubble ai-bubble">
         <p>${escapeHtml(text)}</p>
         ${webSearchHtml}
@@ -608,7 +608,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (data.reply) {
           appendAiMessage(data.reply);
         }
-        showToast("🌸 Task saved to your list!");
+        showToast("🐘 Task saved to your list!");
         loadTasks();
         if (isDevMode) loadDevData();
       } else {
@@ -719,7 +719,7 @@ document.addEventListener("DOMContentLoaded", () => {
     notice.innerHTML = `
       <div>${escapeHtml(text)}</div>
       <div class="system-bubble-actions">
-        <button class="resume-btn inline-resume-btn">🌸 Resume Chat</button>
+        <button class="resume-btn inline-resume-btn">▶ Resume Chat</button>
       </div>
     `;
     chatMessages.appendChild(notice);
@@ -744,10 +744,15 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Load chat history on startup
-  async function loadChatHistory() {
+  let activeThreadId = null;
+  let activeThreadTitle = "New chat";
+
+  // Load chat history on startup or thread switch
+  async function loadChatHistory(threadId = null) {
     try {
-      const res = await fetch("/api/messages");
+      activeThreadId = threadId;
+      const url = threadId ? `/api/messages?thread_id=${encodeURIComponent(threadId)}` : "/api/messages";
+      const res = await fetch(url);
       if (res.status === 401) {
         showAuthScreen();
         return;
@@ -758,9 +763,11 @@ document.addEventListener("DOMContentLoaded", () => {
       chatMessages.innerHTML = "";
       setStopUiState(data.emergency_stopped);
 
+      const emptyHero = document.getElementById("threadEmptyState");
       if (!data.messages || data.messages.length === 0) {
-        appendAiMessage("Hey there! I'm SINBHA 🌸 I'm here to listen, support you, and keep your days calm and organized. How are you feeling right now?");
+        if (emptyHero) emptyHero.style.display = "flex";
       } else {
+        if (emptyHero) emptyHero.style.display = "none";
         data.messages.forEach(msg => {
           if (msg.role === "user") {
             appendUserMessage(msg.content, msg.timestamp);
@@ -773,6 +780,130 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch (e) {
       console.error("Failed to load chat history:", e);
     }
+  }
+
+  // Load user threads list into sidebar
+  async function loadUserThreads() {
+    try {
+      const res = await fetch("/api/threads");
+      if (!res.ok) return;
+      const data = await res.json();
+      renderThreads(data.threads || []);
+    } catch (e) {
+      console.error("Failed to load threads:", e);
+    }
+  }
+
+  function renderThreads(threads) {
+    const pinnedList = document.getElementById("pinnedThreadsList");
+    const recentList = document.getElementById("recentThreadsList");
+    const pinnedSection = document.getElementById("pinnedSection");
+    if (!recentList) return;
+
+    if (pinnedList) pinnedList.innerHTML = "";
+    recentList.innerHTML = "";
+
+    const pinned = threads.filter(t => t.is_pinned);
+    const recents = threads.filter(t => !t.is_pinned);
+
+    if (pinnedSection) {
+      pinnedSection.style.display = pinned.length > 0 ? "block" : "none";
+    }
+
+    function createThreadEl(t) {
+      const el = document.createElement("div");
+      el.className = `thread-item ${t.id === activeThreadId ? "active" : ""}`;
+      const titleSpan = document.createElement("span");
+      titleSpan.className = "thread-title";
+      titleSpan.textContent = t.title || "Chat";
+      titleSpan.title = t.title || "Chat";
+      el.appendChild(titleSpan);
+
+      const actionsDiv = document.createElement("div");
+      actionsDiv.className = "thread-actions";
+
+      const pinBtn = document.createElement("button");
+      pinBtn.type = "button";
+      pinBtn.className = "thread-action-btn";
+      pinBtn.title = t.is_pinned ? "Unpin" : "Pin";
+      pinBtn.textContent = t.is_pinned ? "📌" : "📍";
+      pinBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        await fetch(`/api/threads/${t.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ is_pinned: !t.is_pinned })
+        });
+        loadUserThreads();
+      });
+      actionsDiv.appendChild(pinBtn);
+
+      const delBtn = document.createElement("button");
+      delBtn.type = "button";
+      delBtn.className = "thread-action-btn";
+      delBtn.title = "Delete";
+      delBtn.textContent = "🗑️";
+      delBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if (confirm(`Delete conversation "${t.title}"?`)) {
+          await fetch(`/api/threads/${t.id}`, { method: "DELETE" });
+          if (activeThreadId === t.id) {
+            createNewThread();
+          } else {
+            loadUserThreads();
+          }
+        }
+      });
+      actionsDiv.appendChild(delBtn);
+
+      el.appendChild(actionsDiv);
+
+      el.addEventListener("click", (e) => {
+        if (e.target.closest(".thread-actions")) return;
+        switchThread(t.id, t.title);
+      });
+
+      return el;
+    }
+
+    if (pinnedList) {
+      pinned.forEach(t => pinnedList.appendChild(createThreadEl(t)));
+    }
+    recents.forEach(t => recentList.appendChild(createThreadEl(t)));
+  }
+
+  function switchThread(threadId, title) {
+    activeThreadId = threadId;
+    activeThreadTitle = title;
+    const titleEl = document.getElementById("activeThreadTitle");
+    if (titleEl) titleEl.textContent = title;
+    
+    // Close mobile drawer if open
+    const sidebar = document.getElementById("chatSidebar");
+    const backdrop = document.getElementById("sidebarBackdrop");
+    if (sidebar) sidebar.classList.remove("is-drawer-open");
+    if (backdrop) backdrop.style.display = "none";
+
+    loadChatHistory(threadId);
+    loadUserThreads();
+  }
+
+  function createNewThread() {
+    activeThreadId = null;
+    activeThreadTitle = "New chat";
+    const titleEl = document.getElementById("activeThreadTitle");
+    if (titleEl) titleEl.textContent = "New chat";
+    const emptyHero = document.getElementById("threadEmptyState");
+    if (emptyHero) emptyHero.style.display = "flex";
+    chatMessages.innerHTML = "";
+
+    // Close mobile drawer if open
+    const sidebar = document.getElementById("chatSidebar");
+    const backdrop = document.getElementById("sidebarBackdrop");
+    if (sidebar) sidebar.classList.remove("is-drawer-open");
+    if (backdrop) backdrop.style.display = "none";
+
+    loadUserThreads();
   }
 
   // Load Tasks into Tasks Drawer (Step 6: Interactive)
@@ -816,7 +947,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Render pending tasks list
     pendingTaskList.innerHTML = "";
     if (pendingTasks.length === 0) {
-      pendingTaskList.innerHTML = `<li style="font-size: 0.84rem; color: #9ca3af; text-align: center; padding: 14px 0;">All caught up! No pending tasks 🌸</li>`;
+      pendingTaskList.innerHTML = `<li style="font-size: 0.84rem; color: #9ca3af; text-align: center; padding: 14px 0;">All caught up! No pending tasks 🐘</li>`;
     } else {
       pendingTasks.forEach(t => {
         const li = document.createElement("li");
@@ -855,7 +986,7 @@ document.addEventListener("DOMContentLoaded", () => {
           li.classList.add("completing");
           setTimeout(async () => {
             await updateTaskStatus(t.id, "completed");
-            showToast("🌸 Great job! Task marked as done!");
+            showToast("🐘 Great job! Task marked as done!");
           }, 240);
         });
 
@@ -909,7 +1040,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const chk = li.querySelector(".task-checkbox");
         chk.addEventListener("change", async () => {
           await updateTaskStatus(t.id, "pending");
-          showToast("Task brought back to pending 🌸");
+          showToast("Task brought back to pending 🐘");
         });
 
         // Delete button
@@ -1068,7 +1199,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const indicatorGroup = document.createElement("div");
     indicatorGroup.className = "message-group ai-group searching-indicator-group";
     indicatorGroup.innerHTML = `
-      <div class="message-avatar">🌸</div>
+      <div class="message-avatar"><img src="/static/elephant_logo.png" class="elephant-avatar-img" alt="🐘" /></div>
       <div class="searching-indicator-bubble">
         <span class="searching-indicator-spinner"></span>
         <span>${isSearchQuery ? "Searching the web…" : "Thinking…"}</span>
@@ -1084,7 +1215,8 @@ document.addEventListener("DOMContentLoaded", () => {
         body: JSON.stringify({
           message: text,
           tz_offset_minutes: new Date().getTimezoneOffset(),
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          thread_id: activeThreadId
         })
       });
 
@@ -1115,9 +1247,9 @@ document.addEventListener("DOMContentLoaded", () => {
           } catch (e) {}
         }
         if (data.task_action_performed) {
-          showToast("🌸 Tasks updated!");
+          showToast("🐘 Tasks updated!");
         } else {
-          showToast("🌸 Task saved to your list!");
+          showToast("🐘 Task saved to your list!");
         }
       }
 
@@ -1127,7 +1259,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     } catch (err) {
       indicatorGroup.remove();
-      appendAiMessage("I had a little hiccup connecting right now. Don't worry, please check if the server is still running on your computer 🌸");
+      appendAiMessage("I had a little hiccup connecting right now. Don't worry, please check if the server is still running on your computer 🐘");
       console.error(err);
     }
   }
@@ -1163,7 +1295,7 @@ document.addEventListener("DOMContentLoaded", () => {
       await fetch("/api/resume", { method: "POST" });
       setStopUiState(false);
       remindersPaused = false;
-      showToast("🌸 Welcome back! Chat and reminders resumed.");
+      showToast("🐘 Welcome back! Chat and reminders resumed.");
       // Check for any pending reminders right after resuming
       checkDueReminders();
     } catch (e) {
@@ -1252,7 +1384,7 @@ document.addEventListener("DOMContentLoaded", () => {
         purgeConfirmModal.style.display = "none";
         settingsModal.style.display = "none";
         chatMessages.innerHTML = "";
-        appendAiMessage("All past conversations and memory have been wiped cleanly. We have a fresh, blank canvas together 🌸");
+        appendAiMessage("All past conversations and memory have been wiped cleanly. We have a fresh, blank canvas together 🐘");
         showToast("🧹 All data wiped cleanly");
 
         loadTasks();
@@ -1569,9 +1701,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Requirement 5: SINBHA sends a short, warm, non-guilt message when bird appears
     const warmGreetings = [
-      `🕊️ A little feathered friend just arrived with a gentle note for "${task.title}" 🌸 Whenever you're ready, no pressure at all.`,
-      `🕊️ Your little winged buddy is here with a soft reminder about "${task.title}". Take your time, you're doing great 🌸`,
-      `🕊️ A gentle check-in from your bird friend for "${task.title}" 🌸 Just keeping it softly in mind whenever it suits you.`
+      `🕊️ A little feathered friend just arrived with a gentle note for "${task.title}" 🐘 Whenever you're ready, no pressure at all.`,
+      `🕊️ Your little winged buddy is here with a soft reminder about "${task.title}". Take your time, you're doing great 🐘`,
+      `🕊️ A gentle check-in from your bird friend for "${task.title}" 🐘 Just keeping it softly in mind whenever it suits you.`
     ];
     const greeting = warmGreetings[Math.floor(Math.random() * warmGreetings.length)];
     appendAiMessage(greeting);
@@ -1733,7 +1865,7 @@ document.addEventListener("DOMContentLoaded", () => {
       try {
         await updateTaskStatus(task.id, "completed");
         appendAiMessage(`Wonderful job completing "${task.title}"! 🎉 Every step forward is a victory.`);
-        showToast("🌸 Task completed!");
+        showToast("🐘 Task completed!");
         flyAwayReverseWeb();
       } catch (err) {
         console.error("Mark done error:", err);
@@ -1791,7 +1923,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const label = mins === 60 ? "1 hour" : (mins === 1440 ? "tomorrow" : `${mins} minutes`);
-      appendAiMessage(`I've snoozed "${task.title}" for ${label} 🌸 Take all the time you need, the bird will rest for now.`);
+      appendAiMessage(`I've snoozed "${task.title}" for ${label} 🐘 Take all the time you need, the bird will rest for now.`);
       showToast(`⏰ Snoozed for ${label}`);
       flyAwayReverseWeb();
     } catch (err) {
@@ -1950,7 +2082,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const submitBtn = document.getElementById("loginSubmitBtn");
       if (submitBtn) {
         submitBtn.disabled = true;
-        submitBtn.textContent = "Logging In... 🌸";
+        submitBtn.textContent = "Logging In...";
       }
 
       try {
@@ -1962,7 +2094,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const data = await res.json();
 
         if (res.ok && data.user) {
-          showToast(`🌸 Welcome back, ${data.user.email}!`);
+          showToast(`🐘 Welcome back, ${data.user.email}!`);
           showAppScreen(data.user);
         } else {
           showAuthAlert(data.detail || "Invalid login credentials. Please try again.");
@@ -1973,7 +2105,7 @@ document.addEventListener("DOMContentLoaded", () => {
       } finally {
         if (submitBtn) {
           submitBtn.disabled = false;
-          submitBtn.textContent = "Log In 🌸";
+          submitBtn.textContent = "Log In";
         }
       }
     });
@@ -2010,7 +2142,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const submitBtn = document.getElementById("signupSubmitBtn");
       if (submitBtn) {
         submitBtn.disabled = true;
-        submitBtn.textContent = "Creating Account... 🌸";
+        submitBtn.textContent = "Creating Account...";
       }
 
       try {
@@ -2028,7 +2160,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const data = await res.json();
 
         if (res.ok && data.user) {
-          showToast(`🌸 Account created! Welcome to SINBHA, ${data.user.email}!`);
+          showToast(`🐘 Account created! Welcome to SINBHA, ${data.user.email}!`);
           showAppScreen(data.user);
         } else {
           showAuthAlert(data.detail || "Could not complete signup. Please try another email.");
@@ -2039,7 +2171,7 @@ document.addEventListener("DOMContentLoaded", () => {
       } finally {
         if (submitBtn) {
           submitBtn.disabled = false;
-          submitBtn.textContent = "Create Account 🌸";
+          submitBtn.textContent = "Create Account";
         }
       }
     });
@@ -2068,7 +2200,7 @@ document.addEventListener("DOMContentLoaded", () => {
         console.warn("Failed to clear native session:", ce);
       }
     }
-    showToast("Logged out 🌸");
+    showToast("Logged out");
     showAuthScreen();
   }
 
@@ -2137,7 +2269,7 @@ document.addEventListener("DOMContentLoaded", () => {
           if (window.Capacitor && window.Capacitor.isNativePlatform() && window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative) {
             try { await window.Capacitor.Plugins.SinbhaNative.clearSession(); } catch (ce) {}
           }
-          showToast("🌸 Account and all data deleted permanently");
+          showToast("Account and all data deleted permanently");
           currentUser = null;
           showAuthScreen();
         } else {
@@ -2489,7 +2621,7 @@ document.addEventListener("DOMContentLoaded", () => {
           if (gateModal) {
             gateModal.style.display = "flex";
             if (gateTitle) {
-              gateTitle.textContent = isMandatory ? `Update Required for ${platformName}` : `New ${platformName} Version Available! 🌸`;
+              gateTitle.textContent = isMandatory ? `Update Required for ${platformName}` : `New ${platformName} Version Available! 🐘`;
             }
             if (gateDesc) {
               gateDesc.innerHTML = isMandatory
@@ -2515,7 +2647,7 @@ document.addEventListener("DOMContentLoaded", () => {
             statusText.style.color = "#16a34a";
           }
           if (isManual) {
-            showToast(`🌸 You're up to date! SINBHA is running the latest version (v${current}).`);
+            showToast(`🐘 You're up to date! SINBHA is running the latest version (v${current}).`);
           }
         }
       } catch (e) {
@@ -2553,7 +2685,7 @@ document.addEventListener("DOMContentLoaded", () => {
       testBirdNativeBtn.addEventListener("click", async () => {
         if (window.Capacitor?.Plugins?.SinbhaNative) {
           await window.Capacitor.Plugins.SinbhaNative.testBird({
-            title: "Evening companion check-in 🌸",
+            title: "Evening companion check-in 🐘",
             dueText: "Due right now"
           });
           showToast("🕊️ Flying companion bird launched!");
@@ -2578,7 +2710,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const detail = ev.detail || {};
       const taskId = detail.taskId;
       if (taskId) {
-        showToast(`Opening chat for task #${taskId} 🌸`);
+        showToast(`Opening chat for task #${taskId} 🐘`);
         if (messageInput) {
           messageInput.value = `Tell me about my task #${taskId}`;
           messageInput.focus();
@@ -2636,7 +2768,7 @@ document.addEventListener("DOMContentLoaded", () => {
               lines.push(`[${e.time}] ${e.message}`);
             });
           } else {
-            lines.push("No errors logged. All systems operating smoothly 🌸");
+            lines.push("No errors logged. All systems operating smoothly 🐘");
           }
         } else {
           // Web / Desktop fallback
@@ -2949,7 +3081,7 @@ document.addEventListener("DOMContentLoaded", () => {
             pairingPollTimer = null;
             currentDeviceData = data.device;
             updateCurrentDeviceUI(currentDeviceData);
-            showToast("🌸 Device paired and approved successfully!");
+            showToast("🐘 Device paired and approved successfully!");
             connectDeviceWebSocket(deviceId);
             loadDevices();
           }
@@ -2974,7 +3106,7 @@ document.addEventListener("DOMContentLoaded", () => {
         deviceWs = new WebSocket(wsUrl);
 
         deviceWs.onopen = () => {
-          console.log("🌸 Secure device channel connected");
+          console.log("Secure device channel connected");
           try {
             deviceWs.send(JSON.stringify({ type: "ping" }));
           } catch(e) {}
@@ -3612,7 +3744,7 @@ document.addEventListener("DOMContentLoaded", () => {
       refreshDevBtn.addEventListener("click", async () => {
         await initDeviceChannel();
         await loadDevices();
-        showToast("🌸 Refreshed connected devices!");
+        showToast("🐘 Refreshed connected devices!");
       });
     }
 
@@ -3670,7 +3802,7 @@ document.addEventListener("DOMContentLoaded", () => {
           });
           const data = await res.json();
           if (data.success) {
-            showToast("🌸 Device approved and paired successfully!");
+            showToast("🐘 Device approved and paired successfully!");
             if (pairModal) pairModal.style.display = "none";
             await loadDevices();
           } else {
@@ -3716,7 +3848,7 @@ document.addEventListener("DOMContentLoaded", () => {
           if (data.success && data.device && data.device.status === "trusted") {
             currentDeviceData = data.device;
             updateCurrentDeviceUI(currentDeviceData);
-            showToast("🌸 First device verified with password and trusted!");
+            showToast("🐘 First device verified with password and trusted!");
             connectDeviceWebSocket(myId);
             loadDevices();
           } else {
@@ -3741,7 +3873,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (data.success && data.device) {
           currentDeviceData = data.device;
           showPendingPairingUI(currentDeviceData);
-          showToast("Fresh pairing code generated 🌸");
+          showToast("Fresh pairing code generated");
         }
       } catch (e) {}
     };
@@ -3789,7 +3921,7 @@ document.addEventListener("DOMContentLoaded", () => {
             currentDeviceData = data.device;
             closeFirstDeviceTrustModal();
             updateCurrentDeviceUI(currentDeviceData);
-            showToast("🌸 Device verified with password and trusted!");
+            showToast("🐘 Device verified with password and trusted!");
             connectDeviceWebSocket(myId);
             loadDevices();
           } else {
@@ -3860,7 +3992,7 @@ document.addEventListener("DOMContentLoaded", () => {
           });
           const data = await res.json();
           if (data.success) {
-            showToast("Device renamed 🌸");
+            showToast("Device renamed");
             loadDevices();
           }
         } catch (e) {}
@@ -3905,7 +4037,7 @@ document.addEventListener("DOMContentLoaded", () => {
           });
           const data = await res.json();
           if (data.success) {
-            showToast("Device settings saved 🌸");
+            showToast("Device settings saved");
             if (devModal) devModal.style.display = "none";
             loadDevices();
           } else {
@@ -3941,7 +4073,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (testNoteBtn) {
       testNoteBtn.addEventListener("click", () => {
         const id = document.getElementById("editDeviceId").value;
-        const text = prompt("Enter note to send to device:", "Hello from SINBHA! 🌸");
+        const text = prompt("Enter note to send to device:", "Hello from SINBHA! 🐘");
         if (text) {
           sendRemoteCommand(id, "send_note", { text: text });
         }
@@ -4005,6 +4137,413 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     }
 
+
+    // ========================================================
+    // CHATGPT SIDEBAR & PROFILE POPUP WIRING (STEP 17)
+    // ========================================================
+    const sidebar = document.getElementById("chatSidebar");
+    const sidebarBackdrop = document.getElementById("sidebarBackdrop");
+    const mobile2LinesBtn = document.getElementById("mobile2LinesBtn");
+    const sidebarToggleBtn = document.getElementById("sidebarToggleBtn");
+    const newChatBtn = document.getElementById("newChatBtn");
+    const mobileNewChatBtn = document.getElementById("mobileNewChatBtn");
+    const sidebarProfileBtn = document.getElementById("sidebarProfileBtn");
+    const profileMenuPopup = document.getElementById("profileMenuPopup");
+    const sidebarTasksBtn = document.getElementById("sidebarTasksBtn");
+    const sidebarStopBtn = document.getElementById("sidebarStopBtn");
+
+    if (mobile2LinesBtn && sidebar) {
+      mobile2LinesBtn.addEventListener("click", () => {
+        sidebar.classList.add("is-drawer-open");
+        if (sidebarBackdrop) sidebarBackdrop.style.display = "block";
+      });
+    }
+
+    if (sidebarToggleBtn && sidebar) {
+      sidebarToggleBtn.addEventListener("click", () => {
+        sidebar.classList.remove("is-drawer-open");
+        if (sidebarBackdrop) sidebarBackdrop.style.display = "none";
+      });
+    }
+
+    if (sidebarBackdrop && sidebar) {
+      sidebarBackdrop.addEventListener("click", () => {
+        sidebar.classList.remove("is-drawer-open");
+        sidebarBackdrop.style.display = "none";
+        if (profileMenuPopup) profileMenuPopup.style.display = "none";
+      });
+    }
+
+    if (newChatBtn) newChatBtn.addEventListener("click", createNewThread);
+    if (mobileNewChatBtn) mobileNewChatBtn.addEventListener("click", createNewThread);
+
+    if (sidebarTasksBtn) {
+      sidebarTasksBtn.addEventListener("click", () => {
+        const drawer = document.getElementById("tasksDrawer");
+        const overlay = document.getElementById("drawerOverlay");
+        if (drawer) {
+          drawer.classList.add("open");
+          drawer.setAttribute("aria-hidden", "false");
+        }
+        if (overlay) overlay.classList.add("open");
+        loadTasks();
+      });
+    }
+
+    if (sidebarStopBtn) {
+      sidebarStopBtn.addEventListener("click", () => {
+        triggerEmergencyStop();
+      });
+    }
+
+    // Profile button click: toggles floating popup menu (Screenshot 3)
+    if (sidebarProfileBtn && profileMenuPopup) {
+      sidebarProfileBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const isOpen = profileMenuPopup.style.display === "flex";
+        profileMenuPopup.style.display = isOpen ? "none" : "flex";
+      });
+
+      document.addEventListener("click", (e) => {
+        if (!e.target.closest("#profileMenuPopup") && !e.target.closest("#sidebarProfileBtn")) {
+          profileMenuPopup.style.display = "none";
+        }
+      });
+    }
+
+    // Profile menu items
+    const menuItemSettings = document.getElementById("menuItemSettings");
+    const menuItemProfile = document.getElementById("menuItemProfile");
+    const menuItemPersonalization = document.getElementById("menuItemPersonalization");
+    const menuItemLogout = document.getElementById("menuItemLogout");
+
+    if (menuItemSettings) {
+      menuItemSettings.addEventListener("click", () => {
+        if (profileMenuPopup) profileMenuPopup.style.display = "none";
+        const modal = document.getElementById("settingsModal");
+        if (modal) modal.style.display = "flex";
+        loadSettings();
+        checkFullScreenPermission();
+      });
+    }
+
+    if (menuItemProfile) {
+      menuItemProfile.addEventListener("click", () => {
+        if (profileMenuPopup) profileMenuPopup.style.display = "none";
+        const modal = document.getElementById("settingsModal");
+        if (modal) modal.style.display = "flex";
+        const input = document.getElementById("settingsDisplayNameInput");
+        if (input) input.focus();
+      });
+    }
+
+    if (menuItemPersonalization) {
+      menuItemPersonalization.addEventListener("click", () => {
+        if (profileMenuPopup) profileMenuPopup.style.display = "none";
+        const modal = document.getElementById("settingsModal");
+        if (modal) modal.style.display = "flex";
+      });
+    }
+
+    if (menuItemLogout) {
+      menuItemLogout.addEventListener("click", () => {
+        if (profileMenuPopup) profileMenuPopup.style.display = "none";
+        logoutUser();
+      });
+    }
+
+    // Starter Prompt Chips
+    document.querySelectorAll(".prompt-chip").forEach(chip => {
+      chip.addEventListener("click", () => {
+        const p = chip.getAttribute("data-prompt");
+        if (p && messageInput) {
+          messageInput.value = p;
+          messageInput.focus();
+          sendBtn.disabled = false;
+        }
+      });
+    });
+
+    // ========================================================
+    // ALARM AUDIO PREVIEW & SETTINGS WIRING (STEP 17)
+    // ========================================================
+    let previewAudioCtx = null;
+    let previewGain = null;
+    let previewOscTimer = null;
+    let previewCustomAudio = null;
+    let isPreviewing = false;
+
+    function stopAllAudioPreview() {
+      isPreviewing = false;
+      const btn = document.getElementById("previewSoundBtn");
+      const stopBtn = document.getElementById("stopPreviewSoundBtn");
+      const feedback = document.getElementById("previewSoundFeedback");
+      if (btn) btn.disabled = false;
+      if (stopBtn) stopBtn.style.display = "none";
+      if (feedback) feedback.textContent = "";
+
+      if (previewOscTimer) {
+        clearInterval(previewOscTimer);
+        previewOscTimer = null;
+      }
+      if (previewGain && previewAudioCtx) {
+        try {
+          previewGain.gain.setValueAtTime(0, previewAudioCtx.currentTime);
+        } catch (e) {}
+      }
+      if (previewAudioCtx) {
+        try { previewAudioCtx.close(); } catch (e) {}
+        previewAudioCtx = null;
+        previewGain = null;
+      }
+      if (previewCustomAudio) {
+        try {
+          previewCustomAudio.pause();
+          previewCustomAudio.currentTime = 0;
+        } catch (e) {}
+        previewCustomAudio = null;
+      }
+      if (window.speechSynthesis) {
+        try { window.speechSynthesis.cancel(); } catch (e) {}
+      }
+
+      if (window.Capacitor && window.Capacitor.isPluginAvailable("SinbhaNative")) {
+        try {
+          window.Capacitor.Plugins.SinbhaNative.stopAlarmPreview();
+        } catch (e) {}
+      }
+    }
+
+    function playPreviewAlarmTone(gradualRamp = true) {
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        previewAudioCtx = new AudioCtx();
+        previewGain = previewAudioCtx.createGain();
+        previewGain.gain.setValueAtTime(0.05, previewAudioCtx.currentTime);
+        previewGain.connect(previewAudioCtx.destination);
+
+        let currentVolume = 0.05;
+        const targetVolume = 0.6;
+
+        function ping() {
+          if (!isPreviewing || !previewAudioCtx) return;
+          try {
+            const osc1 = previewAudioCtx.createOscillator();
+            const osc2 = previewAudioCtx.createOscillator();
+            osc1.type = "sine";
+            osc2.type = "triangle";
+            osc1.frequency.setValueAtTime(880, previewAudioCtx.currentTime);
+            osc2.frequency.setValueAtTime(1760, previewAudioCtx.currentTime);
+
+            const bg = previewAudioCtx.createGain();
+            bg.gain.setValueAtTime(0.5, previewAudioCtx.currentTime);
+            bg.gain.exponentialRampToValueAtTime(0.001, previewAudioCtx.currentTime + 0.35);
+
+            osc1.connect(bg);
+            osc2.connect(bg);
+            bg.connect(previewGain);
+            osc1.start();
+            osc2.start();
+            osc1.stop(previewAudioCtx.currentTime + 0.35);
+            osc2.stop(previewAudioCtx.currentTime + 0.35);
+
+            if (gradualRamp && currentVolume < targetVolume) {
+              currentVolume = Math.min(targetVolume, currentVolume + 0.08);
+              previewGain.gain.setValueAtTime(currentVolume, previewAudioCtx.currentTime);
+            }
+          } catch (e) {}
+        }
+
+        ping();
+        previewOscTimer = setInterval(ping, 1500);
+      } catch (e) {
+        console.error("Preview tone error:", e);
+      }
+    }
+
+    function startAudioPreview() {
+      stopAllAudioPreview();
+      isPreviewing = true;
+      const btn = document.getElementById("previewSoundBtn");
+      const stopBtn = document.getElementById("stopPreviewSoundBtn");
+      const feedback = document.getElementById("previewSoundFeedback");
+      if (stopBtn) stopBtn.style.display = "inline-flex";
+
+      const soundOption = document.querySelector('input[name="soundOptionRadio"]:checked')?.value || "voice_then_tone";
+      const nameInput = document.getElementById("settingsDisplayNameInput");
+      const userName = (nameInput && nameInput.value.trim()) || "Bhanu";
+      const spokenText = `Hey ${userName}, it is time to write your notes.`;
+
+      if (feedback) feedback.textContent = "🔊 Playing preview...";
+
+      if (window.Capacitor && window.Capacitor.isPluginAvailable("SinbhaNative")) {
+        try {
+          window.Capacitor.Plugins.SinbhaNative.previewAlarmSound({
+            soundOption: soundOption,
+            songUri: window._selectedSongUri || "",
+            spokenText: spokenText
+          });
+          return;
+        } catch (e) {}
+      }
+
+      function speakVoice(callback) {
+        if (!window.speechSynthesis) {
+          if (callback) callback();
+          return;
+        }
+        try {
+          window.speechSynthesis.cancel();
+          const utter = new SpeechSynthesisUtterance(spokenText);
+          utter.rate = 1.0;
+          utter.pitch = 1.0;
+          utter.volume = 1.0;
+          utter.onend = () => {
+            if (callback && isPreviewing) callback();
+          };
+          utter.onerror = () => {
+            if (callback && isPreviewing) callback();
+          };
+          window.speechSynthesis.speak(utter);
+        } catch (e) {
+          if (callback && isPreviewing) callback();
+        }
+      }
+
+      if (soundOption === "spoken_voice") {
+        speakVoice(() => {
+          if (feedback) feedback.textContent = "✓ Spoken voice finished";
+          setTimeout(stopAllAudioPreview, 1000);
+        });
+      } else if (soundOption === "alarm_tone") {
+        playPreviewAlarmTone(true);
+      } else if (soundOption === "voice_then_tone") {
+        speakVoice(() => {
+          if (isPreviewing) {
+            playPreviewAlarmTone(true);
+          }
+        });
+      } else if (soundOption === "song") {
+        if (window._selectedSongUri) {
+          try {
+            previewCustomAudio = new Audio(window._selectedSongUri);
+            previewCustomAudio.loop = true;
+            previewCustomAudio.volume = 0.5;
+            previewCustomAudio.play().catch(() => playPreviewAlarmTone(true));
+          } catch (e) {
+            playPreviewAlarmTone(true);
+          }
+        } else {
+          playPreviewAlarmTone(true);
+        }
+      }
+    }
+
+    const previewBtn = document.getElementById("previewSoundBtn");
+    const stopPreviewBtn = document.getElementById("stopPreviewSoundBtn");
+    if (previewBtn) previewBtn.addEventListener("click", startAudioPreview);
+    if (stopPreviewBtn) stopPreviewBtn.addEventListener("click", stopAllAudioPreview);
+
+    // Sound radio changes
+    document.querySelectorAll('input[name="soundOptionRadio"]').forEach(radio => {
+      radio.addEventListener("change", () => {
+        const isSong = radio.value === "song";
+        const songRow = document.getElementById("customSongRow");
+        if (songRow) songRow.style.display = isSong ? "block" : "none";
+        saveSettings();
+      });
+    });
+
+    // Custom song file picker
+    const chooseSongBtn = document.getElementById("chooseSongFileBtn");
+    const songFileInput = document.getElementById("songFileInput");
+    const songNameDisplay = document.getElementById("chosenSongNameDisplay");
+    if (chooseSongBtn && songFileInput) {
+      chooseSongBtn.addEventListener("click", () => songFileInput.click());
+      songFileInput.addEventListener("change", (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (file) {
+          window._selectedSongUri = URL.createObjectURL(file);
+          if (songNameDisplay) songNameDisplay.textContent = file.name;
+          saveSettings();
+        }
+      });
+    }
+
+    // Save Display Name
+    const saveNameBtn = document.getElementById("saveDisplayNameBtn");
+    const displayNameInput = document.getElementById("settingsDisplayNameInput");
+    const displayNameStatus = document.getElementById("displayNameSaveStatus");
+    if (saveNameBtn && displayNameInput) {
+      saveNameBtn.addEventListener("click", async () => {
+        const name = displayNameInput.value.trim();
+        await fetch("/api/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_display_name: name })
+        });
+        if (displayNameStatus) {
+          displayNameStatus.style.display = "block";
+          setTimeout(() => { displayNameStatus.style.display = "none"; }, 2000);
+        }
+        const profileLabel = document.getElementById("sidebarProfileName");
+        if (profileLabel) profileLabel.textContent = name || "User";
+        const popupName = document.getElementById("popupUserName");
+        if (popupName) popupName.textContent = name || "User";
+        const popupAvatar = document.getElementById("popupUserAvatar");
+        if (popupAvatar) {
+          const initials = name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
+          popupAvatar.textContent = initials || "U";
+        }
+      });
+    }
+
+    // Android Full-Screen Intent Permission
+    async function checkFullScreenPermission() {
+      const statusEl = document.getElementById("permStatusFullScreen");
+      const reqBtn = document.getElementById("reqFullScreenBtn");
+      if (!statusEl) return;
+
+      if (window.Capacitor && window.Capacitor.isPluginAvailable("SinbhaNative")) {
+        try {
+          const res = await window.Capacitor.Plugins.SinbhaNative.checkFullScreenIntentPermission();
+          if (res && res.granted) {
+            statusEl.textContent = "Granted ✓";
+            statusEl.className = "android-perm-status granted";
+            if (reqBtn) reqBtn.style.display = "none";
+          } else {
+            statusEl.textContent = "Not Granted";
+            statusEl.className = "android-perm-status missing";
+            if (reqBtn) reqBtn.style.display = "inline-block";
+          }
+        } catch (e) {
+          statusEl.textContent = "Available in Android App";
+        }
+      } else {
+        statusEl.textContent = "Active on Android";
+        if (reqBtn) reqBtn.style.display = "none";
+      }
+    }
+
+    const reqFullScreenBtn = document.getElementById("reqFullScreenBtn");
+    if (reqFullScreenBtn) {
+      reqFullScreenBtn.addEventListener("click", async () => {
+        if (window.Capacitor && window.Capacitor.isPluginAvailable("SinbhaNative")) {
+          try {
+            await window.Capacitor.Plugins.SinbhaNative.requestFullScreenIntentPermission();
+          } catch (e) {}
+        }
+      });
+    }
+
+    // Allow Alarms in DND Toggle
+    const allowAlarmsToggle = document.getElementById("allowAlarmsInDndToggle");
+    if (allowAlarmsToggle) {
+      allowAlarmsToggle.addEventListener("change", saveSettings);
+    }
+
+    loadUserThreads();
     // Startup: Verify Authentication status first
     checkAuthStatus();
     checkAppVersionGate(false);

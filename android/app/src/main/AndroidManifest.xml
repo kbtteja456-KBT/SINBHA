@@ -17,6 +17,7 @@
 
     <!-- Notifications (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <!-- Boot Resilience -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -80,6 +81,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Full-Screen Alarm Activity (Clock-grade alarm screen over lockscreen & screen-off) -->
+        <activity
+            android:name=".AlarmActivity"
+            android:theme="@style/AppTheme.FullScreenAlarm"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:screenOrientation="portrait"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:exported="false" />
 
         <!-- Persistent Background Companion Service (Keeps device online & catches remote commands) -->
         <service

@@ -52,7 +52,7 @@ We recommend creating a **separate, public GitHub repository** called:
   1. The app automatically checks for updates when opened, and every 4 hours in the background.
   2. When a new version is detected, it downloads silently.
   3. A friendly prompt appears:
-     > *"Update Ready 🌸 SINBHA v1.0.1 is downloaded. Restart to apply and see what's new!"*
+     > *"Update Ready 🐘 SINBHA v1.0.1 is downloaded. Restart to apply and see what's new!"*
   4. On restart, the app opens with a cute **"What's New in v1.0.1"** card!
 
 ---
@@ -71,7 +71,7 @@ Follow these simple steps to test an update workflow:
    WHATS_NEW: {
      '1.0.1': [
        '✨ Faster bird arrival animations',
-       '🌸 Enhanced quiet hours scheduling'
+       '🐘 Enhanced quiet hours scheduling'
      ]
    }
    ```
@@ -96,4 +96,4 @@ This generates:
    - `SINBHA-Setup.exe.blockmap`
 5. Click **Publish release**.
 
-Any computer running `v1.0.0` will automatically detect `v1.0.1`, download it quietly, and show the update notification! 🌸
+Any computer running `v1.0.0` will automatically detect `v1.0.1`, download it quietly, and show the update notification! 🐘

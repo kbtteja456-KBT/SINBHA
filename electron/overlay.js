@@ -92,6 +92,180 @@ document.addEventListener("DOMContentLoaded", () => {
     actionPopup.style.top = `${top}px`;
     actionPopup.style.right = "auto";
     actionPopup.style.bottom = "auto";
+  let alarmAudioCtx = null;
+  let alarmGainNode = null;
+  let alarmOscInterval = null;
+  let customSongAudio = null;
+  let isAlarmPlaying = false;
+
+  function stopWindowsAlarm() {
+    isAlarmPlaying = false;
+    if (alarmOscInterval) {
+      clearInterval(alarmOscInterval);
+      alarmOscInterval = null;
+    }
+    if (alarmGainNode && alarmAudioCtx) {
+      try {
+        alarmGainNode.gain.cancelScheduledValues(alarmAudioCtx.currentTime);
+        alarmGainNode.gain.setValueAtTime(0, alarmAudioCtx.currentTime);
+      } catch (e) {}
+    }
+    if (alarmAudioCtx) {
+      try {
+        alarmAudioCtx.close();
+      } catch (e) {}
+      alarmAudioCtx = null;
+      alarmGainNode = null;
+    }
+    if (customSongAudio) {
+      try {
+        customSongAudio.pause();
+        customSongAudio.currentTime = 0;
+      } catch (e) {}
+      customSongAudio = null;
+    }
+    if (window.speechSynthesis) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch (e) {}
+    }
+  }
+
+  function startWindowsAlarmTone(gradualRamp = true) {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      alarmAudioCtx = new AudioCtx();
+      alarmGainNode = alarmAudioCtx.createGain();
+      alarmGainNode.gain.setValueAtTime(0.05, alarmAudioCtx.currentTime);
+      alarmGainNode.connect(alarmAudioCtx.destination);
+
+      let currentVolume = 0.05;
+      const targetVolume = 0.7;
+
+      function playBeep() {
+        if (!isAlarmPlaying || !alarmAudioCtx) return;
+        try {
+          const osc1 = alarmAudioCtx.createOscillator();
+          const osc2 = alarmAudioCtx.createOscillator();
+          osc1.type = "sine";
+          osc2.type = "triangle";
+          osc1.frequency.setValueAtTime(880, alarmAudioCtx.currentTime);
+          osc2.frequency.setValueAtTime(1760, alarmAudioCtx.currentTime);
+
+          const beepGain = alarmAudioCtx.createGain();
+          beepGain.gain.setValueAtTime(0.6, alarmAudioCtx.currentTime);
+          beepGain.gain.exponentialRampToValueAtTime(0.001, alarmAudioCtx.currentTime + 0.35);
+
+          osc1.connect(beepGain);
+          osc2.connect(beepGain);
+          beepGain.connect(alarmGainNode);
+
+          osc1.start();
+          osc2.start();
+          osc1.stop(alarmAudioCtx.currentTime + 0.35);
+          osc2.stop(alarmAudioCtx.currentTime + 0.35);
+
+          setTimeout(() => {
+            if (!isAlarmPlaying || !alarmAudioCtx) return;
+            try {
+              const osc3 = alarmAudioCtx.createOscillator();
+              osc3.type = "sine";
+              osc3.frequency.setValueAtTime(1320, alarmAudioCtx.currentTime);
+              const bg2 = alarmAudioCtx.createGain();
+              bg2.gain.setValueAtTime(0.7, alarmAudioCtx.currentTime);
+              bg2.gain.exponentialRampToValueAtTime(0.001, alarmAudioCtx.currentTime + 0.45);
+              osc3.connect(bg2);
+              bg2.connect(alarmGainNode);
+              osc3.start();
+              osc3.stop(alarmAudioCtx.currentTime + 0.45);
+            } catch (e) {}
+          }, 180);
+
+          if (gradualRamp && currentVolume < targetVolume) {
+            currentVolume = Math.min(targetVolume, currentVolume + 0.05);
+            alarmGainNode.gain.setValueAtTime(currentVolume, alarmAudioCtx.currentTime);
+          }
+        } catch (e) {}
+      }
+
+      playBeep();
+      alarmOscInterval = setInterval(playBeep, 1600);
+    } catch (e) {
+      console.error("AudioContext alarm failed:", e);
+    }
+  }
+
+  function startWindowsAlarm(task) {
+    stopWindowsAlarm();
+    isAlarmPlaying = true;
+    const option = task.sound_option || "voice_then_tone";
+    const songUri = task.song_uri || "";
+    const userName = task.user_name || "friend";
+    const spokenText = task.spoken_text || `Hey ${userName}, it is time to ${task.title || "take care of your task"}.`;
+
+    function speakVoice(callback) {
+      if (!window.speechSynthesis) {
+        if (callback) callback();
+        return;
+      }
+      try {
+        window.speechSynthesis.cancel();
+        const utter = new SpeechSynthesisUtterance(spokenText);
+        utter.rate = 1.0;
+        utter.pitch = 1.0;
+        utter.volume = 1.0;
+        utter.onend = () => {
+          if (callback && isAlarmPlaying) callback();
+        };
+        utter.onerror = () => {
+          if (callback && isAlarmPlaying) callback();
+        };
+        window.speechSynthesis.speak(utter);
+      } catch (e) {
+        if (callback && isAlarmPlaying) callback();
+      }
+    }
+
+    if (option === "spoken_voice") {
+      speakVoice(() => {
+        const voiceInterval = setInterval(() => {
+          if (!isAlarmPlaying) {
+            clearInterval(voiceInterval);
+          } else {
+            speakVoice();
+          }
+        }, 8000);
+      });
+    } else if (option === "song" && songUri) {
+      try {
+        customSongAudio = new Audio(songUri);
+        customSongAudio.loop = true;
+        customSongAudio.volume = 0.2;
+        let v = 0.2;
+        const ramp = setInterval(() => {
+          if (!isAlarmPlaying || !customSongAudio) {
+            clearInterval(ramp);
+          } else if (v < 1.0) {
+            v = Math.min(1.0, v + 0.1);
+            customSongAudio.volume = v;
+          }
+        }, 1500);
+        customSongAudio.play().catch(() => {
+          startWindowsAlarmTone(true);
+        });
+      } catch (e) {
+        startWindowsAlarmTone(true);
+      }
+    } else if (option === "voice_then_tone") {
+      speakVoice(() => {
+        if (isAlarmPlaying) {
+          startWindowsAlarmTone(true);
+        }
+      });
+    } else {
+      startWindowsAlarmTone(true);
+    }
   }
 
   // Show bird with forward arrival animation
@@ -99,6 +273,9 @@ document.addEventListener("DOMContentLoaded", () => {
     currentTask = task;
     currentReminderId = reminderId;
     isFlyingReverse = false;
+
+    // Start Windows alarm audio and speech loop until dismissed
+    startWindowsAlarm(task);
 
     // Populate note overlay
     if (noteTitle) noteTitle.textContent = task.title || "Task Reminder";
@@ -157,6 +334,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (isFlyingReverse) return;
     isFlyingReverse = true;
     if (flightTimer) clearTimeout(flightTimer);
+    stopWindowsAlarm();
 
     if (actionPopup) actionPopup.style.display = "none";
     if (snoozeMenu) snoozeMenu.style.display = "none";
@@ -193,6 +371,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Hide bird and return full desktop click-through
   function hideBird() {
+    stopWindowsAlarm();
     if (flightTimer) clearTimeout(flightTimer);
     if (flightWrapper) {
       flightWrapper.classList.remove("is-flying", "is-landed", "is-flying-reverse");

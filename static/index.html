@@ -56,7 +56,7 @@
           <input type="password" id="loginPassword" placeholder="Enter your password" required autocomplete="current-password" />
         </div>
         <button type="submit" id="loginSubmitBtn" class="auth-submit-btn">
-          Log In 🌸
+          Log In
         </button>
       </form>
 
@@ -83,117 +83,300 @@
         </div>
 
         <div class="auth-ai-disclaimer">
-          <span>🌸 <strong>Notice:</strong> Messages are processed by an AI provider to assist you with companion support, memory facts, and task scheduling.</span>
+          <span><img src="/static/elephant_logo.png" class="mini-elephant" alt="🐘" style="width: 16px; height: 16px; vertical-align: middle; margin-right: 4px;" /> <strong>Notice:</strong> Messages are processed by an AI provider to assist you with companion support, memory facts, and task scheduling.</span>
         </div>
 
         <button type="submit" id="signupSubmitBtn" class="auth-submit-btn">
-          Create Account 🌸
+          Create Account
         </button>
       </form>
     </div>
   </div>
 
-  <!-- MAIN APP CONTAINER -->
+  <!-- MAIN APP CONTAINER (ChatGPT Style Layout with Pink/Rose Theme & Elephant Mascot) -->
   <div class="app-container" id="appContainer">
-    <!-- Top Header Bar (Full Desktop Width) -->
-    <header class="app-header">
-      <div class="header-left">
-        <div class="avatar-container">
-          <img src="/static/elephant_logo.png" alt="SINBHA Logo" class="header-elephant-avatar" />
-          <span class="status-dot" id="statusDot" title="Online"></span>
+    <!-- LEFT SIDEBAR (Desktop & Mobile Drawer - Screenshots 2, 3, 5) -->
+    <aside class="chat-sidebar" id="chatSidebar">
+      <!-- Sidebar Header -->
+      <div class="sidebar-header">
+        <div class="sidebar-brand">
+          <img src="/static/elephant_logo.png" alt="SINBHA Logo" class="sidebar-elephant-logo" />
+          <span class="sidebar-brand-name">SINBHA</span>
         </div>
-        <div class="companion-details">
-          <h1 class="companion-name">SINBHA</h1>
-          <span class="companion-status" id="companionStatus">Here for you</span>
-        </div>
-      </div>
-
-      <div class="header-actions">
-        <!-- User Pill with Email & Logout -->
-        <div id="userHeaderPill" class="user-header-pill" style="display: none;">
-          <span id="headerUserEmail" class="header-user-email">user</span>
-          <button id="headerLogoutBtn" class="header-logout-btn" title="Log Out">Log Out</button>
-        </div>
-
-        <!-- Developer Memory Button (Hidden unless DEV_MODE=true AND admin) -->
-        <button id="devMemoryBtn" class="header-btn dev-btn" style="display: none;" title="Developer Memory Inspector (DEV_MODE=true)">
-          <span class="btn-icon">🛠️</span>
-          <span class="btn-text">Dev Memory</span>
-          <span id="devFactBadge" class="badge">0</span>
-        </button>
-
-        <!-- Tasks Drawer Button -->
-        <button id="tasksBtn" class="header-btn tasks-btn" title="View your tasks">
-          <span class="btn-icon">📋</span>
-          <span class="btn-text">Tasks</span>
-          <span id="taskCountBadge" class="badge">0</span>
-        </button>
-
-        <!-- Emergency STOP Button -->
-        <button id="stopBtn" class="header-btn stop-btn" title="Immediate Emergency Stop">
-          <span class="btn-icon">🛑</span>
-          <span class="btn-text">STOP</span>
+        <button id="sidebarToggleBtn" class="sidebar-icon-btn" title="Close sidebar" aria-label="Close sidebar">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+            <line x1="9" y1="3" x2="9" y2="21"></line>
+          </svg>
         </button>
       </div>
-    </header>
 
-    <!-- Emergency Stopped Banner (Hidden unless stopped) -->
-    <div id="stopBanner" class="stop-banner" style="display: none;">
-      <div class="stop-banner-content">
-        <span>🛑 Emergency Stop is active. Processing is paused.</span>
-        <button id="bannerResumeBtn" class="resume-btn">🌸 Resume Chat</button>
+      <!-- New Chat Button -->
+      <div class="sidebar-action-wrap">
+        <button id="newChatBtn" class="new-chat-btn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <path d="M12 5v14M5 12h14"></path>
+          </svg>
+          <span>New chat</span>
+        </button>
       </div>
-    </div>
 
-    <!-- Prominent Device Pairing Banner (Requirement 4: Obvious in app, no hunting in settings) -->
-    <div id="topPairingBanner" class="top-pairing-banner" style="display: none; background: #fffbeb; border-bottom: 2px solid #f59e0b; padding: 10px 16px; align-items: center; justify-content: space-between; gap: 12px; font-size: 0.86rem; color: #92400e; z-index: 50;">
-      <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-        <span style="font-size: 1.2rem;">⏳</span>
-        <strong>Device Pairing:</strong>
-        <span>Pair this device by approving code</span>
-        <span id="topPairingCodeDisplay" style="font-family: monospace; font-weight: 800; font-size: 1.1rem; background: #fff; padding: 2px 8px; border-radius: 6px; border: 1px dashed #f59e0b; color: #b45309; letter-spacing: 2px;">------</span>
-        <span>on your trusted device.</span>
-        <span id="topPairingCountdown" style="font-size: 0.78rem; color: #b45309;">(Expires in 5:00)</span>
+      <!-- Quick Nav Links -->
+      <div class="sidebar-nav-links">
+        <button id="sidebarTasksBtn" class="sidebar-nav-item">
+          <span class="nav-icon">📋</span>
+          <span class="nav-label">Tasks & Habits</span>
+          <span id="sidebarTaskBadge" class="nav-count-badge">0</span>
+        </button>
+        <button id="sidebarScheduledBtn" class="sidebar-nav-item">
+          <span class="nav-icon">⏰</span>
+          <span class="nav-label">Scheduled Alarms</span>
+        </button>
+        <button id="sidebarStopBtn" class="sidebar-nav-item danger-item">
+          <span class="nav-icon">🛑</span>
+          <span class="nav-label">Emergency STOP</span>
+        </button>
       </div>
-      <div style="display: flex; gap: 8px;">
-        <button type="button" id="topRefreshPairCodeBtn" style="background: #fef3c7; border: 1px solid #f59e0b; color: #b45309; border-radius: 6px; padding: 4px 10px; font-size: 0.78rem; font-weight: 600; cursor: pointer;">New Code</button>
-        <button type="button" id="topOpenPairSettingsBtn" style="background: #f59e0b; border: none; color: #fff; border-radius: 6px; padding: 4px 12px; font-size: 0.78rem; font-weight: 600; cursor: pointer;">Pairing Details</button>
-      </div>
-    </div>
 
-    <!-- Chat Messages Scroll Area -->
-    <main class="chat-container" id="chatContainer">
-      <div class="chat-messages" id="chatMessages">
-        <!-- Messages will load dynamically from SQLite database -->
+      <!-- Pinned Chats Section -->
+      <div class="sidebar-section" id="pinnedSection" style="display: none;">
+        <div class="sidebar-section-title">
+          <span>Pinned</span>
+        </div>
+        <div id="pinnedThreadsList" class="threads-list">
+          <!-- Rendered dynamically -->
+        </div>
       </div>
-      <div id="scrollAnchor"></div>
-    </main>
 
-    <!-- Bottom Input Area (Mobile Safe) -->
-    <footer class="input-area">
-      <div class="input-container-inner">
-        <div class="input-card">
-          <textarea
-            id="messageInput"
-            placeholder="Message SINBHA... (or type STOP to halt)"
-            rows="1"
-            maxlength="2000"
-            autocomplete="off"
-          ></textarea>
-          <button id="sendBtn" class="send-btn" title="Send message" disabled>
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13"></line>
-              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-            </svg>
+      <!-- Recent Chats Section -->
+      <div class="sidebar-section scrollable-threads">
+        <div class="sidebar-section-title">
+          <span>Chats</span>
+        </div>
+        <div id="recentThreadsList" class="threads-list">
+          <!-- Rendered dynamically from /api/threads -->
+        </div>
+      </div>
+
+      <!-- Sidebar Profile Section & Popup Menu (Screenshot 3) -->
+      <div class="sidebar-profile-wrap">
+        <!-- Floating Profile Popup Menu (Opened on profile click) -->
+        <div id="profileMenuPopup" class="profile-popup-menu" style="display: none;">
+          <div class="popup-user-header">
+            <div class="popup-avatar" id="popupUserAvatar">BT</div>
+            <div class="popup-user-meta">
+              <div class="popup-username" id="popupUserName">Bhanu Teja</div>
+              <div class="popup-user-status">Free • Alarms Ready</div>
+            </div>
+          </div>
+          <div class="popup-divider"></div>
+          <button type="button" id="menuItemPersonalization" class="popup-menu-item">
+            <span class="popup-item-icon">✨</span>
+            <span>Personalization</span>
+          </button>
+          <button type="button" id="menuItemProfile" class="popup-menu-item">
+            <span class="popup-item-icon">👤</span>
+            <span>Profile</span>
+          </button>
+          <button type="button" id="menuItemSettings" class="popup-menu-item highlight-item">
+            <span class="popup-item-icon">⚙️</span>
+            <span>Settings</span>
+          </button>
+          <div class="popup-divider"></div>
+          <button type="button" id="menuItemHelp" class="popup-menu-item">
+            <span class="popup-item-icon">❓</span>
+            <span>Help & FAQ</span>
+          </button>
+          <button type="button" id="menuItemLogout" class="popup-menu-item danger">
+            <span class="popup-item-icon">🚪</span>
+            <span>Log out</span>
           </button>
         </div>
-        <div class="input-footer-note">
-          <span>Private memory saved locally on your computer</span>
-          <span class="footer-separator">&bull;</span>
-          <button id="openSettingsBtn" class="settings-link-btn" title="Settings & Privacy">⚙️ Settings</button>
+
+        <!-- Bottom Profile Button -->
+        <button type="button" id="sidebarProfileBtn" class="sidebar-profile-btn" aria-haspopup="true" aria-expanded="false">
+          <div class="profile-avatar-circle" id="sidebarAvatarCircle">
+            <img src="/static/elephant_logo.png" alt="Profile Mascot" class="profile-avatar-img" />
+          </div>
+          <div class="profile-info-text">
+            <span class="profile-name-label" id="sidebarProfileName">Bhanu Teja</span>
+            <span class="profile-sub-label">Free</span>
+          </div>
+          <span class="profile-dots">⋯</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Mobile Drawer Backdrop Overlay -->
+    <div id="sidebarBackdrop" class="sidebar-backdrop" style="display: none;"></div>
+
+    <!-- MAIN CHAT COLUMN -->
+    <div class="chat-main-column">
+      <!-- Mobile Top Bar with 2 Lines Icon (Screenshot 4 & 5) -->
+      <div class="mobile-top-bar" id="mobileTopBar">
+        <button id="mobile2LinesBtn" class="mobile-2lines-btn" aria-label="Open navigation drawer" title="Chats & Menu">
+          <!-- 2 horizontal lines as specifically requested -->
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+            <line x1="4" y1="8" x2="20" y2="8"></line>
+            <line x1="4" y1="16" x2="20" y2="16"></line>
+          </svg>
+        </button>
+        <div class="mobile-brand-title">
+          <img src="/static/elephant_logo.png" alt="SINBHA" class="mobile-elephant-logo" />
+          <span>SINBHA</span>
+        </div>
+        <button id="mobileNewChatBtn" class="mobile-top-action-btn" title="New chat">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <path d="M12 5v14M5 12h14"></path>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Desktop Minimal Top Bar -->
+      <header class="app-header">
+        <div class="header-left">
+          <button id="desktopSidebarOpenBtn" class="desktop-sidebar-open-btn" style="display: none;" title="Open sidebar">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <line x1="9" y1="3" x2="9" y2="21"></line>
+            </svg>
+          </button>
+          <div class="header-thread-info">
+            <h1 class="companion-name" id="activeThreadTitle">SINBHA</h1>
+            <span class="companion-status" id="companionStatus">Shared memory across all chats</span>
+          </div>
+        </div>
+
+        <div class="header-actions">
+          <!-- Developer Memory Button (Hidden unless DEV_MODE=true AND admin) -->
+          <button id="devMemoryBtn" class="header-btn dev-btn" style="display: none;" title="Developer Memory Inspector (DEV_MODE=true)">
+            <span class="btn-icon">🛠️</span>
+            <span class="btn-text">Dev Memory</span>
+            <span id="devFactBadge" class="badge">0</span>
+          </button>
+
+          <!-- Tasks Drawer Button -->
+          <button id="tasksBtn" class="header-btn tasks-btn" title="View your tasks">
+            <span class="btn-icon">📋</span>
+            <span class="btn-text">Tasks</span>
+            <span id="taskCountBadge" class="badge">0</span>
+          </button>
+
+          <!-- Emergency STOP Button -->
+          <button id="stopBtn" class="header-btn stop-btn" title="Immediate Emergency Stop">
+            <span class="btn-icon">🛑</span>
+            <span class="btn-text">STOP</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- Emergency Stopped Banner (Hidden unless stopped) -->
+      <div id="stopBanner" class="stop-banner" style="display: none;">
+        <div class="stop-banner-content">
+          <span>🛑 Emergency Stop is active. Processing is paused.</span>
+          <button id="bannerResumeBtn" class="resume-btn">▶ Resume Chat</button>
         </div>
       </div>
-    </footer>
+
+      <!-- Prominent Device Pairing Banner -->
+      <div id="topPairingBanner" class="top-pairing-banner" style="display: none; background: #fffbeb; border-bottom: 2px solid #f59e0b; padding: 10px 16px; align-items: center; justify-content: space-between; gap: 12px; font-size: 0.86rem; color: #92400e; z-index: 50;">
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <span style="font-size: 1.2rem;">⏳</span>
+          <strong>Device Pairing:</strong>
+          <span>Pair this device by approving code</span>
+          <span id="topPairingCodeDisplay" style="font-family: monospace; font-weight: 800; font-size: 1.1rem; background: #fff; padding: 2px 8px; border-radius: 6px; border: 1px dashed #f59e0b; color: #b45309; letter-spacing: 2px;">------</span>
+          <span>on your trusted device.</span>
+          <span id="topPairingCountdown" style="font-size: 0.78rem; color: #b45309;">(Expires in 5:00)</span>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button type="button" id="topRefreshPairCodeBtn" style="background: #fef3c7; border: 1px solid #f59e0b; color: #b45309; border-radius: 6px; padding: 4px 10px; font-size: 0.78rem; font-weight: 600; cursor: pointer;">New Code</button>
+          <button type="button" id="topOpenPairSettingsBtn" style="background: #f59e0b; border: none; color: #fff; border-radius: 6px; padding: 4px 12px; font-size: 0.78rem; font-weight: 600; cursor: pointer;">Pairing Details</button>
+        </div>
+      </div>
+
+      <!-- Chat Messages Scroll Area -->
+      <main class="chat-container" id="chatContainer">
+        <!-- Empty State Hero (ChatGPT style with cute HD elephant) -->
+        <div id="threadEmptyState" class="thread-empty-state">
+          <div class="empty-state-hero">
+            <img src="/static/elephant_logo.png" alt="SINBHA Elephant Mascot" class="hero-elephant-mascot" />
+            <h2 class="empty-state-greeting" id="emptyStateGreeting">What's on your mind today?</h2>
+          </div>
+          <div class="prompt-chips-grid">
+            <button type="button" class="prompt-chip" data-prompt="Remind me with voice to ">
+              <span class="chip-icon">🗣️</span>
+              <span class="chip-label">Remind me with voice</span>
+            </button>
+            <button type="button" class="prompt-chip" data-prompt="Remind me with a song to ">
+              <span class="chip-icon">🎵</span>
+              <span class="chip-label">Remind me with a song</span>
+            </button>
+            <button type="button" class="prompt-chip" data-prompt="Write or edit my notes for today: ">
+              <span class="chip-icon">📝</span>
+              <span class="chip-label">Write or edit notes</span>
+            </button>
+            <button type="button" class="prompt-chip" data-prompt="Search the web for ">
+              <span class="chip-icon">🌐</span>
+              <span class="chip-label">Search the web</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="chat-messages" id="chatMessages">
+          <!-- Messages will load dynamically from SQLite database -->
+        </div>
+        <div id="scrollAnchor"></div>
+      </main>
+
+      <!-- Bottom Input Area (ChatGPT Sleek Pill Shape) -->
+      <footer class="input-area">
+        <div class="input-container-inner">
+          <div class="chatgpt-input-card">
+            <button id="inputAttachBtn" class="input-icon-btn plus-btn" type="button" title="Add action or reminder">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+            </button>
+            <textarea
+              id="messageInput"
+              placeholder="Ask SINBHA..."
+              rows="1"
+              maxlength="2000"
+              autocomplete="off"
+            ></textarea>
+            <div class="input-right-tools">
+              <button id="inputThinkBtn" class="input-tool-btn" type="button" title="Deep thinking mode">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="9"></circle>
+                  <path d="M12 3v18"></path>
+                </svg>
+                <span>Think</span>
+              </button>
+              <button id="inputVoiceBtn" class="input-icon-btn voice-btn" type="button" title="Voice reminder">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                  <line x1="12" y1="19" x2="12" y2="23"></line>
+                  <line x1="8" y1="23" x2="16" y2="23"></line>
+                </svg>
+              </button>
+              <button id="sendBtn" class="send-btn" title="Send message" disabled>
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="22" y1="2" x2="11" y2="13"></line>
+                  <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="input-footer-note">
+            <span>Private memory shared safely across chats</span>
+            <span class="footer-separator">&bull;</span>
+            <button id="openSettingsBtn" class="settings-link-btn" title="Settings & Privacy">⚙️ Settings</button>
+          </div>
+        </div>
+      </footer>
+    </div>
   </div>
 
   <!-- Shared Drawer Overlay Backdrop -->
@@ -248,19 +431,120 @@
       </div>
       <div class="settings-modal-body">
         
-        <!-- User Account Card (Step 9) -->
+        <!-- User Account Card -->
         <div class="settings-info-section" style="background: #fff0f3; border: 1.5px solid #fbcfe8; border-radius: 12px; padding: 14px;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
             <div style="display: flex; align-items: center; gap: 8px;">
-              <span style="font-size: 1.2rem;">🌸</span>
+              <img src="/static/elephant_logo.png" class="mini-elephant" alt="🐘" style="width: 22px; height: 22px; vertical-align: middle;" />
               <strong id="settingsUserEmail" style="color: #9d174d; font-size: 0.94rem;">user@example.com</strong>
             </div>
             <span id="settingsAdminBadge" class="count-tag" style="display: none; background: #f472b6; color: white;">Admin</span>
           </div>
           <p style="font-size: 0.78rem; color: #6b7280; margin: 0 0 10px 0;">All your chats, facts, tasks, and settings are strictly private to this account.</p>
-          <button id="settingsLogoutBtn" class="confirm-btn-secondary" style="padding: 6px 12px; font-size: 0.8rem;">
-            Log Out of SINBHA
-          </button>
+          <div style="margin-top: 10px;">
+            <label for="settingsDisplayNameInput" style="font-size: 0.82rem; font-weight: 700; color: #831843; display: block; margin-bottom: 4px;">
+              Your Name (Spoken in Voice Reminders)
+            </label>
+            <div style="display: flex; gap: 8px;">
+              <input type="text" id="settingsDisplayNameInput" placeholder="e.g. Bhanu Teja" style="flex: 1; padding: 7px 12px; border: 1px solid #fbcfe8; border-radius: 8px; font-size: 0.88rem; background: #ffffff;" />
+              <button type="button" id="saveDisplayNameBtn" class="confirm-btn-primary" style="padding: 7px 14px; font-size: 0.82rem; white-space: nowrap;">Save Name</button>
+            </div>
+            <span id="displayNameSaveStatus" style="font-size: 0.76rem; color: #059669; display: none; margin-top: 4px;">✓ Saved</span>
+          </div>
+        </div>
+
+        <!-- Alarm-Grade Reminder Sounds & Spoken Message (Step 17 Requirements) -->
+        <div class="settings-reminders-section" id="alarmSoundSection">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <h3 style="margin: 0;">⏰ Alarm-Grade Reminder Sounds</h3>
+            <span class="badge" style="background: #fdf2f8; color: #be185d; border: 1px solid #fbcfe8;">Clock-Grade Alarms</span>
+          </div>
+          <p style="font-size: 0.82rem; color: #6b7280; margin: 0 0 14px 0;">
+            Choose what plays when an alarm fires with your screen off. Sound loops on the ALARM stream with gradually rising volume until dismissed or snoozed.
+          </p>
+
+          <div class="sound-options-group" style="display: flex; flex-direction: column; gap: 10px;">
+            <!-- Option A: Voice then Tone (Default) -->
+            <label class="sound-option-card" style="display: flex; align-items: flex-start; gap: 12px; padding: 12px; border: 1.5px solid #fbcfe8; border-radius: 10px; cursor: pointer; background: #fff5f8;">
+              <input type="radio" name="soundOptionRadio" value="voice_then_tone" checked style="margin-top: 4px; accent-color: #f25f85;" />
+              <div style="flex: 1;">
+                <div style="font-weight: 700; color: #1f2937; font-size: 0.92rem;">🗣️ Spoken Voice then Alarm Tone (Recommended)</div>
+                <div style="font-size: 0.78rem; color: #4b5563; margin-top: 2px;">
+                  Speaks <em>"Hey &lt;your name&gt;, it is time to &lt;task title&gt;"</em> using speech synthesis, then immediately loops the clock chime until dismissed.
+                </div>
+              </div>
+            </label>
+
+            <!-- Option B: Spoken Voice only -->
+            <label class="sound-option-card" style="display: flex; align-items: flex-start; gap: 12px; padding: 12px; border: 1.5px solid #fbcfe8; border-radius: 10px; cursor: pointer; background: #fff5f8;">
+              <input type="radio" name="soundOptionRadio" value="spoken_voice" style="margin-top: 4px; accent-color: #f25f85;" />
+              <div style="flex: 1;">
+                <div style="font-weight: 700; color: #1f2937; font-size: 0.92rem;">🗣️ Spoken Voice only</div>
+                <div style="font-size: 0.78rem; color: #4b5563; margin-top: 2px;">
+                  Speaks your name and task reminder title out loud. Repeats softly until dismissed.
+                </div>
+              </div>
+            </label>
+
+            <!-- Option C: Alarm Tone -->
+            <label class="sound-option-card" style="display: flex; align-items: flex-start; gap: 12px; padding: 12px; border: 1.5px solid #fbcfe8; border-radius: 10px; cursor: pointer; background: #fff5f8;">
+              <input type="radio" name="soundOptionRadio" value="alarm_tone" style="margin-top: 4px; accent-color: #f25f85;" />
+              <div style="flex: 1;">
+                <div style="font-weight: 700; color: #1f2937; font-size: 0.92rem;">🔔 Clock Alarm Tone</div>
+                <div style="font-size: 0.78rem; color: #4b5563; margin-top: 2px;">
+                  Standard clock alarm audio stream that starts gently and gradually rises in volume until dismissed or snoozed.
+                </div>
+              </div>
+            </label>
+
+            <!-- Option D: Song picked from phone / PC -->
+            <label class="sound-option-card" style="display: flex; align-items: flex-start; gap: 12px; padding: 12px; border: 1.5px solid #fbcfe8; border-radius: 10px; cursor: pointer; background: #fff5f8;">
+              <input type="radio" name="soundOptionRadio" value="song" style="margin-top: 4px; accent-color: #f25f85;" />
+              <div style="flex: 1;">
+                <div style="font-weight: 700; color: #1f2937; font-size: 0.92rem;">🎵 Custom Song from your Device</div>
+                <div style="font-size: 0.78rem; color: #4b5563; margin-top: 2px;">
+                  Play an audio track or ringtone chosen from your storage. Loops with gradual volume rise.
+                </div>
+              </div>
+            </label>
+          </div>
+
+          <!-- Song Picker Row (Visible when Custom Song selected) -->
+          <div id="customSongRow" style="display: none; margin-top: 12px; padding: 10px 14px; background: #fdf2f8; border: 1px dashed #f472b6; border-radius: 8px;">
+            <input type="file" id="songFileInput" accept="audio/*" style="display: none;" />
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+              <button type="button" id="chooseSongFileBtn" class="confirm-btn-secondary" style="padding: 6px 12px; font-size: 0.8rem;">
+                📂 Choose Audio Track...
+              </button>
+              <span id="chosenSongNameDisplay" style="font-size: 0.8rem; color: #374151; font-weight: 500;">No song picked yet</span>
+            </div>
+          </div>
+
+          <!-- Sound Preview Controls (Requirement 3: Preview button lets me hear it) -->
+          <div style="margin-top: 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <button type="button" id="previewSoundBtn" class="confirm-btn-primary" style="padding: 8px 16px; font-size: 0.84rem; display: flex; align-items: center; gap: 6px;">
+              <span>▶️</span>
+              <span id="previewSoundBtnText">Preview Alarm & Spoken Voice</span>
+            </button>
+            <button type="button" id="stopPreviewSoundBtn" class="confirm-btn-secondary" style="display: none; padding: 8px 14px; font-size: 0.84rem; background: #ef4444; color: #ffffff; border-color: #dc2626;">
+              ⏹️ Stop Preview
+            </button>
+            <span id="previewSoundFeedback" style="font-size: 0.8rem; color: #db2777; font-weight: 600;"></span>
+          </div>
+
+          <!-- DND / Alarms Allowed Toggle (Requirement 5) -->
+          <div class="setting-field-group" style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #fce7f3;">
+            <div class="setting-switch-row">
+              <label class="setting-switch">
+                <input type="checkbox" id="allowAlarmsInDndToggle" checked>
+                <span class="setting-slider"></span>
+              </label>
+              <div class="setting-switch-info">
+                <strong>Allow Alarms in Do Not Disturb (DND)</strong>
+                <span class="setting-desc">Guarantees that your clock-grade task alarms ring out even when phone or PC is silenced</span>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div class="settings-reminders-section">
@@ -441,6 +725,22 @@
               <button type="button" class="android-perm-btn" id="reqAlarmBtn">Grant Permission</button>
             </div>
 
+            <!-- Full-Screen Intent / Alarm Clock Mode (Step 17 Requirement 1) -->
+            <div class="android-perm-card" id="permCardFullScreen">
+              <div class="android-perm-header">
+                <span class="android-perm-icon">📱</span>
+                <div class="android-perm-info">
+                  <strong>Full-Screen Alarms (Lockscreen / Screen Off)</strong>
+                  <span class="android-perm-desc">Shows clock-grade alarm screen over lockscreen with Dismiss & Snooze</span>
+                </div>
+                <span class="android-perm-status" id="permStatusFullScreen">Checking...</span>
+              </div>
+              <button type="button" class="android-perm-btn" id="reqFullScreenBtn">Grant Permission</button>
+              <div style="font-size: 0.74rem; color: #4b5563; margin-top: 6px; padding: 6px 10px; background: #fff5f8; border-radius: 6px; border: 1px solid #fbcfe8;">
+                💡 <strong>How to grant:</strong> Tap above or open <em>Settings &gt; Apps &gt; Special app access &gt; Full-screen intent &gt; SINBHA</em>, and toggle <strong>Allow</strong>.
+              </div>
+            </div>
+
             <!-- Battery Optimization -->
             <div class="android-perm-card" id="permCardBattery">
               <div class="android-perm-header">
@@ -533,7 +833,7 @@
               </p>
               <div style="display: flex; gap: 6px;">
                 <input type="password" id="firstDevicePasswordInput" placeholder="Account password" style="flex: 1; padding: 6px 10px; border: 1.5px solid #fcd34d; border-radius: 6px; font-size: 0.85rem;" />
-                <button type="button" id="trustFirstDeviceBtn" class="confirm-btn-primary" style="padding: 6px 12px; font-size: 0.8rem; white-space: nowrap;">Trust Device 🌸</button>
+                <button type="button" id="trustFirstDeviceBtn" class="confirm-btn-primary" style="padding: 6px 12px; font-size: 0.8rem; white-space: nowrap;">Trust Device</button>
               </div>
             </div>
           </div>
@@ -563,7 +863,7 @@
         <div class="settings-reminders-section" id="settingsAppUpdateSection">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
             <h3 style="margin: 0; display: flex; align-items: center; gap: 8px;">
-              <span>🌸 App Version & Updates</span>
+              <span>🐘 App Version & Updates</span>
             </h3>
             <span id="currentAppVersionBadge" class="badge" style="background: #fdf2f8; color: #db2777; font-weight: 700; border: 1px solid #fbcfe8;">v1.0.7</span>
           </div>
@@ -662,7 +962,7 @@
   <div class="confirm-modal-overlay" id="termsModal" style="display: none;">
     <div class="confirm-modal-card" style="max-width: 520px; text-align: left;">
       <div class="modal-sticky-header">
-        <h3 style="margin: 0; color: #db2777;">🌸 Terms of Service <span style="font-size: 0.7rem; background: #fef08a; color: #854d0e; padding: 2px 6px; border-radius: 4px; font-weight: normal;">Needs Legal Review</span></h3>
+        <h3 style="margin: 0; color: #db2777;">🐘 Terms of Service <span style="font-size: 0.7rem; background: #fef08a; color: #854d0e; padding: 2px 6px; border-radius: 4px; font-weight: normal;">Needs Legal Review</span></h3>
         <button id="closeTermsBtn" class="popup-close-btn" aria-label="Close terms of service">&times;</button>
       </div>
       <div class="modal-scroll-body modal-text-content">
@@ -681,7 +981,7 @@
   <div class="confirm-modal-overlay" id="privacyModal" style="display: none;">
     <div class="confirm-modal-card" style="max-width: 520px; text-align: left;">
       <div class="modal-sticky-header">
-        <h3 style="margin: 0; color: #db2777;">🌸 Privacy Policy <span style="font-size: 0.7rem; background: #fef08a; color: #854d0e; padding: 2px 6px; border-radius: 4px; font-weight: normal;">Needs Legal Review</span></h3>
+        <h3 style="margin: 0; color: #db2777;">🐘 Privacy Policy <span style="font-size: 0.7rem; background: #fef08a; color: #854d0e; padding: 2px 6px; border-radius: 4px; font-weight: normal;">Needs Legal Review</span></h3>
         <button id="closePrivacyBtn" class="popup-close-btn" aria-label="Close privacy policy">&times;</button>
       </div>
       <div class="modal-scroll-body modal-text-content">
@@ -726,7 +1026,7 @@
       </div>
 
       <div class="empty-task-state" id="emptyTaskState">
-        <div class="empty-icon-card">🌸</div>
+        <div class="empty-icon-card"><img src="/static/elephant_logo.png" class="mini-elephant" alt="🐘" style="width:32px;height:32px;" /></div>
         <h3>No tasks yet</h3>
         <p>When you talk about assignments or to-dos with SINBHA, she'll propose them with <strong>Confirm / Cancel</strong> buttons in chat before saving anything.</p>
       </div>
@@ -768,7 +1068,7 @@
         <div id="birdNoteOverlay" class="bird-note-overlay">
           <div id="birdNoteTitle" class="bird-note-title">Task Title</div>
           <div id="birdNoteDue" class="bird-note-due">Due: 8:00 AM</div>
-          <div class="bird-note-tap">tap me 🌸</div>
+          <div class="bird-note-tap">tap me 🐘</div>
         </div>
       </div>
     </div>
@@ -817,7 +1117,7 @@
   <!-- APP UPDATE GATE MODAL (Requirement 5) -->
   <div class="confirm-modal-overlay" id="appUpdateGateModal" style="display: none; z-index: 99999;">
     <div class="confirm-modal-card" style="max-width: 440px; text-align: center;">
-      <div class="confirm-icon-box" style="background: #fdf2f8; color: #db2777; font-size: 2.2rem;">🌸</div>
+      <div class="confirm-icon-box" style="background: #fdf2f8; color: #db2777; font-size: 2.2rem;"><img src="/static/elephant_logo.png" style="width:44px;height:44px;" alt="🐘" /></div>
       <h3 id="appUpdateGateTitle" style="color: #0f172a; margin-bottom: 8px;">New Version Available!</h3>
       <p id="appUpdateGateDesc" style="color: #64748b; font-size: 0.9rem; line-height: 1.5; margin-bottom: 20px;">
         A new version of SINBHA is available with important companion enhancements and stability fixes.
@@ -857,7 +1157,7 @@
         </div>
         <div style="display: flex; justify-content: flex-end; gap: 8px;">
           <button type="button" id="cancelPairCodeBtn" class="confirm-btn-secondary">Cancel</button>
-          <button type="button" id="submitPairCodeBtn" class="confirm-btn-primary">Approve Device 🌸</button>
+          <button type="button" id="submitPairCodeBtn" class="confirm-btn-primary">Approve Device</button>
         </div>
       </div>
     </div>
@@ -959,7 +1259,7 @@
       </div>
       <div style="display: flex; justify-content: center; gap: 10px;">
         <button type="button" id="denyRemoteCmdBtn" class="confirm-btn-secondary" style="flex: 1; justify-content: center;">Deny</button>
-        <button type="button" id="allowRemoteCmdBtn" class="confirm-btn-primary" style="flex: 1; justify-content: center;">Allow 🌸</button>
+        <button type="button" id="allowRemoteCmdBtn" class="confirm-btn-primary" style="flex: 1; justify-content: center;">Allow</button>
       </div>
     </div>
   </div>
@@ -993,7 +1293,7 @@
         </div>
         <div id="firstDeviceModalError" style="display: none; color: #dc2626; font-size: 0.82rem; font-weight: 600; text-align: left;"></div>
         <button type="submit" id="firstDeviceModalSubmitBtn" class="confirm-btn-primary" style="width: 100%; justify-content: center; padding: 12px; font-size: 0.95rem; font-weight: 700;">
-          ✓ Verify & Trust Device 🌸
+          ✓ Verify & Trust Device
         </button>
       </form>
     </div>
@@ -1069,7 +1369,7 @@
               const laterBtn = document.getElementById('appUpdateLaterBtn');
 
               if (title) {
-                title.textContent = isMandatory ? ('Update Required for ' + platform) : ('New ' + platform + ' Version Available! 🌸');
+                title.textContent = isMandatory ? ('Update Required for ' + platform) : ('New ' + platform + ' Version Available! 🐘');
               }
               if (desc) {
                 desc.innerHTML = isMandatory

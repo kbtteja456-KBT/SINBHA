@@ -143,7 +143,7 @@
       <div class="pulse-ring"></div>
       <img src="elephant_logo.png" alt="SINBHA Logo" class="logo-img">
     </div>
-    <h1>SINBHA is <span>Waking Up</span> 🌸</h1>
+    <h1>SINBHA is <span>Waking Up</span> 🐘</h1>
     <p>
       Your personal companion is spinning up in the cloud.<br>
       This takes just a few moments!
@@ -175,7 +175,7 @@
       try {
         const res = await fetch(`${BACKEND_URL}/api/health`, { cache: 'no-store' });
         if (res.ok) {
-          statusText.innerHTML = 'Connected! Loading SINBHA... 🌸';
+          statusText.innerHTML = 'Connected! Loading SINBHA... 🐘';
           window.location.replace(BACKEND_URL);
           return;
         }

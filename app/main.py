@@ -113,9 +113,17 @@ class LoginRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    thread_id: Optional[str] = "default"
     tz_offset_minutes: Optional[int] = None
     tz_offset: Optional[int] = None
     timezone: Optional[str] = None
+
+class ThreadCreateRequest(BaseModel):
+    title: Optional[str] = "New Chat"
+
+class ThreadUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    is_pinned: Optional[bool] = None
 
 class ActionConfirmRequest(BaseModel):
     action: str  # "confirm" or "cancel"
@@ -145,6 +153,10 @@ class SettingsUpdateRequest(BaseModel):
     country: Optional[str] = "US"
     timezone: Optional[str] = "UTC"
     web_search_enabled: Optional[str] = "true"
+    reminder_sound: Optional[str] = None
+    custom_song_uri: Optional[str] = None
+    allow_alarms_in_dnd: Optional[str] = None
+    user_display_name: Optional[str] = None
 
 class TaskStatusUpdateRequest(BaseModel):
     status: str  # "pending" or "completed"
@@ -290,7 +302,7 @@ async def signup_endpoint(payload: SignupRequest, request: Request, response: Re
         return {
             "success": True,
             "user": user,
-            "message": "Account created successfully! 🌸 Welcome to SINBHA."
+            "message": "Account created successfully! 🐘 Welcome to SINBHA."
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -320,7 +332,7 @@ async def login_endpoint(payload: LoginRequest, request: Request, response: Resp
         return {
             "success": True,
             "user": user,
-            "message": "Welcome back! 🌸"
+            "message": "Welcome back! 🐘"
         }
     except ValueError as e:
         msg = str(e)
@@ -356,7 +368,7 @@ async def logout_endpoint(request: Request, response: Response):
         db.revoke_device_token(dev_token)
 
     response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
-    return {"success": True, "message": "Logged out successfully 🌸"}
+    return {"success": True, "message": "Logged out successfully 🐘"}
 
 @app.get("/api/auth/me")
 async def get_me_endpoint(request: Request):
@@ -429,13 +441,41 @@ async def legal_endpoint():
         "data_rights": "Users can download full data exports at /api/account/export and delete all data at /api/account/delete."
     }
 
-# ----------------- Chat & Message Endpoints (Per-User) -----------------
+# ----------------- Chat & Message Endpoints (Per-User, Multi-Threaded) -----------------
+
+@app.get("/api/threads")
+async def get_threads_endpoint(user: dict = Depends(get_current_user)):
+    """Returns all chat threads for the logged-in user."""
+    threads = db.get_user_threads(user["id"])
+    return {"threads": threads}
+
+@app.post("/api/threads")
+async def create_thread_endpoint(payload: ThreadCreateRequest = ThreadCreateRequest(), user: dict = Depends(get_current_user)):
+    """Creates a new chat conversation thread."""
+    thread = db.create_chat_thread(user["id"], title=payload.title or "New Chat")
+    return {"success": True, "thread": thread}
+
+@app.patch("/api/threads/{thread_id}")
+async def update_thread_endpoint(thread_id: str, payload: ThreadUpdateRequest, user: dict = Depends(get_current_user)):
+    """Updates title or pin status for a chat thread."""
+    if payload.title is not None:
+        db.rename_chat_thread(user["id"], thread_id, payload.title)
+    if payload.is_pinned is not None:
+        db.pin_chat_thread(user["id"], thread_id, payload.is_pinned)
+    updated = db.get_chat_thread(user["id"], thread_id) or {"id": thread_id, "thread_id": thread_id, "title": payload.title or "", "is_pinned": bool(payload.is_pinned)}
+    return {"success": True, "thread": updated}
+
+@app.delete("/api/threads/{thread_id}")
+async def delete_thread_endpoint(thread_id: str, user: dict = Depends(get_current_user)):
+    """Deletes a chat thread and all its messages."""
+    ok = db.delete_chat_thread(user["id"], thread_id)
+    return {"success": ok}
 
 @app.get("/api/messages")
-async def get_messages_endpoint(user: dict = Depends(get_current_user)):
-    """Returns stored conversation history for the logged-in user."""
+async def get_messages_endpoint(thread_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    """Returns stored conversation history for the logged-in user, optionally filtered by thread."""
     user_id = user["id"]
-    msgs = db.get_all_messages(user_id)
+    msgs = db.get_all_messages(user_id, thread_id=thread_id)
     stopped = db.get_emergency_stopped(user_id)
     return {"messages": msgs, "emergency_stopped": stopped}
 
@@ -443,12 +483,27 @@ async def get_messages_endpoint(user: dict = Depends(get_current_user)):
 async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Depends(get_current_user)):
     user_id = user["id"]
     user_msg = payload.message.strip()
+    thread_id = (payload.thread_id or "default").strip()
+
+    # Auto-title thread if it's new and currently named "New Chat"
+    if thread_id != "default" and user_msg:
+        try:
+            threads = db.get_user_threads(user_id)
+            current_t = next((t for t in threads if t["thread_id"] == thread_id), None)
+            if current_t and current_t.get("title") in ("New Chat", "Chat"):
+                # Use first 5-6 words
+                summary_title = " ".join(user_msg.split()[:5])
+                if len(summary_title) > 36:
+                    summary_title = summary_title[:36] + "..."
+                db.rename_chat_thread(user_id, thread_id, summary_title)
+        except Exception:
+            pass
 
     # Requirement 5: Input limit (maximum 2,000 characters)
     if len(user_msg) > 2000:
         raise HTTPException(
             status_code=400,
-            detail="Message is too long. Please keep your message under 2,000 characters. 🌸"
+            detail="Message is too long. Please keep your message under 2,000 characters. 🐘"
         )
 
     # Requirement 4: Rate limit check
@@ -456,7 +511,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
 
     if not user_msg:
         return JSONResponse({
-            "reply": "I'm listening whenever you want to talk 🌸",
+            "reply": "I'm listening whenever you want to talk 🐘",
             "proposal": None
         })
 
@@ -482,7 +537,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
         db.cancel_pending_proposal(user_id, reason="Emergency STOP command received in chat")
         db.cancel_pending_task_action(user_id, reason="Emergency STOP command received in chat")
         
-        stop_reply = "🛑 STOP command received. All operations halted immediately. Type any message or click 'Resume Chat' to continue whenever you're ready 🌸"
+        stop_reply = "🛑 STOP command received. All operations halted immediately. Type any message or click 'Resume Chat' to continue whenever you're ready 🐘"
         db.save_message(user_id, "assistant", stop_reply)
         db.log_audit(user_id, "STOP_TRIGGERED", "User commanded STOP in chat.")
         return JSONResponse({
@@ -508,9 +563,9 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
             if res:
                 db.save_message(user_id, "user", user_msg)
                 if res["action_type"] == "task_complete":
-                    reply_msg = f"Woohoo! 🎉 Marked '{res['task_title']}' as completed! Amazing job! 🌸"
+                    reply_msg = f"Woohoo! 🎉 Marked '{res['task_title']}' as completed! Amazing job! 🐘"
                 else:
-                    reply_msg = f"I've removed '{res['task_title']}' from your tasks 🌸"
+                    reply_msg = f"I've removed '{res['task_title']}' from your tasks 🐘"
                 db.save_message(user_id, "assistant", reply_msg)
                 return JSONResponse({
                     "reply": reply_msg,
@@ -520,7 +575,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
         elif is_cancel:
             db.cancel_pending_task_action(user_id, reason="User cancelled in chat")
             db.save_message(user_id, "user", user_msg)
-            reply_msg = "No problem at all! Kept it just as it is 🌸"
+            reply_msg = "No problem at all! Kept it just as it is 🐘"
             db.save_message(user_id, "assistant", reply_msg)
             return JSONResponse({
                 "reply": reply_msg,
@@ -539,7 +594,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
             confirmed = db.confirm_pending_proposal(user_id)
             if confirmed:
                 db.save_message(user_id, "user", user_msg)
-                reply_msg = f"Saved! I've added '{confirmed['title']}' to your tasks. You've got this! 🌸"
+                reply_msg = f"Saved! I've added '{confirmed['title']}' to your tasks. You've got this! 🐘"
                 db.save_message(user_id, "assistant", reply_msg)
                 return JSONResponse({
                     "reply": reply_msg,
@@ -549,7 +604,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
         elif is_task_cancel:
             db.cancel_pending_proposal(user_id, reason="User cancelled in chat")
             db.save_message(user_id, "user", user_msg)
-            reply_msg = "No problem at all! I dropped that task proposal 🌸"
+            reply_msg = "No problem at all! I dropped that task proposal 🐘"
             db.save_message(user_id, "assistant", reply_msg)
             return JSONResponse({
                 "reply": reply_msg,
@@ -569,7 +624,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
             db.save_message(user_id, "user", user_msg)
             db.delete_fact(user_id, target_id)
             db.clear_pending_action(user_id)
-            reply = "I've forgotten that for you! It's wiped from my memory 🌸"
+            reply = "I've forgotten that for you! It's wiped from my memory 🐘"
             db.save_message(user_id, "assistant", reply)
             return JSONResponse({
                 "reply": reply,
@@ -580,7 +635,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
         elif is_no:
             db.save_message(user_id, "user", user_msg)
             db.clear_pending_action(user_id)
-            reply = "No problem at all! I'll keep remembering it 🌸"
+            reply = "No problem at all! I'll keep remembering it 🐘"
             db.save_message(user_id, "assistant", reply)
             return JSONResponse({
                 "reply": reply,
@@ -602,7 +657,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
             relay_res = await relay_manager.relay_command(user_id, cmd_data)
             db.save_message(user_id, "user", user_msg)
             if relay_res.get("success"):
-                reply = f"🌸 Remote action sent to your device! ({cmd_data.get('type')})"
+                reply = f"🐘 Remote action sent to your device! ({cmd_data.get('type')})"
             else:
                 reply = f"Could not execute remote command: {relay_res.get('message', 'Rejected')}"
             db.save_message(user_id, "assistant", reply)
@@ -614,7 +669,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
         elif is_no:
             db.save_message(user_id, "user", user_msg)
             db.clear_pending_action(user_id)
-            reply = "Remote action cancelled 🌸"
+            reply = "Remote action cancelled 🐘"
             db.save_message(user_id, "assistant", reply)
             return JSONResponse({
                 "reply": reply,
@@ -648,7 +703,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
         matched = task_intent["task"]
         db.set_pending_task_action(user_id, "task_delete", matched["id"], matched["title"])
         db.save_message(user_id, "user", user_msg)
-        reply = f"Are you sure you want me to remove '{matched['title']}' from your tasks? 🌸"
+        reply = f"Are you sure you want me to remove '{matched['title']}' from your tasks? 🐘"
         db.save_message(user_id, "assistant", reply)
         return JSONResponse({
             "reply": reply,
@@ -662,13 +717,13 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
     elif task_intent["intent"] == "ambiguous_complete":
         db.save_message(user_id, "user", user_msg)
         c_names = ", ".join([f"'{c['title']}'" for c in task_intent["candidates"]])
-        reply = f"I found a few matching tasks: {c_names}. Which one did you finish? 🌸"
+        reply = f"I found a few matching tasks: {c_names}. Which one did you finish? 🐘"
         db.save_message(user_id, "assistant", reply)
         return JSONResponse({"reply": reply, "proposal": None})
     elif task_intent["intent"] == "ambiguous_delete":
         db.save_message(user_id, "user", user_msg)
         c_names = ", ".join([f"'{c['title']}'" for c in task_intent["candidates"]])
-        reply = f"I found a few matching tasks: {c_names}. Which one would you like to delete? 🌸"
+        reply = f"I found a few matching tasks: {c_names}. Which one would you like to delete? 🐘"
         db.save_message(user_id, "assistant", reply)
         return JSONResponse({"reply": reply, "proposal": None})
 
@@ -677,14 +732,14 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
     if is_forget_intent(user_msg):
         db.save_message(user_id, "user", user_msg)
         if not facts:
-            reply = "I don't have anything saved in my memory to forget right now! 🌸"
+            reply = "I don't have anything saved in my memory to forget right now! 🐘"
             db.save_message(user_id, "assistant", reply)
             return JSONResponse({"reply": reply, "proposal": None})
 
         target_fact = find_target_fact_to_forget(user_msg, facts)
         db.set_pending_action(user_id, "forget_fact", target_id=target_fact["id"], target_text=target_fact["fact"])
         
-        reply = f"Are you sure you want me to forget that '{target_fact['fact']}'? Just reply \"yes\" or confirm to remove it 🌸"
+        reply = f"Are you sure you want me to forget that '{target_fact['fact']}'? Just reply \"yes\" or confirm to remove it 🐘"
         db.save_message(user_id, "assistant", reply)
         return JSONResponse({
             "reply": reply,
@@ -709,7 +764,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
             chat_history=recent_history[:-1],
             remembered_facts=updated_facts
         )
-        ai_reply = brain_result.get("reply", f"Got it! I've updated my memory: {updated_text} 🌸")
+        ai_reply = brain_result.get("reply", f"Got it! I've updated my memory: {updated_text} 🐘")
         db.save_message(user_id, "assistant", ai_reply)
         return JSONResponse({
             "reply": ai_reply,
@@ -767,14 +822,14 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
         if is_list_devices:
             devs = db.get_user_devices(user_id)
             if not devs:
-                reply = "You don't have any devices connected yet! Log into your account on your phone or laptop and they will auto-connect 🌸"
+                reply = "You don't have any devices connected yet! Log into your account on your phone or laptop and they will auto-connect 🐘"
             else:
                 total_count = len(devs)
                 online_count = sum(1 for d in devs if relay_manager.is_device_connected(user_id, d.get("device_id")))
                 if total_count == 1:
-                    hdr = f"You have **1 companion device** connected to your SINBHA network: 🌸\n"
+                    hdr = f"You have **1 companion device** connected to your SINBHA network: 🐘\n"
                 else:
-                    hdr = f"You have **{total_count} companion devices** connected to your SINBHA network: 🌸\n"
+                    hdr = f"You have **{total_count} companion devices** connected to your SINBHA network: 🐘\n"
                 lines = [hdr]
                 for d in devs:
                     is_online = relay_manager.is_device_connected(user_id, d.get("device_id"))
@@ -793,7 +848,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
             for d in devs:
                 if d.get("status") == "trusted":
                     await relay_manager.broadcast_event(user_id, "sync_tasks", {"reason": "chat_command"})
-            reply = "🌸 Sent an instant synchronization signal to all your connected devices!"
+            reply = "🐘 Sent an instant synchronization signal to all your connected devices!"
             db.save_message(user_id, "user", user_msg)
             db.save_message(user_id, "assistant", reply)
             return JSONResponse({"reply": reply, "proposal": None})
@@ -825,7 +880,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
                 reply = "\n".join(lines)
             else:
                 reply = (
-                    "📬 No recent notifications recorded from your phone yet! 🌸\n\n"
+                    "📬 No recent notifications recorded from your phone yet! 🐘\n\n"
                     "**To enable notifications:**\n"
                     "1. Open the SINBHA app on your phone.\n"
                     "2. Allow **Notification Access** for SINBHA in your Android Settings.\n"
@@ -861,7 +916,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
             if found:
                 reply = "\n".join(lines)
             else:
-                reply = "🔋 Sent a battery query signal to your companion devices! Open or wake the device to refresh telemetry 🌸"
+                reply = "🔋 Sent a battery query signal to your companion devices! Open or wake the device to refresh telemetry 🐘"
             db.save_message(user_id, "assistant", reply)
             return JSONResponse({"reply": reply, "proposal": None})
 
@@ -891,7 +946,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
                 else:
                     reply = f"🔒 Done! I've locked your {target_dev['name']} screen (queued offline — will lock as soon as the laptop is connected)!"
             else:
-                reply = "I couldn't find a trusted Windows laptop/PC connected to lock! Please make sure your laptop is logged in to your account 🌸"
+                reply = "I couldn't find a trusted Windows laptop/PC connected to lock! Please make sure your laptop is logged in to your account 🐘"
             db.save_message(user_id, "assistant", reply)
             return JSONResponse({"reply": reply, "proposal": None})
 
@@ -996,11 +1051,11 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
                     extra_note = f" ({target_url})"
 
                 if is_online:
-                    reply = f"🌸 Done! Opened {app_clean.capitalize()} on your {target_dev['name']}{extra_note}."
+                    reply = f"🐘 Done! Opened {app_clean.capitalize()} on your {target_dev['name']}{extra_note}."
                 else:
-                    reply = f"🌸 Done! Opened {app_clean.capitalize()} command sent to your {target_dev['name']} (queued offline — will launch automatically as soon as the device is active/connected)!"
+                    reply = f"🐘 Done! Opened {app_clean.capitalize()} command sent to your {target_dev['name']} (queued offline — will launch automatically as soon as the device is active/connected)!"
             else:
-                reply = f"I'd love to open {app_clean.capitalize()}, but you don't have a paired companion device online to open it on! 🌸"
+                reply = f"I'd love to open {app_clean.capitalize()}, but you don't have a paired companion device online to open it on! 🐘"
             db.save_message(user_id, "assistant", reply)
             return JSONResponse({"reply": reply, "proposal": None})
 
@@ -1049,9 +1104,9 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
                     "expiry": 86400
                 })
                 enter_note = " and pressed Enter ↵" if press_enter else ""
-                reply = f"🌸 Done! Typed '{text_to_type}'{enter_note} on your {target_dev['name']}."
+                reply = f"🐘 Done! Typed '{text_to_type}'{enter_note} on your {target_dev['name']}."
             else:
-                reply = f"I'd love to type that, but no companion device is connected! 🌸"
+                reply = f"I'd love to type that, but no companion device is connected! 🐘"
             db.save_message(user_id, "assistant", reply)
             return JSONResponse({"reply": reply, "proposal": None})
 
@@ -1090,7 +1145,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
                 relay_res = await relay_manager.relay_command(user_id, cmd_data)
                 db.save_message(user_id, "user", user_msg)
                 action_desc = f"Ringing your '{target_dev['name']}' now! 🔔" if is_ring_intent else f"Sent note to your '{target_dev['name']}'! 💌"
-                reply = f"🌸 {action_desc}"
+                reply = f"🐘 {action_desc}"
                 db.save_message(user_id, "assistant", reply)
                 return JSONResponse({
                     "reply": reply,
@@ -1101,7 +1156,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
                 p_dev = pending_devices[0]
                 action_word = "ring" if is_ring_intent else "send a note to"
                 reply = (
-                    f"I'd love to {action_word} your phone, but your '{p_dev['name']}' is still waiting to be approved in Settings! 🌸\n\n"
+                    f"I'd love to {action_word} your phone, but your '{p_dev['name']}' is still waiting to be approved in Settings! 🐘\n\n"
                     f"1. Check the 6-digit code shown on your phone screen.\n"
                     f"2. In Settings ⚙️ -> My Devices on your laptop, click the green '[🔑 Enter Code]' button next to '{p_dev['name']}'.\n"
                     f"3. Type the 6 digits to approve and trust the phone.\n\n"
@@ -1113,7 +1168,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
             else:
                 action_word = "ring" if is_ring_intent else "send a note to"
                 reply = (
-                    f"I'd love to {action_word} your phone, but you don't have any devices paired yet! 🌸\n\n"
+                    f"I'd love to {action_word} your phone, but you don't have any devices paired yet! 🐘\n\n"
                     f"To pair your phone, open the SINBHA Android app, log in, then approve the pairing in Settings ⚙️ -> My Devices on your laptop."
                 )
                 db.save_message(user_id, "user", user_msg)
@@ -1121,10 +1176,10 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
                 return JSONResponse({"reply": reply, "proposal": None})
 
     # 7. Standard message flow: call SINBHA brain
-    db.save_message(user_id, "user", user_msg)
+    db.save_message(user_id, "user", user_msg, thread_id=thread_id)
     db.log_audit(user_id, "CHAT_MESSAGE", f"User sent: '{user_msg[:80]}...'")
 
-    recent_history = db.get_recent_messages(user_id, limit=20)
+    recent_history = db.get_recent_messages(user_id, limit=20, thread_id=thread_id)
     current_facts = db.get_all_facts(user_id)
 
     # 7b. Web Search check (Step 15)
@@ -1217,7 +1272,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
         user_timezone=user_tz,
         user_devices=annotated_devs
     )
-    ai_reply = brain_result.get("reply", "I'm right here with you 🌸")
+    ai_reply = brain_result.get("reply", "I'm right here with you 🐘")
 
     # 8. Check if AI proposed a structured task
     task_proposal_obj = None
@@ -1259,7 +1314,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
 
                 if not dt_res["time_specified"] and real_due:
                     if "what time" not in ai_reply.lower() and "time" not in ai_reply.lower():
-                        ai_reply += "\n\nWhat time are you aiming to get it done by? (I can also set a reminder whenever you like) 🌸"
+                        ai_reply += "\n\nWhat time are you aiming to get it done by? (I can also set a reminder whenever you like) 🐘"
 
             prop_id = db.set_pending_proposal(
                 user_id=user_id,
@@ -1366,10 +1421,10 @@ async def confirm_task_endpoint(payload: TaskConfirmWithRemindersRequest = None,
     if not confirmed:
         return JSONResponse({
             "success": False,
-            "reply": "This task proposal has expired or was already resolved 🌸"
+            "reply": "This task proposal has expired or was already resolved 🐘"
         })
 
-    reply_msg = f"Saved! I've added '{confirmed['title']}' to your tasks. You've got this! 🌸"
+    reply_msg = f"Saved! I've added '{confirmed['title']}' to your tasks. You've got this! 🐘"
     db.save_message(user_id, "assistant", reply_msg)
     return JSONResponse({
         "success": True,
@@ -1383,7 +1438,7 @@ async def cancel_task_endpoint(user: dict = Depends(get_current_user)):
     """Cancels pending task proposal for the logged-in user."""
     user_id = user["id"]
     db.cancel_pending_proposal(user_id, reason="User clicked Cancel")
-    reply_msg = "No problem at all! I dropped that task proposal 🌸"
+    reply_msg = "No problem at all! I dropped that task proposal 🐘"
     db.save_message(user_id, "assistant", reply_msg)
     return JSONResponse({
         "success": True,
@@ -1408,9 +1463,20 @@ async def check_reminders_endpoint(tz_offset_minutes: Optional[int] = None, user
     needing = db.check_due_reminders(user_id, now_dt)
     if needing:
         first = needing[0]
+        task_data = dict(first["task"])
+        user_settings = db.get_all_settings(user_id)
+        default_sound = user_settings.get("reminder_sound", "voice_then_tone")
+        default_song = user_settings.get("custom_song_uri", "")
+        user_display_name = user_settings.get("user_display_name") or user.get("email", "").split("@")[0]
+
+        task_data["sound_option"] = task_data.get("sound_option") or default_sound
+        task_data["song_uri"] = task_data.get("song_uri") or default_song
+        task_data["user_name"] = user_display_name
+        task_data["spoken_text"] = f"Hey {user_display_name}, it is time to {task_data.get('title', 'complete your task')}"
+
         return {
             "reminder_needed": True,
-            "task": first["task"],
+            "task": task_data,
             "reminder_id": first.get("reminder_id"),
             "is_explicit": first.get("is_explicit", False),
             "needing_bird": needing,
@@ -1450,9 +1516,17 @@ async def get_upcoming_reminders_endpoint(user: dict = Depends(get_reminder_acti
             "settings": settings
         }
 
+    default_sound = settings.get("reminder_sound", "voice_then_tone")
+    default_song = settings.get("custom_song_uri", "")
+    user_display_name = settings.get("user_display_name") or user.get("email", "").split("@")[0]
+
     pending_tasks = [t for t in db.get_all_tasks(user_id) if t["status"] == "pending"]
     reminders_list = []
     for t in pending_tasks:
+        s_opt = t.get("sound_option") or default_sound
+        s_uri = t.get("song_uri") or default_song
+        spoken_msg = f"Hey {user_display_name}, it is time to {t['title']}"
+
         snooze_str = t.get("snoozed_until")
         if snooze_str:
             reminders_list.append({
@@ -1461,11 +1535,28 @@ async def get_upcoming_reminders_endpoint(user: dict = Depends(get_reminder_acti
                 "reminder_id": f"snooze_{t['id']}",
                 "time": snooze_str,
                 "label": f"Snoozed: {t['title']}",
-                "is_explicit": True
+                "is_explicit": True,
+                "sound_option": s_opt,
+                "song_uri": s_uri,
+                "user_name": user_display_name,
+                "spoken_text": spoken_msg
             })
-        for r in (t.get("reminders") or []):
-            r_id = r.get("id")
-            r_time = r.get("time")
+        for idx, r in enumerate(t.get("reminders") or []):
+            if isinstance(r, dict):
+                r_id = r.get("id") or f"rem_{t['id']}_{idx}"
+                r_time = r.get("time") or r.get("reminder_time")
+                r_label = r.get("label", f"Reminder: {t['title']}")
+                r_sound = r.get("sound_option") or s_opt
+                r_song = r.get("song_uri") or s_uri
+                r_spoken = r.get("spoken_text") or spoken_msg
+            else:
+                r_id = f"rem_{t['id']}_{idx}"
+                r_time = str(r)
+                r_label = f"Reminder: {t['title']}"
+                r_sound = s_opt
+                r_song = s_uri
+                r_spoken = spoken_msg
+
             fired_ids = set(t.get("fired_reminders") or [])
             if r_id and r_id not in fired_ids and r_time:
                 reminders_list.append({
@@ -1473,8 +1564,12 @@ async def get_upcoming_reminders_endpoint(user: dict = Depends(get_reminder_acti
                     "task_title": t["title"],
                     "reminder_id": r_id,
                     "time": r_time,
-                    "label": r.get("label", f"Reminder: {t['title']}"),
-                    "is_explicit": True
+                    "label": r_label,
+                    "is_explicit": True,
+                    "sound_option": r_sound,
+                    "song_uri": r_song,
+                    "user_name": user_display_name,
+                    "spoken_text": r_spoken
                 })
         due_d = t.get("due_date")
         due_t = t.get("due_time")
@@ -1485,7 +1580,11 @@ async def get_upcoming_reminders_endpoint(user: dict = Depends(get_reminder_acti
                 "reminder_id": None,
                 "time": f"{due_d} {due_t if due_t else '09:00'}",
                 "label": f"Due: {t['title']}",
-                "is_explicit": False
+                "is_explicit": False,
+                "sound_option": s_opt,
+                "song_uri": s_uri,
+                "user_name": user_display_name,
+                "spoken_text": spoken_msg
             })
 
     return {
@@ -1699,7 +1798,15 @@ async def update_settings_endpoint(payload: SettingsUpdateRequest, user: dict = 
         db.set_setting(user_id, "timezone", payload.timezone)
     if payload.web_search_enabled is not None:
         db.set_setting(user_id, "web_search_enabled", payload.web_search_enabled)
-    db.log_audit(user_id, "SETTINGS_UPDATED", f"Persistence: {payload.persistence}, Quiet hours: {payload.quiet_hours_start}-{payload.quiet_hours_end}, Web Search: {payload.web_search_enabled}")
+    if payload.reminder_sound is not None:
+        db.set_setting(user_id, "reminder_sound", payload.reminder_sound)
+    if payload.custom_song_uri is not None:
+        db.set_setting(user_id, "custom_song_uri", payload.custom_song_uri)
+    if payload.allow_alarms_in_dnd is not None:
+        db.set_setting(user_id, "allow_alarms_in_dnd", payload.allow_alarms_in_dnd)
+    if payload.user_display_name is not None:
+        db.set_setting(user_id, "user_display_name", payload.user_display_name)
+    db.log_audit(user_id, "SETTINGS_UPDATED", f"Persistence: {payload.persistence}, Quiet hours: {payload.quiet_hours_start}-{payload.quiet_hours_end}, Reminder Sound: {payload.reminder_sound}")
     return {"success": True, "settings": db.get_all_settings(user_id)}
 
 @app.post("/api/confirm-action")
@@ -1713,7 +1820,7 @@ async def confirm_action_endpoint(payload: ActionConfirmRequest, user: dict = De
         if action == "confirm":
             res = db.confirm_pending_task_action(user_id)
             if res:
-                reply = f"Woohoo! 🎉 Marked '{res['task_title']}' as completed! Amazing job! 🌸" if res["action_type"] == "task_complete" else f"I've removed '{res['task_title']}' from your tasks 🌸"
+                reply = f"Woohoo! 🎉 Marked '{res['task_title']}' as completed! Amazing job! 🐘" if res["action_type"] == "task_complete" else f"I've removed '{res['task_title']}' from your tasks 🐘"
                 db.save_message(user_id, "assistant", reply)
                 return JSONResponse({
                     "success": True,
@@ -1724,20 +1831,20 @@ async def confirm_action_endpoint(payload: ActionConfirmRequest, user: dict = De
                 })
         else:
             db.cancel_pending_task_action(user_id, reason="User clicked Cancel")
-            reply = "No problem at all! Kept it just as it is 🌸"
+            reply = "No problem at all! Kept it just as it is 🐘"
             db.save_message(user_id, "assistant", reply)
             return JSONResponse({"success": True, "reply": reply, "action_performed": "cancelled"})
 
     pending = db.get_pending_action(user_id)
     if not pending:
-        return JSONResponse({"success": False, "reply": "No pending action found 🌸"})
+        return JSONResponse({"success": False, "reply": "No pending action found 🐘"})
 
     if action == "confirm":
         if pending["action_type"] == "forget_fact":
             target_id = pending["target_id"]
             db.delete_fact(user_id, target_id)
             db.clear_pending_action(user_id)
-            reply = "I've forgotten that for you! It's wiped from my memory 🌸"
+            reply = "I've forgotten that for you! It's wiped from my memory 🐘"
             db.save_message(user_id, "assistant", reply)
             return JSONResponse({
                 "success": True,
@@ -1747,12 +1854,12 @@ async def confirm_action_endpoint(payload: ActionConfirmRequest, user: dict = De
             })
     else:
         db.clear_pending_action(user_id)
-        reply = "No problem at all! I'll keep remembering it 🌸"
+        reply = "No problem at all! I'll keep remembering it 🐘"
         db.save_message(user_id, "assistant", reply)
         return JSONResponse({"success": True, "reply": reply, "action_performed": "cancelled"})
 
     db.clear_pending_action(user_id)
-    return JSONResponse({"success": True, "reply": "Action completed 🌸"})
+    return JSONResponse({"success": True, "reply": "Action completed 🐘"})
 
 # ----------------- Emergency STOP / Resume Endpoints (Per-User) -----------------
 
@@ -1779,7 +1886,7 @@ async def resume_endpoint(user: dict = Depends(get_current_user)):
     db.log_audit(user_id, "STOP_RESUMED", "Resume button clicked.")
     return JSONResponse({
         "status": "resumed",
-        "message": "🌸 Welcome back! Everything is quiet and ready."
+        "message": "🐘 Welcome back! Everything is quiet and ready."
     })
 
 # ----------------- Memory & Admin/Dev Endpoints (Requirement 4) -----------------
@@ -2062,7 +2169,7 @@ async def device_websocket_endpoint(websocket: WebSocket):
         await websocket.send_text(json.dumps({
             "type": "ready",
             "device_id": device_id,
-            "message": "Secure channel connected 🌸"
+            "message": "Secure channel connected 🐘"
         }))
 
         # Drain and deliver unexpired offline commands
@@ -2213,7 +2320,7 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     local_ip = get_local_ip()
     print("=" * 60)
-    print("🌸 SINBHA is running!")
+    print("🐘 SINBHA is running!")
     print(f"👉 On your computer:  http://localhost:{port}")
     print(f"👉 On your phone:     http://{local_ip}:{port}")
     print("=" * 60)

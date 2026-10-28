@@ -27,7 +27,7 @@ You only need to publish a new APK or Windows installer when you change **native
 1. **Automatic Detection**: Every time SINBHA opens on your phone or PC, it automatically checks your public repository:
    `https://github.com/kbtteja456-KBT/sinbha-releases/releases`
 2. **Update Notification**: If the cloud version is newer than the installed version (e.g., `1.0.2` > `1.0.1`), a banner appears:
-   > *"🌸 New version of SINBHA is available! Tap to update."*
+   > *"🐘 New version of SINBHA is available! Tap to update."*
 3. **One-Tap Upgrade**:
    - On **Android**: Tapping download gets `SINBHA.apk`. Opening it upgrades the app **in-place**. All logins, tasks, and settings stay completely intact because both APKs are signed with your secret release key.
    - On **Windows**: The updater downloads in the background and prompts to restart.
