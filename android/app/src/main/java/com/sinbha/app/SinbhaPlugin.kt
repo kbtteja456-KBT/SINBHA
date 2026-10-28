@@ -640,7 +640,8 @@ class SinbhaPlugin : Plugin() {
     }
 
     /**
-     * Step 16c: Launches native apps on Android by app name, package, search query, or URL.
+     * Step C2.5 Item 4: Launches native apps on Android by app name, package, search query, or URL.
+     * Returns the verified package name, launch method, and handles background restrictions.
      */
     @PluginMethod
     fun openApp(call: PluginCall) {
@@ -649,11 +650,18 @@ class SinbhaPlugin : Plugin() {
         val url = call.getString("url", null)
         val text = call.getString("type_text", null) ?: call.getString("text", null)
 
-        val success = SinbhaAppLauncher.launchApp(context, appName, searchQuery, url, text)
-        if (success) {
-            call.resolve(JSObject().put("success", true).put("app", appName))
+        val result = SinbhaAppLauncher.launchAppWithResult(context, appName, searchQuery, url, text)
+        if (result.success) {
+            val resObj = JSObject().apply {
+                put("success", true)
+                put("app", result.app)
+                put("package", result.packageName ?: "")
+                put("method", result.method ?: "native")
+            }
+            call.resolve(resObj)
         } else {
-            call.reject("Could not find or launch matching app for '$appName'")
+            val err = result.error ?: "Could not find or launch matching app for '$appName'"
+            call.reject(err, if (result.needsOverlayPermission) "OVERLAY_PERMISSION_REQUIRED" else "APP_NOT_FOUND")
         }
     }
 

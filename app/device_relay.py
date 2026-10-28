@@ -41,6 +41,181 @@ class CommandRelayManager:
         # Recent device active timestamps: (user_id, device_id) -> float
         self.device_last_active: Dict[Tuple[int, str], float] = {}
 
+        # Command lifecycle states: command_id -> dict
+        # { command_id, user_id, sender_device, target_device, type, status, created_at, updated_at, result, error }
+        self.command_lifecycles: Dict[str, dict] = {}
+
+        # Asyncio futures for handlers awaiting device confirmation: command_id -> asyncio.Future
+        self._lifecycle_waiters: Dict[str, asyncio.Future] = {}
+
+        # Device capabilities reported via handshake: (user_id, device_id) -> dict
+        # { version, platform, supported_tools, updated_at }
+        self.device_capabilities: Dict[Tuple[int, str], dict] = {}
+
+    DEFAULT_SUPPORTED_TOOLS = {
+        "windows": [
+            "find_installed_app", "open_app", "open_url", "send_note",
+            "type_text", "press_keys", "lock_screen", "sync_tasks"
+        ],
+        "android": [
+            "open_app", "open_url", "send_note", "ring_phone", "sync_tasks"
+        ],
+        "web": [
+            "send_note", "open_url", "sync_tasks"
+        ]
+    }
+
+    def get_default_supported_tools(self, platform: Optional[str]) -> List[str]:
+        plat = (platform or "web").lower()
+        if "win" in plat or "pc" in plat or "laptop" in plat:
+            return list(self.DEFAULT_SUPPORTED_TOOLS["windows"])
+        elif "android" in plat or "phone" in plat or "mobile" in plat:
+            return list(self.DEFAULT_SUPPORTED_TOOLS["android"])
+        return list(self.DEFAULT_SUPPORTED_TOOLS["web"])
+
+    def record_device_capabilities(
+        self,
+        user_id: int,
+        device_id: str,
+        platform: str,
+        app_version: str,
+        supported_tools: Optional[List[str]] = None
+    ) -> dict:
+        """Stores device capability handshake reported by companion app."""
+        tools = supported_tools or self.get_default_supported_tools(platform)
+        caps = {
+            "platform": platform,
+            "app_version": app_version,
+            "supported_tools": tools,
+            "updated_at": time.time()
+        }
+        self.device_capabilities[(user_id, device_id)] = caps
+        return caps
+
+    def get_device_supported_tools(self, user_id: int, device_id: str, platform: Optional[str] = None) -> List[str]:
+        """Returns the list of tools verified to be supported on the target device."""
+        recorded = self.device_capabilities.get((user_id, device_id))
+        if recorded and recorded.get("supported_tools"):
+            return recorded["supported_tools"]
+        return self.get_default_supported_tools(platform)
+
+    def init_command_lifecycle(
+        self,
+        cmd_id: str,
+        user_id: int,
+        sender_device: str,
+        target_device: str,
+        cmd_type: str,
+        status: str = "queued",
+    ):
+        """Initializes lifecycle record for a command."""
+        now = time.time()
+        self.command_lifecycles[cmd_id] = {
+            "command_id": cmd_id,
+            "user_id": user_id,
+            "sender_device": sender_device,
+            "target_device": target_device,
+            "type": cmd_type,
+            "status": status,  # "queued", "delivered", "started", "succeeded", "failed"
+            "created_at": now,
+            "updated_at": now,
+            "result": None,
+            "error": None,
+        }
+
+    def update_command_status(
+        self,
+        user_id: int,
+        cmd_id: str,
+        status: str,
+        result: Optional[dict] = None,
+        error: Optional[str] = None,
+    ) -> dict:
+        """
+        Updates the lifecycle status of a command ('delivered', 'started', 'succeeded', 'failed').
+        Resolves any waiting future when reached final status ('succeeded', 'failed').
+        """
+        now = time.time()
+        entry = self.command_lifecycles.get(cmd_id)
+        if not entry:
+            entry = {
+                "command_id": cmd_id,
+                "user_id": user_id,
+                "status": status,
+                "created_at": now,
+                "updated_at": now,
+                "result": result,
+                "error": error,
+            }
+            self.command_lifecycles[cmd_id] = entry
+        else:
+            entry["status"] = status
+            entry["updated_at"] = now
+            if result is not None:
+                entry["result"] = result
+            if error is not None:
+                entry["error"] = error
+
+        # Log audit of status change
+        db.log_audit(
+            user_id,
+            "DEVICE_COMMAND_STATUS",
+            json.dumps({
+                "command_id": cmd_id,
+                "status": status,
+                "has_result": bool(result),
+                "error": error,
+            })
+        )
+
+        # If waiting future exists and status is final (succeeded or failed), resolve it
+        waiter = self._lifecycle_waiters.get(cmd_id)
+        if waiter and not waiter.done() and status in ("succeeded", "failed"):
+            waiter.set_result(entry)
+
+        return entry
+
+    def get_command_lifecycle(self, cmd_id: str) -> Optional[dict]:
+        return self.command_lifecycles.get(cmd_id)
+
+    async def wait_for_command_completion(
+        self,
+        user_id: int,
+        cmd_id: str,
+        timeout: float = 10.0
+    ) -> dict:
+        """
+        Awaits until the command moves to 'succeeded' or 'failed', or times out (~10s).
+        """
+        entry = self.command_lifecycles.get(cmd_id)
+        if entry and entry.get("status") in ("succeeded", "failed"):
+            return entry
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        future = loop.create_future()
+        self._lifecycle_waiters[cmd_id] = future
+
+        try:
+            res = await asyncio.wait_for(future, timeout=timeout)
+            return res
+        except asyncio.TimeoutError:
+            if cmd_id in self.command_lifecycles:
+                self.command_lifecycles[cmd_id]["status"] = "timed_out"
+                self.command_lifecycles[cmd_id]["updated_at"] = time.time()
+            return {
+                "command_id": cmd_id,
+                "status": "timed_out",
+                "success": False,
+                "message": "I sent it to your device, but could not confirm (timed out after 10s)."
+            }
+        finally:
+            self._lifecycle_waiters.pop(cmd_id, None)
+
     def store_user_notifications(self, user_id: int, notifications: List[dict]):
         """Stores recent notification buffer from phone in volatile memory."""
         if not notifications:
@@ -440,6 +615,7 @@ class CommandRelayManager:
                 self.unregister_websocket(user_id, target_id, ws)
 
         if relayed:
+            self.init_command_lifecycle(cmd_id, user_id, sender_id, target_id, cmd_type, status="delivered")
             db.log_audit(
                 user_id,
                 "DEVICE_COMMAND_RELAY",
@@ -467,6 +643,7 @@ class CommandRelayManager:
                 current_q.pop(0)  # Drop oldest
             current_q.append(packet)
             self.offline_queues[q_key] = current_q
+            self.init_command_lifecycle(cmd_id, user_id, sender_id, target_id, cmd_type, status="queued")
 
             db.log_audit(
                 user_id,

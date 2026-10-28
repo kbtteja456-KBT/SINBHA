@@ -220,3 +220,39 @@ test('Key Press Validation (C2): Only allows safe allowlisted keys', async () =>
   const emptyKeyRes = await safePressKeys('');
   assert.strictEqual(emptyKeyRes.success, false);
 });
+
+test('Windows App Index (C2.5 Item 3): Typo-tolerant matching for antygravity, calclator, and chatgpy', () => {
+  // 1. "antygravity" -> matches "antigravity" with high confidence
+  const agRes = findInstalledApp('antygravity');
+  assert.strictEqual(agRes.success, true);
+  assert.strictEqual(agRes.confidence, 'high');
+  assert.ok(agRes.topCandidate);
+  assert.strictEqual(agRes.topCandidate.name, 'antigravity');
+  assert.ok(agRes.candidates.length <= 3);
+
+  // 2. "calclator" -> matches "calculator" with high confidence
+  const calcRes = findInstalledApp('calclator');
+  assert.strictEqual(calcRes.success, true);
+  assert.strictEqual(calcRes.confidence, 'high');
+  assert.ok(calcRes.topCandidate);
+  assert.strictEqual(calcRes.topCandidate.name, 'calculator');
+
+  // 3. "chatgpy" -> matches "chatgpt" with high confidence
+  const gptRes = findInstalledApp('chatgpy');
+  assert.strictEqual(gptRes.success, true);
+  assert.strictEqual(gptRes.confidence, 'high');
+  assert.ok(gptRes.topCandidate);
+  assert.strictEqual(gptRes.topCandidate.name, 'chatgpt');
+});
+
+test('Windows App Index (C2.5 Item 3): openAppWithFallback never silently opens website without asking', async () => {
+  const { openAppWithFallback } = require('../electron/command_security');
+
+  // Unknown app without user confirmation -> asks user first, does NOT open website!
+  const res = await openAppWithFallback('non_existent_fake_app_999', 'chrome', false);
+  assert.strictEqual(res.success, false);
+  assert.strictEqual(res.app_not_found, true);
+  assert.strictEqual(res.offer_website, true);
+  assert.ok(res.message.includes('Would you like me to open the website instead?'));
+});
+

@@ -151,6 +151,42 @@ document.addEventListener("DOMContentLoaded", () => {
   // Global state
   let currentUser = null;
   let isDevMode = false;
+
+  // Global Dev Trace History (Step C2.5 Item 7)
+  const devTracesHistory = [];
+  function recordDevTrace(trace) {
+    if (!trace) return;
+    devTracesHistory.unshift({
+      timestamp: new Date().toLocaleTimeString(),
+      ...trace
+    });
+    if (devTracesHistory.length > 20) devTracesHistory.pop();
+    renderDevTraces();
+  }
+
+  function renderDevTraces() {
+    const list = document.getElementById("devTracePanelList");
+    if (!list) return;
+    if (devTracesHistory.length === 0) {
+      list.innerHTML = '<div style="color: #6b7280; font-style: italic; padding: 6px;">No traces yet. Chat with SINBHA to inspect model output, tool calls, and latencies.</div>';
+      return;
+    }
+    list.innerHTML = devTracesHistory.map((t, idx) => {
+      const toolCount = t.tool_calls ? t.tool_calls.length : 0;
+      const statusColor = t.error ? "#ef4444" : "#10b981";
+      return `
+        <div style="background: #fff; border: 1px solid #fbcfe8; border-radius: 6px; padding: 8px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <strong style="color: #831843;">[#${devTracesHistory.length - idx}] ${escapeHtml(t.provider || 'AI')} / ${escapeHtml(t.model || 'model')}</strong>
+            <span style="font-size: 0.7rem; color: ${statusColor}; font-weight: 700;">${t.error ? escapeHtml(t.error) : 'SUCCESS'} (${t.elapsed_ms || 0}ms)</span>
+          </div>
+          <div style="font-size: 0.72rem; color: #6b7280;">Tools: ${toolCount} executed &bull; Time: ${escapeHtml(t.timestamp)}</div>
+          ${toolCount > 0 ? `<pre style="margin: 4px 0 0 0; background: #fdf2f8; padding: 4px; border-radius: 4px; overflow-x: auto; font-size: 0.68rem; color: #4b5563;">${escapeHtml(JSON.stringify(t.tool_calls, null, 2))}</pre>` : ''}
+        </div>
+      `;
+    }).join("");
+  }
+
   let activeReminderTask = null;
   let activeReminderId = null;
   let remindersPaused = false;
@@ -271,7 +307,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // Add an AI bubble to chat (with optional proposal action card and web search sources)
-  function appendAiMessage(text, timeStr = null, proposal = null, webSearch = null) {
+  function appendAiMessage(text, timeStr = null, proposal = null, webSearch = null, trace = null) {
     const group = document.createElement("div");
     group.className = "message-group ai-group";
     
@@ -438,6 +474,12 @@ document.addEventListener("DOMContentLoaded", () => {
         <p>${escapeHtml(text)}</p>
         ${webSearchHtml}
         ${proposalHtml}
+        ${isDevMode && trace && (trace.provider || trace.tool_calls?.length > 0) ? `
+          <details class="dev-trace-inline" style="margin-top: 6px; font-size: 0.74rem; background: #fdf2f8; border: 1px dashed #f472b6; border-radius: 6px; padding: 4px 8px;">
+            <summary style="cursor: pointer; font-weight: 700; color: #9d174d;">🔍 Dev Trace (${trace.elapsed_ms || 0}ms &bull; ${escapeHtml(trace.provider || 'ai')}/${escapeHtml(trace.model || 'model')})</summary>
+            <pre style="margin: 4px 0 0 0; white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 0.72rem; color: #374151;">${escapeHtml(JSON.stringify(trace, null, 2))}</pre>
+          </details>
+        ` : ''}
         <span class="message-time">${formatTime(timeStr)}</span>
       </div>
     `;
@@ -1102,7 +1144,10 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const data = await response.json();
-      appendAiMessage(data.reply, null, data.proposal, data.web_search);
+      appendAiMessage(data.reply, null, data.proposal, data.web_search, data.trace);
+      if (data.trace) {
+        recordDevTrace(data.trace);
+      }
 
       if (data.stopped) {
         setStopUiState(true);
@@ -2786,6 +2831,78 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     }
 
+    // Real Device Self-Test Runner (Step C2.5 Item 7)
+    const runDeviceSelfTestBtn = document.getElementById("runDeviceSelfTestBtn");
+    const selfTestResultsContainer = document.getElementById("selfTestResultsContainer");
+    const selfTestSummaryBadge = document.getElementById("selfTestSummaryBadge");
+    const selfTestList = document.getElementById("selfTestList");
+
+    if (runDeviceSelfTestBtn) {
+      runDeviceSelfTestBtn.addEventListener("click", async () => {
+        runDeviceSelfTestBtn.disabled = true;
+        runDeviceSelfTestBtn.textContent = "⏳ Running Self-Test on Devices...";
+        if (selfTestResultsContainer) selfTestResultsContainer.style.display = "block";
+        if (selfTestSummaryBadge) {
+          selfTestSummaryBadge.textContent = "Testing...";
+          selfTestSummaryBadge.style.background = "#fef3c7";
+          selfTestSummaryBadge.style.color = "#92400e";
+        }
+        if (selfTestList) {
+          selfTestList.innerHTML = '<div style="color: #6b7280; font-style: italic;">Pinging devices, launching apps, and confirming process/lifecycle on laptop and phone...</div>';
+        }
+
+        try {
+          const res = await fetch("/api/diagnostics/self-test", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" }
+          });
+          const data = await res.json();
+          if (selfTestSummaryBadge) {
+            selfTestSummaryBadge.textContent = data.summary || (data.success ? "All Passed" : "Tests Failed");
+            if (data.success) {
+              selfTestSummaryBadge.style.background = "#dcfce7";
+              selfTestSummaryBadge.style.color = "#166534";
+            } else {
+              selfTestSummaryBadge.style.background = "#fee2e2";
+              selfTestSummaryBadge.style.color = "#991b1b";
+            }
+          }
+
+          if (selfTestList && Array.isArray(data.tests)) {
+            selfTestList.innerHTML = data.tests.map(t => {
+              const isPass = t.status === "pass";
+              const badgeBg = isPass ? "#dcfce7" : "#fee2e2";
+              const badgeColor = isPass ? "#166534" : "#991b1b";
+              const badgeText = isPass ? "PASS" : "FAIL";
+              const icon = isPass ? "✅" : "❌";
+              return `
+                <div style="background: #faf5ff; border: 1px solid #f3e8ff; border-radius: 6px; padding: 6px 10px;">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <strong style="color: #4b5563;">${icon} ${escapeHtml(t.name)}</strong>
+                    <span style="font-size: 0.7rem; font-weight: 700; padding: 2px 6px; border-radius: 4px; background: ${badgeBg}; color: ${badgeColor};">${badgeText}</span>
+                  </div>
+                  <div style="font-size: 0.74rem; color: #6b7280; margin-top: 3px;">${escapeHtml(t.detail || '')}</div>
+                </div>
+              `;
+            }).join("");
+          }
+        } catch (err) {
+          if (selfTestSummaryBadge) {
+            selfTestSummaryBadge.textContent = "Error";
+            selfTestSummaryBadge.style.background = "#fee2e2";
+            selfTestSummaryBadge.style.color = "#991b1b";
+          }
+          if (selfTestList) {
+            selfTestList.innerHTML = `<div style="color: #ef4444;">Self-test request failed: ${escapeHtml(err.message)}</div>`;
+          }
+        } finally {
+          runDeviceSelfTestBtn.disabled = false;
+          runDeviceSelfTestBtn.textContent = "🚀 Run Device Self-Test";
+        }
+      });
+    }
+
+
     // Check settings open hook
     if (openSettingsBtn) {
       openSettingsBtn.addEventListener("click", () => {
@@ -3138,6 +3255,14 @@ document.addEventListener("DOMContentLoaded", () => {
         let batteryPct = 100;
         let isCharging = false;
         let platform = isAndroidPlatform() ? "android" : (window.electronAPI ? "windows" : "web");
+        let supportedTools = [];
+        if (platform === "windows") {
+          supportedTools = ["open_app", "open_url", "find_installed_app", "type_text", "press_keys", "send_note", "ring_phone"];
+        } else if (platform === "android") {
+          supportedTools = ["open_app", "open_url", "send_note", "ring_phone"];
+        } else {
+          supportedTools = ["send_note", "open_url"];
+        }
 
         if (window.electronAPI && window.electronAPI.getDesktopBattery) {
           const res = await window.electronAPI.getDesktopBattery();
@@ -3162,7 +3287,9 @@ document.addEventListener("DOMContentLoaded", () => {
             type: "device_status",
             battery: batteryPct,
             is_charging: isCharging,
-            platform: platform
+            platform: platform,
+            version: "1.4.6",
+            supported_tools: supportedTools
           }));
         }
       } catch (e) {}
@@ -3271,8 +3398,37 @@ document.addEventListener("DOMContentLoaded", () => {
       modal.style.display = "flex";
     }
 
-    // Execute remote command on this target device (Step 16b / 16c)
+    // Reports command lifecycle transition (started, succeeded, failed) back to server (Step C2.5)
+    async function reportCommandLifecycle(commandId, status, result = null, error = null) {
+      if (!commandId) return;
+      const packet = {
+        type: "command_status",
+        command_id: commandId,
+        id: commandId,
+        status: status,
+        result: result,
+        error: error
+      };
+      if (deviceWs && deviceWs.readyState === WebSocket.OPEN) {
+        try {
+          deviceWs.send(JSON.stringify(packet));
+        } catch (e) {}
+      }
+      try {
+        await fetch("/api/devices/command-status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(packet)
+        });
+      } catch (e) {}
+    }
+
+    // Execute remote command on this target device (Step 16b / 16c / C2.5)
     async function executeRemoteCommand(cmd) {
+      const cmdId = cmd.id || cmd.command_id || (cmd.payload && cmd.payload.id);
+      if (cmdId) {
+        reportCommandLifecycle(cmdId, "started");
+      }
       const type = cmd.command_type;
       const payload = cmd.payload || {};
       const sender = cmd.sender_name || "Paired Device";
@@ -3446,7 +3602,10 @@ document.addEventListener("DOMContentLoaded", () => {
           showToast(`🔄 Instant sync from ${sender}`);
         }
 
-        // Send ACK back to server
+        // Send ACK back to server and mark lifecycle succeeded
+        if (cmdId) {
+          reportCommandLifecycle(cmdId, "succeeded", { executed: true, type: type });
+        }
         await fetch(`/api/devices/commands/${encodeURIComponent(cmd.id)}/ack`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -3454,6 +3613,9 @@ document.addEventListener("DOMContentLoaded", () => {
         });
       } catch (e) {
         console.error("Error executing remote command:", e);
+        if (cmdId) {
+          reportCommandLifecycle(cmdId, "failed", null, e.message);
+        }
       }
     }
 

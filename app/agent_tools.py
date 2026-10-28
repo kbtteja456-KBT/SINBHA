@@ -25,6 +25,59 @@ import jsonschema
 from typing import Any, Callable, Dict, List, Optional
 
 
+# --------------- Typo-Tolerant App Index Matching (Step C2.5 Item 3) ---------------
+
+def levenshtein_distance(s1: str, s2: str) -> int:
+    m, n = len(s1), len(s2)
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    for i in range(m + 1):
+        dp[i][0] = i
+    for j in range(n + 1):
+        dp[0][j] = j
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            cost = 0 if s1[i - 1] == s2[j - 1] else 1
+            dp[i][j] = min(
+                dp[i - 1][j] + 1,       # deletion
+                dp[i][j - 1] + 1,       # insertion
+                dp[i - 1][j - 1] + cost # substitution
+            )
+    return dp[m][n]
+
+def compute_app_similarity(query: str, target: str) -> float:
+    q = query.lower().strip()
+    t = target.lower().strip()
+    if q == t:
+        return 1.0
+    max_len = max(len(q), len(t))
+    if max_len == 0:
+        return 1.0
+    dist = levenshtein_distance(q, t)
+    sim = 1.0 - (dist / max_len)
+    if (t.startswith(q) or q.startswith(t)) and dist <= 2:
+        sim = min(1.0, sim + 0.15)
+    return max(0.0, min(1.0, sim))
+
+def find_app_candidates(query: str, catalog: list) -> list:
+    results = []
+    for item in catalog:
+        name = item.get("name", "")
+        app_id = item.get("id", name)
+        sim = max(
+            compute_app_similarity(query, name),
+            compute_app_similarity(query, app_id)
+        )
+        if sim >= 0.5:
+            conf = "high" if sim >= 0.8 else ("medium" if sim >= 0.65 else "low")
+            results.append({
+                "app": item,
+                "similarity": sim,
+                "confidence": conf
+            })
+    results.sort(key=lambda x: x["similarity"], reverse=True)
+    return results[:3]
+
+
 # --------------- Tool Definition ---------------
 
 class Tool:
@@ -462,6 +515,17 @@ async def handle_send_note(user_id: int, args: dict, ctx: dict) -> dict:
     if not target_dev:
         return {"success": False, "error": dev_res.get("message") or f"No trusted {target_platform} device found."}
 
+    # Capability Handshake (Item 2)
+    supported = relay.get_device_supported_tools(user_id, target_dev["device_id"], target_dev.get("platform")) if (relay and hasattr(relay, "get_device_supported_tools")) else ["send_note"]
+    if "send_note" not in supported:
+        p_name = (target_dev.get("platform") or "device").capitalize()
+        return {
+            "success": False,
+            "status": "unsupported_tool",
+            "message": f"Your {p_name} app does not support sending notes yet, please update.",
+            "error": f"Tool 'send_note' not supported on {target_dev.get('name')}",
+        }
+
     cmd_id = f"cmd_ai_{int(time.time() * 1000)}"
     cmd_data = {
         "id": cmd_id,
@@ -472,10 +536,50 @@ async def handle_send_note(user_id: int, args: dict, ctx: dict) -> dict:
         "created_at": time.time(),
         "expiry": 60,
     }
-    relay_res = await relay.relay_command(user_id, cmd_data)
+
+    is_online = relay.is_device_connected(user_id, target_dev["device_id"]) if (relay and hasattr(relay, "is_device_connected")) else True
+    if not is_online:
+        await relay.relay_command(user_id, cmd_data)
+        return {
+            "success": False,
+            "status": "queued",
+            "target_device": target_dev.get("name"),
+            "message": f"I queued the note for {target_dev.get('name')}, but the device is currently offline.",
+        }
+
+    await relay.relay_command(user_id, cmd_data)
+
+    # Command Lifecycle Waiter (Item 1)
+    if relay and hasattr(relay, "wait_for_command_completion"):
+        completion = await relay.wait_for_command_completion(user_id, cmd_id, timeout=10.0)
+        if isinstance(completion, dict):
+            status = completion.get("status")
+            if status == "succeeded":
+                return {
+                    "success": True,
+                    "status": "succeeded",
+                    "target_device": target_dev.get("name"),
+                    "message": f"Note delivered to {target_dev.get('name')}.",
+                }
+            elif status == "timed_out":
+                return {
+                    "success": False,
+                    "status": "unconfirmed",
+                    "target_device": target_dev.get("name"),
+                    "message": f"I sent it to your {target_dev.get('name')}, but could not confirm (timed out after 10s).",
+                }
+            else:
+                err = completion.get("error") or "Failed to deliver note"
+                return {
+                    "success": False,
+                    "status": "failed",
+                    "target_device": target_dev.get("name"),
+                    "error": err,
+                    "message": f"Failed to send note to {target_dev.get('name')}: {err}",
+                }
 
     return {
-        "success": relay_res.get("success", False),
+        "success": True,
         "target_device": target_dev.get("name"),
         "message": f"Note sent to {target_dev.get('name')}.",
     }
@@ -499,6 +603,17 @@ async def handle_ring_phone(user_id: int, args: dict, ctx: dict) -> dict:
     if not target_dev:
         return {"success": False, "error": dev_res.get("message") or f"No trusted {target_platform} device found."}
 
+    # Capability Handshake (Item 2)
+    supported = relay.get_device_supported_tools(user_id, target_dev["device_id"], target_dev.get("platform")) if (relay and hasattr(relay, "get_device_supported_tools")) else ["ring_phone"]
+    if "ring_phone" not in supported:
+        p_name = (target_dev.get("platform") or "device").capitalize()
+        return {
+            "success": False,
+            "status": "unsupported_tool",
+            "message": f"Your {p_name} app does not support ringing yet, please update.",
+            "error": f"Tool 'ring_phone' not supported on {target_dev.get('name')}",
+        }
+
     cmd_id = f"cmd_ai_{int(time.time() * 1000)}"
     cmd_data = {
         "id": cmd_id,
@@ -509,10 +624,50 @@ async def handle_ring_phone(user_id: int, args: dict, ctx: dict) -> dict:
         "created_at": time.time(),
         "expiry": 60,
     }
-    relay_res = await relay.relay_command(user_id, cmd_data)
+
+    is_online = relay.is_device_connected(user_id, target_dev["device_id"]) if (relay and hasattr(relay, "is_device_connected")) else True
+    if not is_online:
+        await relay.relay_command(user_id, cmd_data)
+        return {
+            "success": False,
+            "status": "queued",
+            "target_device": target_dev.get("name"),
+            "message": f"I queued the ring alert for {target_dev.get('name')}, but the device is currently offline.",
+        }
+
+    await relay.relay_command(user_id, cmd_data)
+
+    # Command Lifecycle Waiter (Item 1)
+    if relay and hasattr(relay, "wait_for_command_completion"):
+        completion = await relay.wait_for_command_completion(user_id, cmd_id, timeout=10.0)
+        if isinstance(completion, dict):
+            status = completion.get("status")
+            if status == "succeeded":
+                return {
+                    "success": True,
+                    "status": "succeeded",
+                    "target_device": target_dev.get("name"),
+                    "message": f"Ringing {target_dev.get('name')}!",
+                }
+            elif status == "timed_out":
+                return {
+                    "success": False,
+                    "status": "unconfirmed",
+                    "target_device": target_dev.get("name"),
+                    "message": f"I sent it to your {target_dev.get('name')}, but could not confirm (timed out after 10s).",
+                }
+            else:
+                err = completion.get("error") or "Failed to trigger ring"
+                return {
+                    "success": False,
+                    "status": "failed",
+                    "target_device": target_dev.get("name"),
+                    "error": err,
+                    "message": f"Failed to ring {target_dev.get('name')}: {err}",
+                }
 
     return {
-        "success": relay_res.get("success", False),
+        "success": True,
         "target_device": target_dev.get("name"),
         "message": f"Ringing {target_dev.get('name')}!",
     }
@@ -540,9 +695,19 @@ async def handle_open_url(user_id: int, args: dict, ctx: dict) -> dict:
     if not target_dev:
         return {"success": False, "error": dev_res.get("message") or f"No trusted {target_platform} device found."}
 
-    is_online = relay.is_device_connected(user_id, target_dev["device_id"])
+    # Capability Handshake (Item 2)
+    supported = relay.get_device_supported_tools(user_id, target_dev["device_id"], target_dev.get("platform")) if (relay and hasattr(relay, "get_device_supported_tools")) else ["open_url"]
+    if "open_url" not in supported:
+        p_name = (target_dev.get("platform") or "device").capitalize()
+        return {
+            "success": False,
+            "status": "unsupported_tool",
+            "message": f"Your {p_name} app does not support opening URLs yet, please update.",
+            "error": f"Tool 'open_url' not supported on {target_dev.get('name')}",
+        }
+
     cmd_id = f"cmd_app_{int(time.time() * 1000)}"
-    await relay.relay_command(user_id, {
+    cmd_data = {
         "id": cmd_id,
         "sender_device": trusted[0]["device_id"],
         "target_device": target_dev["device_id"],
@@ -550,14 +715,58 @@ async def handle_open_url(user_id: int, args: dict, ctx: dict) -> dict:
         "payload": {"app": "chrome", "url": url},
         "created_at": time.time(),
         "expiry": 86400,
-    })
+    }
 
-    status_note = "opened" if is_online else "queued (device offline)"
+    is_online = relay.is_device_connected(user_id, target_dev["device_id"]) if (relay and hasattr(relay, "is_device_connected")) else True
+    if not is_online:
+        await relay.relay_command(user_id, cmd_data)
+        return {
+            "success": False,
+            "status": "queued",
+            "target_device": target_dev.get("name"),
+            "url": url,
+            "message": f"I queued the URL for {target_dev.get('name')}, but the device is currently offline.",
+        }
+
+    await relay.relay_command(user_id, cmd_data)
+
+    # Command Lifecycle Waiter (Item 1)
+    if relay and hasattr(relay, "wait_for_command_completion"):
+        completion = await relay.wait_for_command_completion(user_id, cmd_id, timeout=10.0)
+        if isinstance(completion, dict):
+            status = completion.get("status")
+            if status == "succeeded":
+                return {
+                    "success": True,
+                    "status": "succeeded",
+                    "target_device": target_dev.get("name"),
+                    "url": url,
+                    "message": f"Opened {url} on {target_dev.get('name')}.",
+                }
+            elif status == "timed_out":
+                return {
+                    "success": False,
+                    "status": "unconfirmed",
+                    "target_device": target_dev.get("name"),
+                    "url": url,
+                    "message": f"I sent it to your {target_dev.get('name')}, but could not confirm (timed out after 10s).",
+                }
+            else:
+                err = completion.get("error") or "Failed to open URL"
+                return {
+                    "success": False,
+                    "status": "failed",
+                    "target_device": target_dev.get("name"),
+                    "url": url,
+                    "error": err,
+                    "message": f"Failed to open {url} on {target_dev.get('name')}: {err}",
+                }
+
     return {
         "success": True,
         "target_device": target_dev.get("name"),
         "url": url,
-        "message": f"URL {status_note} on {target_dev.get('name')}.",
+        "message": f"URL opened on {target_dev.get('name')}.",
     }
 
 
@@ -658,8 +867,33 @@ def validate_safe_typing_text(text: str) -> tuple[bool, str]:
     return True, ""
 
 
+def compute_app_similarity(query: str, target: str) -> float:
+    """Calculates Levenshtein similarity ratio between query and target app."""
+    q = query.lower().strip()
+    t = target.lower().strip()
+    if not q or not t:
+        return 0.0
+    if q == t:
+        return 1.0
+    max_len = max(len(q), len(t))
+    dp = [[0] * (len(t) + 1) for _ in range(len(q) + 1)]
+    for i in range(len(q) + 1):
+        dp[i][0] = i
+    for j in range(len(t) + 1):
+        dp[0][j] = j
+    for i in range(1, len(q) + 1):
+        for j in range(1, len(t) + 1):
+            cost = 0 if q[i - 1] == t[j - 1] else 1
+            dp[i][j] = min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost)
+    dist = dp[len(q)][len(t)]
+    ratio = 1.0 - (dist / max_len)
+    if (t.startswith(q) or q.startswith(t)) and dist <= 2:
+        return max(ratio, 0.92)
+    return ratio
+
+
 async def handle_find_installed_app(user_id: int, args: dict, ctx: dict) -> dict:
-    """Finds installed applications on the user's laptop using pre-indexed search."""
+    """Finds installed applications on the user's laptop using typo-tolerant indexed search."""
     query = sanitize_text_arg(args.get("query", ""), 80).lower()
     db = ctx["db"]
     relay = ctx["relay_manager"]
@@ -671,19 +905,37 @@ async def handle_find_installed_app(user_id: int, args: dict, ctx: dict) -> dict
     if target_res["status"] == "ambiguous":
         return {"success": False, "message": target_res["message"], "ambiguous": True}
 
-    # Known standard apps fallback
     known_apps = [
-        "whatsapp", "spotify", "chrome", "google chrome", "notepad", "calculator", "calc",
-        "explorer", "vscode", "code", "terminal", "claude", "chatgpt", "edge"
+        "antigravity", "calculator", "calc", "notepad", "chrome", "google chrome",
+        "whatsapp", "spotify", "claude", "chatgpt", "explorer", "vscode", "code", "terminal", "edge"
     ]
-    matches = [a for a in known_apps if query in a]
+
+    scored = []
+    for app in known_apps:
+        score = compute_app_similarity(query, app)
+        if score >= 0.40:
+            scored.append({"name": app, "score": round(score, 2)})
+
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    top3 = scored[:3]
+    best_score = top3[0]["score"] if top3 else 0.0
+
+    if best_score >= 0.80:
+        confidence = "high"
+    elif best_score >= 0.55:
+        confidence = "medium"
+    else:
+        confidence = "low"
 
     return {
         "success": True,
         "query": query,
-        "matches": matches,
+        "confidence": confidence,
+        "top_candidate": top3[0]["name"] if top3 else None,
+        "candidates": top3,
+        "matches": [c["name"] for c in top3],
         "target_device": target_res.get("device", {}).get("name", "laptop"),
-        "message": f"Found {len(matches)} installed apps matching '{query}'." if matches else f"No installed app found matching '{query}'."
+        "message": f"Found installed apps matching '{query}' (Confidence: {confidence}, Top: {top3[0]['name'] if top3 else 'none'}).",
     }
 
 
@@ -713,18 +965,86 @@ async def handle_open_app(user_id: int, args: dict, ctx: dict) -> dict:
     if not target_dev:
         return {"success": False, "error": target_res.get("message") or "No companion device available."}
 
-    # Check confirmation need: level 2
+    # Capability Handshake (Item 2)
+    supported = None
+    if relay and hasattr(relay, "get_device_supported_tools"):
+        tools_res = relay.get_device_supported_tools(user_id, target_dev["device_id"], target_dev.get("platform"))
+        import inspect
+        if inspect.iscoroutine(tools_res):
+            tools_res = await tools_res
+        if isinstance(tools_res, (list, set, tuple)):
+            supported = tools_res
+    if supported is not None and "open_app" not in supported:
+        p_name = (target_dev.get("platform") or "device").capitalize()
+        return {
+            "success": False,
+            "status": "unsupported_tool",
+            "message": f"Your {p_name} app does not support opening apps yet, please update.",
+            "error": f"Tool 'open_app' not supported on {target_dev.get('name')}",
+        }
+
     cmd_id = f"cmd_app_{int(time.time() * 1000)}"
+    cmd_data = {
+        "id": cmd_id,
+        "sender_device": trusted[0]["device_id"] if trusted else "server",
+        "target_device": target_dev["device_id"],
+        "type": "open_app",
+        "payload": {"app": app_name, "browser": browser, "preferred_browser": pref_browser},
+        "created_at": time.time(),
+        "expiry": 86400,
+    }
+
+    is_online = relay.is_device_connected(user_id, target_dev["device_id"]) if (relay and hasattr(relay, "is_device_connected")) else True
+    if not is_online:
+        if relay:
+            await relay.relay_command(user_id, cmd_data)
+        return {
+            "success": False,
+            "status": "queued",
+            "app": app_name,
+            "target_device": target_dev.get("name"),
+            "message": f"I queued the command to open {app_name} on {target_dev.get('name')}, but the device is currently offline.",
+        }
+
     if relay:
-        await relay.relay_command(user_id, {
-            "id": cmd_id,
-            "sender_device": trusted[0]["device_id"] if trusted else "server",
-            "target_device": target_dev["device_id"],
-            "type": "open_app",
-            "payload": {"app": app_name, "browser": browser, "preferred_browser": pref_browser},
-            "created_at": time.time(),
-            "expiry": 86400,
-        })
+        await relay.relay_command(user_id, cmd_data)
+
+    # Command Lifecycle Waiter (Item 1)
+    if relay and hasattr(relay, "wait_for_command_completion"):
+        completion = await relay.wait_for_command_completion(user_id, cmd_id, timeout=10.0)
+        if isinstance(completion, dict):
+            status = completion.get("status")
+            result_data = completion.get("result") or {}
+            if status == "succeeded":
+                pid_info = f" (PID: {result_data.get('pid')})" if result_data.get("pid") else ""
+                pkg_info = f" ({result_data.get('package')})" if result_data.get("package") else ""
+                return {
+                    "success": True,
+                    "status": "succeeded",
+                    "app": app_name,
+                    "browser": browser,
+                    "target_device": target_dev.get("name"),
+                    "result": result_data,
+                    "message": f"Opened {app_name} on {target_dev.get('name')}{pid_info}{pkg_info}.",
+                }
+            elif status == "timed_out":
+                return {
+                    "success": False,
+                    "status": "unconfirmed",
+                    "app": app_name,
+                    "target_device": target_dev.get("name"),
+                    "message": f"I sent it to your {target_dev.get('name')}, but could not confirm (timed out after 10s).",
+                }
+            else:
+                err = completion.get("error") or (result_data.get("error") if isinstance(result_data, dict) else "Failed to open app")
+                return {
+                    "success": False,
+                    "status": "failed",
+                    "app": app_name,
+                    "target_device": target_dev.get("name"),
+                    "error": err,
+                    "message": f"Failed to open {app_name} on {target_dev.get('name')}: {err}",
+                }
 
     return {
         "success": True,
@@ -759,17 +1079,79 @@ async def handle_type_text(user_id: int, args: dict, ctx: dict) -> dict:
     if not target_dev:
         return {"success": False, "error": target_res.get("message") or "No companion device available."}
 
+    # Capability Handshake (Item 2)
+    supported = None
+    if relay and hasattr(relay, "get_device_supported_tools"):
+        tools_res = relay.get_device_supported_tools(user_id, target_dev["device_id"], target_dev.get("platform"))
+        import inspect
+        if inspect.iscoroutine(tools_res):
+            tools_res = await tools_res
+        if isinstance(tools_res, (list, set, tuple)):
+            supported = tools_res
+    if supported is not None and "type_text" not in supported:
+        p_name = (target_dev.get("platform") or "device").capitalize()
+        return {
+            "success": False,
+            "status": "unsupported_tool",
+            "message": f"Your {p_name} app does not support typing text yet, please update.",
+            "error": f"Tool 'type_text' not supported on {target_dev.get('name')}",
+        }
+
     cmd_id = f"cmd_type_{int(time.time() * 1000)}"
+    cmd_data = {
+        "id": cmd_id,
+        "sender_device": trusted[0]["device_id"] if trusted else "server",
+        "target_device": target_dev["device_id"],
+        "type": "type_input",
+        "payload": {"text": text, "press_enter": press_enter},
+        "created_at": time.time(),
+        "expiry": 86400,
+    }
+
+    is_online = relay.is_device_connected(user_id, target_dev["device_id"]) if (relay and hasattr(relay, "is_device_connected")) else True
+    if not is_online:
+        if relay:
+            await relay.relay_command(user_id, cmd_data)
+        return {
+            "success": False,
+            "status": "queued",
+            "target_device": target_dev.get("name"),
+            "message": f"I queued the typing command for {target_dev.get('name')}, but the device is currently offline.",
+        }
+
     if relay:
-        await relay.relay_command(user_id, {
-            "id": cmd_id,
-            "sender_device": trusted[0]["device_id"] if trusted else "server",
-            "target_device": target_dev["device_id"],
-            "type": "type_input",
-            "payload": {"text": text, "press_enter": press_enter},
-            "created_at": time.time(),
-            "expiry": 86400,
-        })
+        await relay.relay_command(user_id, cmd_data)
+
+    # Command Lifecycle Waiter (Item 1)
+    if relay and hasattr(relay, "wait_for_command_completion"):
+        completion = await relay.wait_for_command_completion(user_id, cmd_id, timeout=10.0)
+        if isinstance(completion, dict):
+            status = completion.get("status")
+            if status == "succeeded":
+                return {
+                    "success": True,
+                    "status": "succeeded",
+                    "target_device": target_dev.get("name"),
+                    "text": text,
+                    "press_enter": press_enter,
+                    "message": f"Typed text into active window on {target_dev.get('name')}.",
+                }
+            elif status == "timed_out":
+                return {
+                    "success": False,
+                    "status": "unconfirmed",
+                    "target_device": target_dev.get("name"),
+                    "message": f"I sent it to your {target_dev.get('name')}, but could not confirm (timed out after 10s).",
+                }
+            else:
+                err = completion.get("error") or "Failed to type text"
+                return {
+                    "success": False,
+                    "status": "failed",
+                    "target_device": target_dev.get("name"),
+                    "error": err,
+                    "message": f"Failed to type text on {target_dev.get('name')}: {err}",
+                }
 
     return {
         "success": True,
@@ -803,17 +1185,78 @@ async def handle_press_keys(user_id: int, args: dict, ctx: dict) -> dict:
     if not target_dev:
         return {"success": False, "error": target_res.get("message") or "No companion device available."}
 
+    # Capability Handshake (Item 2)
+    supported = None
+    if relay and hasattr(relay, "get_device_supported_tools"):
+        tools_res = relay.get_device_supported_tools(user_id, target_dev["device_id"], target_dev.get("platform"))
+        import inspect
+        if inspect.iscoroutine(tools_res):
+            tools_res = await tools_res
+        if isinstance(tools_res, (list, set, tuple)):
+            supported = tools_res
+    if supported is not None and "press_keys" not in supported:
+        p_name = (target_dev.get("platform") or "device").capitalize()
+        return {
+            "success": False,
+            "status": "unsupported_tool",
+            "message": f"Your {p_name} app does not support pressing keys yet, please update.",
+            "error": f"Tool 'press_keys' not supported on {target_dev.get('name')}",
+        }
+
     cmd_id = f"cmd_keys_{int(time.time() * 1000)}"
+    cmd_data = {
+        "id": cmd_id,
+        "sender_device": trusted[0]["device_id"] if trusted else "server",
+        "target_device": target_dev["device_id"],
+        "type": "press_keys",
+        "payload": {"keys": keys},
+        "created_at": time.time(),
+        "expiry": 86400,
+    }
+
+    is_online = relay.is_device_connected(user_id, target_dev["device_id"]) if (relay and hasattr(relay, "is_device_connected")) else True
+    if not is_online:
+        if relay:
+            await relay.relay_command(user_id, cmd_data)
+        return {
+            "success": False,
+            "status": "queued",
+            "target_device": target_dev.get("name"),
+            "message": f"I queued the key press for {target_dev.get('name')}, but the device is currently offline.",
+        }
+
     if relay:
-        await relay.relay_command(user_id, {
-            "id": cmd_id,
-            "sender_device": trusted[0]["device_id"] if trusted else "server",
-            "target_device": target_dev["device_id"],
-            "type": "press_keys",
-            "payload": {"keys": keys},
-            "created_at": time.time(),
-            "expiry": 86400,
-        })
+        await relay.relay_command(user_id, cmd_data)
+
+    # Command Lifecycle Waiter (Item 1)
+    if relay and hasattr(relay, "wait_for_command_completion"):
+        completion = await relay.wait_for_command_completion(user_id, cmd_id, timeout=10.0)
+        if isinstance(completion, dict):
+            status = completion.get("status")
+            if status == "succeeded":
+                return {
+                    "success": True,
+                    "status": "succeeded",
+                    "keys": keys,
+                    "target_device": target_dev.get("name"),
+                    "message": f"Pressed key '{keys}' on {target_dev.get('name')}.",
+                }
+            elif status == "timed_out":
+                return {
+                    "success": False,
+                    "status": "unconfirmed",
+                    "target_device": target_dev.get("name"),
+                    "message": f"I sent it to your {target_dev.get('name')}, but could not confirm (timed out after 10s).",
+                }
+            else:
+                err = completion.get("error") or "Failed to press key"
+                return {
+                    "success": False,
+                    "status": "failed",
+                    "target_device": target_dev.get("name"),
+                    "error": err,
+                    "message": f"Failed to press key on {target_dev.get('name')}: {err}",
+                }
 
     return {
         "success": True,

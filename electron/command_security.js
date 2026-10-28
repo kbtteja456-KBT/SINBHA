@@ -33,7 +33,8 @@ const ALLOWED_APP_TARGETS = {
   'code': { type: 'binary', binary: 'code.cmd', fallbackBinary: 'code.exe' },
   'vscode': { type: 'binary', binary: 'code.cmd', fallbackBinary: 'code.exe' },
   'claude': { type: 'special', app: 'claude' },
-  'chatgpt': { type: 'special', app: 'chatgpt' }
+  'chatgpt': { type: 'special', app: 'chatgpt' },
+  'antigravity': { type: 'special', app: 'antigravity' }
 };
 
 const ALLOWED_PROTOCOLS = new Set(['https:', 'http:', 'whatsapp:', 'spotify:']);
@@ -222,8 +223,9 @@ async function safeLaunchDesktopApp(appNameOrTarget) {
         detached: true,
         stdio: 'ignore'
       });
+      const pid = child.pid;
       child.unref();
-      return { success: true, app: 'notepad', method: 'notepad_file', text: typeText };
+      return { success: true, app: 'notepad', method: 'notepad_file', text: typeText, pid };
     }
 
     // 4. Known desktop app mappings
@@ -240,6 +242,7 @@ async function safeLaunchDesktopApp(appNameOrTarget) {
           detached: true,
           stdio: 'ignore'
         });
+        const pid = child.pid;
         child.on('error', () => {
           if (mapping.fallbackUrl) {
             shell.openExternal(mapping.fallbackUrl);
@@ -253,15 +256,16 @@ async function safeLaunchDesktopApp(appNameOrTarget) {
           }
         });
         child.unref();
-        return { success: true, app: target, method: 'spawn_binary' };
+        return { success: true, app: target, method: 'spawn_binary', pid };
       }
 
       if (mapping.type === 'special' && target === 'claude') {
         const localClaude = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Claude', 'Claude.exe');
         if (fs.existsSync(localClaude)) {
           const child = spawn(localClaude, [], { shell: false, detached: true, stdio: 'ignore' });
+          const pid = child.pid;
           child.unref();
-          return { success: true, app: 'claude', method: 'desktop_exe' };
+          return { success: true, app: 'claude', method: 'desktop_exe', pid };
         }
         await shell.openExternal('https://claude.ai');
         return { success: true, app: 'claude', method: 'web_fallback' };
@@ -271,11 +275,23 @@ async function safeLaunchDesktopApp(appNameOrTarget) {
         const localGpt = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'ChatGPT', 'ChatGPT.exe');
         if (fs.existsSync(localGpt)) {
           const child = spawn(localGpt, [], { shell: false, detached: true, stdio: 'ignore' });
+          const pid = child.pid;
           child.unref();
-          return { success: true, app: 'chatgpt', method: 'desktop_exe' };
+          return { success: true, app: 'chatgpt', method: 'desktop_exe', pid };
         }
         await shell.openExternal('https://chatgpt.com');
         return { success: true, app: 'chatgpt', method: 'web_fallback' };
+      }
+
+      if (mapping.type === 'special' && target === 'antigravity') {
+        const localAg = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Antigravity', 'Antigravity.exe');
+        if (fs.existsSync(localAg)) {
+          const child = spawn(localAg, [], { shell: false, detached: true, stdio: 'ignore' });
+          const pid = child.pid;
+          child.unref();
+          return { success: true, app: 'antigravity', method: 'desktop_exe', pid };
+        }
+        // Fallback to start menu search
       }
     }
 
@@ -440,12 +456,56 @@ let lastIndexTime = 0;
 const INDEX_CACHE_TTL_MS = 3600000; // 1 hour
 
 /**
- * Builds an index of installed applications using a fixed safe script (no user text in shell).
+ * Levenshtein distance algorithm for typo-tolerant fuzzy matching.
+ */
+function levenshteinDistance(s1, s2) {
+  const m = s1.length;
+  const n = s2.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = s1[i - 1] === s2[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,       // deletion
+        dp[i][j - 1] + 1,       // insertion
+        dp[i - 1][j - 1] + cost  // substitution
+      );
+    }
+  }
+  return dp[m][n];
+}
+
+/**
+ * Calculates similarity ratio between 0.0 and 1.0.
+ */
+function computeSimilarity(query, target) {
+  const q = String(query || '').toLowerCase().trim();
+  const t = String(target || '').toLowerCase().trim();
+  if (!q || !t) return 0.0;
+  if (q === t) return 1.0;
+
+  const maxLen = Math.max(q.length, t.length);
+  if (maxLen === 0) return 1.0;
+  const dist = levenshteinDistance(q, t);
+  const ratio = 1.0 - (dist / maxLen);
+
+  if ((t.startsWith(q) || q.startsWith(t)) && dist <= 2) {
+    return Math.max(ratio, 0.92);
+  }
+  return ratio;
+}
+
+/**
+ * Builds an index of installed applications: Start Menu shortcuts (user + all users),
+ * registered programs, and Windows Store apps.
  */
 function buildInstalledAppsIndex() {
   const apps = new Map();
 
-  // 1. Well-known allowlisted apps
+  // 1. Well-known allowlisted apps & Store protocols
   for (const [name, target] of Object.entries(ALLOWED_APP_TARGETS)) {
     apps.set(name, {
       name,
@@ -455,9 +515,30 @@ function buildInstalledAppsIndex() {
     });
   }
 
-  // 2. Scan Windows Start Menu folders (fixed paths, zero user text in shell commands)
+  // Common Windows Store / System Apps
+  const storeApps = [
+    { name: 'calculator', displayName: 'Calculator', type: 'protocol', target: 'calculator:' },
+    { name: 'calc', displayName: 'Calculator', type: 'binary', target: 'calc.exe' },
+    { name: 'notepad', displayName: 'Notepad', type: 'binary', target: 'notepad.exe' },
+    { name: 'camera', displayName: 'Camera', type: 'protocol', target: 'microsoft.windows.camera:' },
+    { name: 'settings', displayName: 'Settings', type: 'protocol', target: 'ms-settings:' },
+    { name: 'clock', displayName: 'Alarms & Clock', type: 'protocol', target: 'ms-clock:' },
+    { name: 'whatsapp', displayName: 'WhatsApp', type: 'protocol', target: 'whatsapp:' },
+    { name: 'spotify', displayName: 'Spotify', type: 'protocol', target: 'spotify:' },
+    { name: 'antigravity', displayName: 'Google Antigravity', type: 'special', target: 'antigravity' },
+    { name: 'claude', displayName: 'Claude', type: 'special', target: 'claude' },
+    { name: 'chatgpt', displayName: 'ChatGPT', type: 'special', target: 'chatgpt' }
+  ];
+  for (const sa of storeApps) {
+    if (!apps.has(sa.name)) {
+      apps.set(sa.name, sa);
+    }
+  }
+
+  // 2. Scan Windows Start Menu folders (User & All Users)
   const userStartMenu = path.join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Start Menu', 'Programs');
   const allStartMenu = path.join(process.env.PROGRAMDATA || 'C:\\ProgramData', 'Microsoft', 'Windows', 'Start Menu', 'Programs');
+  const userPrograms = path.join(process.env.LOCALAPPDATA || '', 'Programs');
 
   const scanDir = (dir) => {
     if (!fs.existsSync(dir)) return;
@@ -484,18 +565,41 @@ function buildInstalledAppsIndex() {
   scanDir(userStartMenu);
   scanDir(allStartMenu);
 
+  // Scan %LOCALAPPDATA%\Programs for direct exe files
+  if (fs.existsSync(userPrograms)) {
+    try {
+      const progEntries = fs.readdirSync(userPrograms, { withFileTypes: true });
+      for (const pe of progEntries) {
+        if (pe.isDirectory()) {
+          const progName = pe.name.toLowerCase();
+          const exePath = path.join(userPrograms, pe.name, `${pe.name}.exe`);
+          if (fs.existsSync(exePath) && !apps.has(progName)) {
+            apps.set(progName, {
+              name: progName,
+              displayName: pe.name,
+              type: 'registered_exe',
+              path: exePath
+            });
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
   installedAppsCache = Array.from(apps.values());
   lastIndexTime = Date.now();
   return installedAppsCache;
 }
 
 /**
- * Searches the pre-built index of installed applications (in-memory matching, no shell execution).
+ * Searches the pre-built index of installed applications with typo-tolerant matching.
+ * Returns confidence level ('high', 'medium', 'low') and top 3 candidates.
+ * Typo tolerant: 'antygravity' -> 'antigravity', 'calclator' -> 'calculator', 'chatgpy' -> 'chatgpt'.
  */
 function findInstalledApp(rawQuery) {
   const vQuery = validateAppTarget(rawQuery);
   if (!vQuery.valid) {
-    return { success: false, error: vQuery.error, matches: [] };
+    return { success: false, error: vQuery.error, matches: [], confidence: 'low', candidates: [] };
   }
   const query = vQuery.app;
 
@@ -503,27 +607,49 @@ function findInstalledApp(rawQuery) {
     buildInstalledAppsIndex();
   }
 
-  const exact = [];
-  const prefix = [];
-  const contains = [];
-
+  const scored = [];
   for (const app of installedAppsCache) {
-    const name = app.name;
-    if (name === query) {
-      exact.push(app);
-    } else if (name.startsWith(query)) {
-      prefix.push(app);
-    } else if (name.includes(query)) {
-      contains.push(app);
+    const s1 = computeSimilarity(query, app.name);
+    const s2 = computeSimilarity(query, app.displayName);
+    const bestScore = Math.max(s1, s2);
+    if (bestScore >= 0.40) {
+      scored.push({
+        name: app.name,
+        displayName: app.displayName,
+        type: app.type,
+        path: app.path || null,
+        target: app.target || null,
+        score: Math.round(bestScore * 100) / 100
+      });
     }
   }
 
-  const matches = [...exact, ...prefix, ...contains].slice(0, 10);
+  // Sort descending by score
+  scored.sort((a, b) => b.score - a.score);
+
+  // Top 3 candidates
+  const top3 = scored.slice(0, 3);
+  const best = top3[0] || null;
+
+  let confidence = 'low';
+  if (best) {
+    if (best.score >= 0.80) {
+      confidence = 'high';
+    } else if (best.score >= 0.55) {
+      confidence = 'medium';
+    } else {
+      confidence = 'low';
+    }
+  }
+
   return {
     success: true,
     query,
-    count: matches.length,
-    matches: matches.map(m => ({ name: m.name, displayName: m.displayName, type: m.type }))
+    confidence, // 'high' | 'medium' | 'low'
+    topCandidate: best,
+    candidates: top3,
+    count: top3.length,
+    matches: top3
   };
 }
 
@@ -565,20 +691,24 @@ async function openUrlWithBrowser(rawUrl, rawBrowser = 'default') {
 }
 
 /**
- * Rule: if the desktop app is installed, open it; otherwise open the website in preferred browser.
+ * Rule (Step C2.5 Item 3):
+ * 1. Look up app in installed apps index with typo tolerance.
+ * 2. If confidence is high: launch using app's real launcher.
+ * 3. If confidence is medium or low: ask "Did you mean ...?" and never silently fall back to a website.
+ * 4. Only offer website when no app is found, and ask first.
  */
-async function openAppWithFallback(appName, preferredBrowser = 'chrome') {
+async function openAppWithFallback(appName, preferredBrowser = 'chrome', userConfirmedWebsite = false) {
   const vApp = validateAppTarget(appName);
   if (!vApp.valid) return { success: false, error: vApp.error };
   const target = vApp.app;
 
-  // 1. Try launching installed app
-  const launchRes = await safeLaunchDesktopApp(target);
-  if (launchRes && launchRes.success) {
-    return { success: true, method: 'installed_app', app: target, detail: launchRes };
-  }
+  // 1. Search installed app index with typo tolerance
+  const searchResult = findInstalledApp(target);
+  const confidence = searchResult.confidence;
+  const topCandidate = searchResult.topCandidate;
+  const candidates = searchResult.candidates || [];
 
-  // 2. Not installed: fallback to website in preferred browser
+  // Web fallback mapping
   const webFallbacks = {
     'claude': 'https://claude.ai',
     'chatgpt': 'https://chatgpt.com',
@@ -591,16 +721,88 @@ async function openAppWithFallback(appName, preferredBrowser = 'chrome') {
     'figma': 'https://figma.com',
     'slack': 'https://slack.com'
   };
-
   const fallbackUrl = webFallbacks[target] || `https://www.google.com/search?q=${encodeURIComponent(target)}`;
-  const browserRes = await openUrlWithBrowser(fallbackUrl, preferredBrowser);
+
+  // 2. High confidence: launch with real launcher
+  if (topCandidate && confidence === 'high') {
+    // If it has a shortcut path
+    if (topCandidate.path && topCandidate.type === 'start_menu_shortcut') {
+      try {
+        await shell.openPath(topCandidate.path);
+        return {
+          success: true,
+          method: 'start_menu_shortcut',
+          app: topCandidate.name,
+          displayName: topCandidate.displayName,
+          path: topCandidate.path
+        };
+      } catch (e) {}
+    }
+
+    // Direct registered exe
+    if (topCandidate.path && topCandidate.type === 'registered_exe') {
+      try {
+        const child = spawn(topCandidate.path, [], { shell: false, detached: true, stdio: 'ignore' });
+        const pid = child.pid;
+        child.unref();
+        return {
+          success: true,
+          method: 'registered_exe',
+          app: topCandidate.name,
+          displayName: topCandidate.displayName,
+          path: topCandidate.path,
+          pid
+        };
+      } catch (e) {}
+    }
+
+    // Protocol or standard launch
+    const launchRes = await safeLaunchDesktopApp(topCandidate.name);
+    if (launchRes && launchRes.success) {
+      return {
+        success: true,
+        method: launchRes.method || 'installed_app',
+        app: topCandidate.name,
+        displayName: topCandidate.displayName,
+        pid: launchRes.pid || null,
+        path: launchRes.path || null,
+        detail: launchRes
+      };
+    }
+  }
+
+  // 3. Medium or Low confidence with candidates: Ask user for clarification
+  if (candidates.length > 0 && confidence !== 'high') {
+    const candidateNames = candidates.map(c => `'${c.displayName}'`).join(', ');
+    return {
+      success: false,
+      needs_clarification: true,
+      confidence,
+      candidates,
+      message: `Did you mean ${candidateNames}?`
+    };
+  }
+
+  // 4. No app found: If user explicitly confirmed website opening, open it; otherwise ask first!
+  if (userConfirmedWebsite) {
+    const browserRes = await openUrlWithBrowser(fallbackUrl, preferredBrowser);
+    return {
+      success: true,
+      method: 'website_fallback',
+      app: target,
+      url: fallbackUrl,
+      browser: preferredBrowser,
+      detail: browserRes
+    };
+  }
+
+  // Never silently fall back to a website without asking first!
   return {
-    success: true,
-    method: 'website_fallback',
-    app: target,
-    url: fallbackUrl,
-    browser: preferredBrowser,
-    detail: browserRes
+    success: false,
+    app_not_found: true,
+    offer_website: true,
+    fallback_url: fallbackUrl,
+    message: `Could not find an installed app matching '${appName}'. Would you like me to open the website instead?`
   };
 }
 
@@ -660,5 +862,7 @@ module.exports = {
   findInstalledApp,
   openUrlWithBrowser,
   openAppWithFallback,
-  safePressKeys
+  safePressKeys,
+  levenshteinDistance,
+  computeSimilarity
 };
