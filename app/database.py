@@ -624,6 +624,18 @@ def create_chat_thread(user_id: int, title: str = "New Chat", thread_id: Optiona
     import uuid
     tid = thread_id or f"thread_{uuid.uuid4().hex[:12]}"
     with get_db_session() as session:
+        existing = session.scalar(
+            select(ChatThread).where(ChatThread.user_id == user_id, ChatThread.thread_id == tid)
+        )
+        if existing:
+            return {
+                "id": existing.thread_id,
+                "thread_id": existing.thread_id,
+                "title": existing.title,
+                "is_pinned": bool(existing.is_pinned),
+                "created_at": existing.created_at.isoformat() if existing.created_at else "",
+                "updated_at": existing.updated_at.isoformat() if existing.updated_at else ""
+            }
         thread = ChatThread(
             thread_id=tid,
             user_id=user_id,
@@ -633,13 +645,14 @@ def create_chat_thread(user_id: int, title: str = "New Chat", thread_id: Optiona
             updated_at=utc_now()
         )
         session.add(thread)
+        session.flush()
         return {
             "id": tid,
             "thread_id": tid,
             "title": thread.title,
             "is_pinned": False,
-            "created_at": thread.created_at.isoformat(),
-            "updated_at": thread.updated_at.isoformat()
+            "created_at": thread.created_at.isoformat() if thread.created_at else "",
+            "updated_at": thread.updated_at.isoformat() if thread.updated_at else ""
         }
 
 def get_user_threads(user_id: int) -> list:

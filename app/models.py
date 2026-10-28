@@ -16,6 +16,7 @@ from sqlalchemy import (
     Boolean,
     ForeignKey,
     Index,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import (
@@ -110,7 +111,7 @@ class ChatThread(Base):
     __tablename__ = "chat_threads"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    thread_id = Column(String(64), unique=True, nullable=False, index=True)
+    thread_id = Column(String(64), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     title = Column(String(255), nullable=False, default="New Chat")
     is_pinned = Column(Boolean, default=False, nullable=False)
@@ -120,6 +121,7 @@ class ChatThread(Base):
     user = relationship("User", back_populates="chat_threads")
 
     __table_args__ = (
+        UniqueConstraint("user_id", "thread_id", name="uq_user_thread_id"),
         Index("ix_chat_threads_user_updated", "user_id", "updated_at"),
     )
 

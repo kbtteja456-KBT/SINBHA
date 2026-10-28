@@ -783,8 +783,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  let activeThreadId = null;
-  let activeThreadTitle = "New chat";
+
 
   // Load chat history on startup or thread switch
   async function loadChatHistory(threadId = null) {
@@ -4350,41 +4349,19 @@ document.addEventListener("DOMContentLoaded", () => {
     // ========================================================
     // CHATGPT SIDEBAR & PROFILE POPUP WIRING (STEP 17)
     // ========================================================
-    const sidebar = document.getElementById("chatSidebar");
-    const sidebarBackdrop = document.getElementById("sidebarBackdrop");
-    const mobile2LinesBtn = document.getElementById("mobile2LinesBtn");
     const sidebarToggleBtn = document.getElementById("sidebarToggleBtn");
     const newChatBtn = document.getElementById("newChatBtn");
-    const mobileNewChatBtn = document.getElementById("mobileNewChatBtn");
-    const sidebarProfileBtn = document.getElementById("sidebarProfileBtn");
-    const profileMenuPopup = document.getElementById("profileMenuPopup");
     const sidebarTasksBtn = document.getElementById("sidebarTasksBtn");
     const sidebarStopBtn = document.getElementById("sidebarStopBtn");
 
-    if (mobile2LinesBtn && sidebar) {
-      mobile2LinesBtn.addEventListener("click", () => {
-        sidebar.classList.add("is-drawer-open");
-        if (sidebarBackdrop) sidebarBackdrop.style.display = "block";
-      });
-    }
-
-    if (sidebarToggleBtn && sidebar) {
+    if (sidebarToggleBtn && chatSidebar) {
       sidebarToggleBtn.addEventListener("click", () => {
-        sidebar.classList.remove("is-drawer-open");
+        chatSidebar.classList.remove("is-drawer-open");
         if (sidebarBackdrop) sidebarBackdrop.style.display = "none";
       });
     }
 
-    if (sidebarBackdrop && sidebar) {
-      sidebarBackdrop.addEventListener("click", () => {
-        sidebar.classList.remove("is-drawer-open");
-        sidebarBackdrop.style.display = "none";
-        if (profileMenuPopup) profileMenuPopup.style.display = "none";
-      });
-    }
-
     if (newChatBtn) newChatBtn.addEventListener("click", createNewThread);
-    if (mobileNewChatBtn) mobileNewChatBtn.addEventListener("click", createNewThread);
 
     if (sidebarTasksBtn) {
       sidebarTasksBtn.addEventListener("click", () => {
@@ -4405,36 +4382,8 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     }
 
-    // Profile button click: toggles floating popup menu (Screenshot 3)
-    if (sidebarProfileBtn && profileMenuPopup) {
-      sidebarProfileBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const isOpen = profileMenuPopup.style.display === "flex";
-        profileMenuPopup.style.display = isOpen ? "none" : "flex";
-      });
-
-      document.addEventListener("click", (e) => {
-        if (!e.target.closest("#profileMenuPopup") && !e.target.closest("#sidebarProfileBtn")) {
-          profileMenuPopup.style.display = "none";
-        }
-      });
-    }
-
-    // Profile menu items
-    const menuItemSettings = document.getElementById("menuItemSettings");
     const menuItemProfile = document.getElementById("menuItemProfile");
     const menuItemPersonalization = document.getElementById("menuItemPersonalization");
-    const menuItemLogout = document.getElementById("menuItemLogout");
-
-    if (menuItemSettings) {
-      menuItemSettings.addEventListener("click", () => {
-        if (profileMenuPopup) profileMenuPopup.style.display = "none";
-        const modal = document.getElementById("settingsModal");
-        if (modal) modal.style.display = "flex";
-        loadSettings();
-        checkFullScreenPermission();
-      });
-    }
 
     if (menuItemProfile) {
       menuItemProfile.addEventListener("click", () => {
@@ -4453,25 +4402,6 @@ document.addEventListener("DOMContentLoaded", () => {
         if (modal) modal.style.display = "flex";
       });
     }
-
-    if (menuItemLogout) {
-      menuItemLogout.addEventListener("click", () => {
-        if (profileMenuPopup) profileMenuPopup.style.display = "none";
-        logoutUser();
-      });
-    }
-
-    // Starter Prompt Chips
-    document.querySelectorAll(".prompt-chip").forEach(chip => {
-      chip.addEventListener("click", () => {
-        const p = chip.getAttribute("data-prompt");
-        if (p && messageInput) {
-          messageInput.value = p;
-          messageInput.focus();
-          sendBtn.disabled = false;
-        }
-      });
-    });
 
     // ========================================================
     // ALARM AUDIO PREVIEW & SETTINGS WIRING (STEP 17)

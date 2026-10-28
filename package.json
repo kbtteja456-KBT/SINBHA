@@ -1,6 +1,6 @@
 {
   "name": "sinbha-desktop",
-  "version": "1.2.7",
+  "version": "1.2.8",
   "description": "SINBHA - Personal Habit & Task Companion with Desktop Bird Overlay",
   "main": "electron/main.js",
   "author": "kbtteja456-KBT",
