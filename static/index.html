@@ -341,6 +341,78 @@
           </div>
         </div>
 
+        <!-- Alarm-Grade Reminders & Audio Modes -->
+        <div class="settings-reminders-section" id="settingsAlarmSection">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <h3 style="margin: 0;">⏰ Alarm-Grade Reminders & Sounds</h3>
+            <span class="badge" style="background: #fdf2f8; color: #db2777; border: 1px solid #fbcfe8;">Alarm Stream</span>
+          </div>
+          <p>Clock-app reliability with full-screen wakeup, looping audio, rising volume, and customizable sound modes.</p>
+
+          <!-- Your Name for Spoken Reminders -->
+          <div class="setting-field-group">
+            <label for="settingUserDisplayName" class="setting-label">
+              <strong>Your Name (for Spoken Voice Reminders)</strong>
+              <span class="setting-desc">Used in spoken greetings: "Hey &lt;name&gt;, it is time to write your notes"</span>
+            </label>
+            <input type="text" id="settingUserDisplayName" class="setting-text-input" placeholder="e.g. Teja" style="width: 100%; padding: 8px 12px; border-radius: 8px; border: 1.5px solid #e2e8f0; font-size: 0.95rem; box-sizing: border-box; margin-top: 4px;">
+          </div>
+
+          <!-- Sound Mode Selector -->
+          <div class="setting-field-group">
+            <label for="settingSoundModeSelect" class="setting-label">
+              <strong>Default Reminder Sound</strong>
+              <span class="setting-desc">Default mode for reminders (or ask in chat: "remind me with voice", "remind me with a song")</span>
+            </label>
+            <select id="settingSoundModeSelect" class="setting-select">
+              <option value="alarm_tone" selected>🔔 Alarm Tone (Default)</option>
+              <option value="voice">🗣️ Spoken Voice (Android & Windows Speech)</option>
+              <option value="voice_then_tone">🗣️🔔 Spoken Voice, then Alarm Tone</option>
+              <option value="song">🎵 Custom Song / Audio File</option>
+            </select>
+          </div>
+
+          <!-- Song Picker (for Song Mode) -->
+          <div class="setting-field-group" id="settingSongPickerGroup" style="display: none;">
+            <label for="settingSongFileInput" class="setting-label">
+              <strong>Pick Song / Audio File from Device</strong>
+              <span class="setting-desc">Choose an MP3, AAC, or audio track from your phone or PC</span>
+            </label>
+            <div style="display: flex; gap: 8px; align-items: center; margin-top: 6px;">
+              <input type="file" id="settingSongFileInput" accept="audio/*" style="display: none;">
+              <button type="button" id="settingPickSongBtn" class="confirm-btn-secondary" style="padding: 6px 14px; font-size: 0.85rem; cursor: pointer;">📁 Pick Audio File</button>
+              <span id="settingPickedSongName" style="font-size: 0.85rem; color: #64748b; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 200px;">No custom song selected</span>
+            </div>
+          </div>
+
+          <!-- Voice Preview Button (Requirement 3) -->
+          <div class="setting-field-group" style="margin-top: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <strong>Voice Preview</strong>
+                <span class="setting-desc" style="display: block;">Hear how your spoken reminder sounds</span>
+              </div>
+              <button type="button" id="previewVoiceBtn" class="confirm-btn-secondary" style="background: #fdf2f8; border: 1.5px solid #f472b6; color: #be185d; padding: 6px 16px; font-weight: 600; cursor: pointer; border-radius: 8px;">
+                🔊 Hear Preview
+              </button>
+            </div>
+          </div>
+
+          <!-- Allow Alarms in Do Not Disturb -->
+          <div class="setting-field-group">
+            <div class="setting-switch-row">
+              <label class="setting-switch">
+                <input type="checkbox" id="dndAllowAlarmsToggle" checked>
+                <span class="setting-slider"></span>
+              </label>
+              <div class="setting-switch-info">
+                <strong>Allow Alarms in Do Not Disturb</strong>
+                <span class="setting-desc">Plays on the device ALARM audio stream even when silent or DND is active</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Web Search Section (Step 15) -->
         <div class="settings-reminders-section" id="settingsWebSearchSection">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
@@ -439,6 +511,19 @@
                 <span class="android-perm-status" id="permStatusAlarm">Checking...</span>
               </div>
               <button type="button" class="android-perm-btn" id="reqAlarmBtn">Grant Permission</button>
+            </div>
+
+            <!-- Full-Screen Alarms (Android 14+) -->
+            <div class="android-perm-card" id="permCardFullScreen">
+              <div class="android-perm-header">
+                <span class="android-perm-icon">📱</span>
+                <div class="android-perm-info">
+                  <strong>Full-Screen Alarms (Lock Screen Wakeup)</strong>
+                  <span class="android-perm-desc">Wakes the phone screen and starts the full-screen alarm experience when phone is asleep or app is closed</span>
+                </div>
+                <span class="android-perm-status" id="permStatusFullScreen">Checking...</span>
+              </div>
+              <button type="button" class="android-perm-btn" id="reqFullScreenBtn">Allow Full-Screen Alarms</button>
             </div>
 
             <!-- Battery Optimization -->

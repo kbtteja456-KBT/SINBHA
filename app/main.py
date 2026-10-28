@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Depends, Request, Response, status, 
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Any, Union
 from dotenv import load_dotenv
 
 # Load environment variables (.env)
@@ -145,6 +145,10 @@ class SettingsUpdateRequest(BaseModel):
     country: Optional[str] = "US"
     timezone: Optional[str] = "UTC"
     web_search_enabled: Optional[str] = "true"
+    reminder_sound_mode: Optional[str] = "alarm_tone"
+    reminder_custom_song_uri: Optional[str] = ""
+    user_display_name: Optional[str] = ""
+    dnd_allow_alarms: Optional[Any] = "true"
 
 class TaskStatusUpdateRequest(BaseModel):
     status: str  # "pending" or "completed"
@@ -1261,6 +1265,22 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
                     if "what time" not in ai_reply.lower() and "time" not in ai_reply.lower():
                         ai_reply += "\n\nWhat time are you aiming to get it done by? (I can also set a reminder whenever you like) 🌸"
 
+            # Check sound mode intent from chat message
+            req_sound_mode = None
+            lower_msg = user_msg.lower()
+            if "voice then tone" in lower_msg or "voice then alarm" in lower_msg or "voice then sound" in lower_msg:
+                req_sound_mode = "voice_then_tone"
+            elif "song" in lower_msg or "music" in lower_msg:
+                req_sound_mode = "song"
+            elif "voice" in lower_msg or "speak" in lower_msg or "read aloud" in lower_msg:
+                req_sound_mode = "voice"
+            elif "alarm tone" in lower_msg or "tone" in lower_msg:
+                req_sound_mode = "alarm_tone"
+
+            if req_sound_mode and suggested_rems:
+                for sr in suggested_rems:
+                    sr["sound_mode"] = req_sound_mode
+
             prop_id = db.set_pending_proposal(
                 user_id=user_id,
                 title=title,
@@ -1282,6 +1302,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
                 "is_ambiguous": dt_res.get("is_ambiguous", False),
                 "ambiguous_options": dt_res.get("ambiguous_options", []),
                 "suggested_reminders": suggested_rems,
+                "sound_mode": req_sound_mode or db.get_setting(user_id, "reminder_sound_mode", "alarm_tone"),
                 "notes": notes
             }
 
@@ -1413,6 +1434,10 @@ async def check_reminders_endpoint(tz_offset_minutes: Optional[int] = None, user
             "task": first["task"],
             "reminder_id": first.get("reminder_id"),
             "is_explicit": first.get("is_explicit", False),
+            "sound_mode": first.get("sound_mode", "alarm_tone"),
+            "custom_song_uri": first.get("custom_song_uri", ""),
+            "user_name": first.get("user_name", "Friend"),
+            "speech_text": first.get("speech_text", ""),
             "needing_bird": needing,
             "count": len(needing),
             "emergency_stopped": False
@@ -1450,9 +1475,19 @@ async def get_upcoming_reminders_endpoint(user: dict = Depends(get_reminder_acti
             "settings": settings
         }
 
+    user_name = db.get_user_display_name(user_id)
+    default_sound_mode = settings.get("reminder_sound_mode", "alarm_tone")
+    default_song_uri = settings.get("reminder_custom_song_uri", "")
+
     pending_tasks = [t for t in db.get_all_tasks(user_id) if t["status"] == "pending"]
     reminders_list = []
     for t in pending_tasks:
+        clean_task_title = (t.get("title") or "your task").strip()
+        task_action = clean_task_title[3:].strip() if clean_task_title.lower().startswith("to ") else clean_task_title
+        speech_text = f"Hey {user_name}, it is time to {task_action}"
+        task_sound_mode = t.get("sound_mode") or default_sound_mode
+        task_song_uri = t.get("custom_song_uri") or default_song_uri
+
         snooze_str = t.get("snoozed_until")
         if snooze_str:
             reminders_list.append({
@@ -1461,20 +1496,30 @@ async def get_upcoming_reminders_endpoint(user: dict = Depends(get_reminder_acti
                 "reminder_id": f"snooze_{t['id']}",
                 "time": snooze_str,
                 "label": f"Snoozed: {t['title']}",
-                "is_explicit": True
+                "is_explicit": True,
+                "sound_mode": task_sound_mode,
+                "custom_song_uri": task_song_uri,
+                "user_name": user_name,
+                "speech_text": speech_text
             })
         for r in (t.get("reminders") or []):
             r_id = r.get("id")
             r_time = r.get("time")
             fired_ids = set(t.get("fired_reminders") or [])
             if r_id and r_id not in fired_ids and r_time:
+                rem_sound_mode = r.get("sound_mode") or task_sound_mode
+                rem_song_uri = r.get("custom_song_uri") or task_song_uri
                 reminders_list.append({
                     "task_id": t["id"],
                     "task_title": t["title"],
                     "reminder_id": r_id,
                     "time": r_time,
                     "label": r.get("label", f"Reminder: {t['title']}"),
-                    "is_explicit": True
+                    "is_explicit": True,
+                    "sound_mode": rem_sound_mode,
+                    "custom_song_uri": rem_song_uri,
+                    "user_name": user_name,
+                    "speech_text": speech_text
                 })
         due_d = t.get("due_date")
         due_t = t.get("due_time")
@@ -1485,7 +1530,11 @@ async def get_upcoming_reminders_endpoint(user: dict = Depends(get_reminder_acti
                 "reminder_id": None,
                 "time": f"{due_d} {due_t if due_t else '09:00'}",
                 "label": f"Due: {t['title']}",
-                "is_explicit": False
+                "is_explicit": False,
+                "sound_mode": task_sound_mode,
+                "custom_song_uri": task_song_uri,
+                "user_name": user_name,
+                "speech_text": speech_text
             })
 
     return {
@@ -1699,7 +1748,16 @@ async def update_settings_endpoint(payload: SettingsUpdateRequest, user: dict = 
         db.set_setting(user_id, "timezone", payload.timezone)
     if payload.web_search_enabled is not None:
         db.set_setting(user_id, "web_search_enabled", payload.web_search_enabled)
-    db.log_audit(user_id, "SETTINGS_UPDATED", f"Persistence: {payload.persistence}, Quiet hours: {payload.quiet_hours_start}-{payload.quiet_hours_end}, Web Search: {payload.web_search_enabled}")
+    if payload.reminder_sound_mode:
+        db.set_setting(user_id, "reminder_sound_mode", payload.reminder_sound_mode)
+    if payload.reminder_custom_song_uri is not None:
+        db.set_setting(user_id, "reminder_custom_song_uri", payload.reminder_custom_song_uri)
+    if payload.user_display_name is not None:
+        db.set_setting(user_id, "user_display_name", payload.user_display_name)
+    if payload.dnd_allow_alarms is not None:
+        val_str = "true" if str(payload.dnd_allow_alarms).lower() in ("true", "1") else "false"
+        db.set_setting(user_id, "dnd_allow_alarms", val_str)
+    db.log_audit(user_id, "SETTINGS_UPDATED", f"Persistence: {payload.persistence}, Quiet hours: {payload.quiet_hours_start}-{payload.quiet_hours_end}, Web Search: {payload.web_search_enabled}, Sound: {payload.reminder_sound_mode}")
     return {"success": True, "settings": db.get_all_settings(user_id)}
 
 @app.post("/api/confirm-action")

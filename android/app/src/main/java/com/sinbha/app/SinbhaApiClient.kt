@@ -24,7 +24,11 @@ data class ReminderItem(
     val reminderId: String?,
     val reminderTime: String,
     val label: String,
-    val isExplicit: Boolean
+    val isExplicit: Boolean,
+    val soundMode: String = "alarm_tone",
+    val customSongUri: String? = null,
+    val userName: String = "Friend",
+    val speechText: String? = null
 )
 
 data class VersionInfo(
@@ -195,6 +199,10 @@ class SinbhaApiClient(private val context: Context) {
                     prefs.isQuietHoursEnabled = sObj.optString("quiet_hours_enabled", "true") == "true"
                     prefs.quietHoursStart = sObj.optString("quiet_hours_start", "22:00")
                     prefs.quietHoursEnd = sObj.optString("quiet_hours_end", "08:00")
+                    prefs.reminderSoundMode = sObj.optString("reminder_sound_mode", "alarm_tone")
+                    prefs.customSongUri = sObj.optString("reminder_custom_song_uri", "")
+                    prefs.userDisplayName = sObj.optString("user_display_name", "Friend")
+                    prefs.dndAllowAlarms = sObj.optString("dnd_allow_alarms", "true") == "true"
                 }
 
                 val arr = root.optJSONArray("reminders") ?: JSONArray()
@@ -207,7 +215,11 @@ class SinbhaApiClient(private val context: Context) {
                             reminderId = obj.optString("reminder_id", null),
                             reminderTime = obj.getString("time"),
                             label = obj.optString("label", "Task Reminder"),
-                            isExplicit = obj.optBoolean("is_explicit", true)
+                            isExplicit = obj.optBoolean("is_explicit", true),
+                            soundMode = obj.optString("sound_mode", prefs.reminderSoundMode),
+                            customSongUri = obj.optString("custom_song_uri", prefs.customSongUri),
+                            userName = obj.optString("user_name", prefs.userDisplayName ?: "Friend"),
+                            speechText = obj.optString("speech_text", null)
                         )
                     )
                 }

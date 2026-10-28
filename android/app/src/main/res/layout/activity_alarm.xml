@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0B0F19"
+    android:keepScreenOn="true"
+    android:padding="24dp">
+
+    <!-- Glowing Background Aura -->
+    <View
+        android:layout_width="260dp"
+        android:layout_height="260dp"
+        android:layout_centerHorizontal="true"
+        android:layout_marginTop="60dp"
+        android:alpha="0.12"
+        android:background="@drawable/ic_sinbha" />
+
+    <!-- Center Content Block -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_centerInParent="true"
+        android:gravity="center_horizontal"
+        android:orientation="vertical">
+
+        <!-- Animated Bird Icon -->
+        <ImageView
+            android:id="@+id/alarmBirdIcon"
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:layout_marginBottom="16dp"
+            android:contentDescription="SINBHA Alarm Bird"
+            android:src="@drawable/ic_sinbha" />
+
+        <!-- Current Time -->
+        <TextView
+            android:id="@+id/alarmTimeText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-thin"
+            android:text="08:00 AM"
+            android:textColor="#FFFFFF"
+            android:textSize="54sp" />
+
+        <!-- Greeting -->
+        <TextView
+            android:id="@+id/alarmGreetingText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:fontFamily="sans-serif-medium"
+            android:text="Hey Friend, it is time to:"
+            android:textColor="#F472B6"
+            android:textSize="18sp" />
+
+        <!-- Task Title Card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:layout_marginBottom="12dp"
+            android:background="#1E293B"
+            android:elevation="6dp"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:padding="20dp">
+
+            <TextView
+                android:id="@+id/alarmTaskTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="sans-serif-bold"
+                android:gravity="center"
+                android:text="Task Title"
+                android:textColor="#FFFFFF"
+                android:textSize="24sp" />
+
+            <TextView
+                android:id="@+id/alarmDueSubtitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="Due now 🌸"
+                android:textColor="#94A3B8"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/alarmSoundBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="#334155"
+                android:paddingStart="10dp"
+                android:paddingTop="3dp"
+                android:paddingEnd="10dp"
+                android:paddingBottom="3dp"
+                android:text="🔔 Alarm Tone"
+                android:textColor="#CBD5E1"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Bottom Action Controls -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_alignParentBottom="true"
+        android:layout_marginBottom="16dp"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <!-- Dismiss / Done Button -->
+        <Button
+            android:id="@+id/alarmDismissBtn"
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:backgroundTint="#EC4899"
+            android:elevation="4dp"
+            android:fontFamily="sans-serif-medium"
+            android:text="✓ I'm Done (Dismiss)"
+            android:textAllCaps="false"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp" />
+
+        <!-- Snooze Quick Actions -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:gravity="center"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/alarmSnooze2mBtn"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_marginEnd="6dp"
+                android:layout_weight="1"
+                android:backgroundTint="#334155"
+                android:text="⏰ 2m"
+                android:textAllCaps="false"
+                android:textColor="#F8FAFC"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/alarmSnooze5mBtn"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_marginEnd="6dp"
+                android:layout_weight="1"
+                android:backgroundTint="#334155"
+                android:text="⏰ 5m"
+                android:textAllCaps="false"
+                android:textColor="#F8FAFC"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/alarmSnooze15mBtn"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:backgroundTint="#334155"
+                android:text="⏰ 15m"
+                android:textAllCaps="false"
+                android:textColor="#F8FAFC"
+                android:textSize="14sp" />
+        </LinearLayout>
+    </LinearLayout>
+
+</RelativeLayout>

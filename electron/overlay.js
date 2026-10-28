@@ -94,11 +94,188 @@ document.addEventListener("DOMContentLoaded", () => {
     actionPopup.style.bottom = "auto";
   }
 
+  // ========================================================
+  // ALARM AUDIO & SPEECH ENGINE (Windows Desktop Companion)
+  // Loops audio chime with rising volume, TextToSpeech voice,
+  // custom song audio, and graceful fallbacks until dismissed.
+  // ========================================================
+  let audioContext = null;
+  let alarmInterval = null;
+  let speechLoopTimeout = null;
+  let alarmCurrentGain = 0.15;
+  let isAlarmAudioPlaying = false;
+  let customAudioEl = null;
+
+  function stopAlarmAudioAndSpeech() {
+    isAlarmAudioPlaying = false;
+    if (alarmInterval) {
+      clearInterval(alarmInterval);
+      alarmInterval = null;
+    }
+    if (speechLoopTimeout) {
+      clearTimeout(speechLoopTimeout);
+      speechLoopTimeout = null;
+    }
+    if (window.speechSynthesis) {
+      try { window.speechSynthesis.cancel(); } catch (e) {}
+    }
+    if (customAudioEl) {
+      try {
+        customAudioEl.pause();
+        customAudioEl.currentTime = 0;
+      } catch (e) {}
+      customAudioEl = null;
+    }
+    alarmCurrentGain = 0.15;
+  }
+
+  function playAlarmChimeNote(freq, startTime, duration, gainVal) {
+    try {
+      if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioContext.state === 'suspended') {
+        audioContext.resume();
+      }
+
+      const osc = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, startTime);
+
+      gainNode.gain.setValueAtTime(0.001, startTime);
+      gainNode.gain.exponentialRampToValueAtTime(gainVal, startTime + 0.05);
+      gainNode.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+
+      osc.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      osc.start(startTime);
+      osc.stop(startTime + duration + 0.1);
+    } catch (e) {}
+  }
+
+  function startLoopingAlarmChime() {
+    if (isAlarmAudioPlaying) return;
+    isAlarmAudioPlaying = true;
+    alarmCurrentGain = 0.15;
+
+    const playChordPattern = () => {
+      if (!isAlarmAudioPlaying) return;
+      try {
+        if (!audioContext) {
+          audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        const now = audioContext.currentTime;
+        // Melodic triple chime (E5 -> G#5 -> B5)
+        playAlarmChimeNote(659.25, now, 0.35, alarmCurrentGain);
+        playAlarmChimeNote(830.61, now + 0.18, 0.35, alarmCurrentGain);
+        playAlarmChimeNote(987.77, now + 0.36, 0.55, alarmCurrentGain);
+
+        // Gradually rising volume ramp up to 0.75
+        if (alarmCurrentGain < 0.75) {
+          alarmCurrentGain = Math.min(0.75, alarmCurrentGain + 0.06);
+        }
+      } catch (e) {}
+    };
+
+    playChordPattern();
+    alarmInterval = setInterval(playChordPattern, 2400);
+  }
+
+  function triggerAlarmExperience(task) {
+    stopAlarmAudioAndSpeech();
+
+    const mode = task.sound_mode || 'alarm_tone';
+    const userName = task.user_name || 'Friend';
+    const rawTitle = (task.title || 'your task').trim();
+    const taskAction = rawTitle.toLowerCase().startsWith('to ') ? rawTitle.substring(3).trim() : rawTitle;
+    const speechMessage = task.speech_text || `Hey ${userName}, it is time to ${taskAction}`;
+
+    if (mode === 'song' && task.custom_song_uri) {
+      try {
+        customAudioEl = new Audio(task.custom_song_uri);
+        customAudioEl.loop = true;
+        customAudioEl.volume = 0.3;
+        const playPromise = customAudioEl.play();
+        if (playPromise !== undefined) {
+          playPromise.then(() => {
+            // Gradually ramp volume
+            const songVolInterval = setInterval(() => {
+              if (!customAudioEl || customAudioEl.paused) {
+                clearInterval(songVolInterval);
+                return;
+              }
+              if (customAudioEl.volume < 0.95) {
+                customAudioEl.volume = Math.min(1.0, customAudioEl.volume + 0.1);
+              } else {
+                clearInterval(songVolInterval);
+              }
+            }, 2000);
+          }).catch(() => {
+            // Fallback to alarm tone on audio playback failure
+            startLoopingAlarmChime();
+          });
+        }
+        return;
+      } catch (e) {
+        startLoopingAlarmChime();
+        return;
+      }
+    }
+
+    if (mode === 'voice' || mode === 'voice_then_tone') {
+      if ('speechSynthesis' in window) {
+        try {
+          const speakUtterance = () => {
+            if (!currentTask) return;
+            const utterance = new SpeechSynthesisUtterance(speechMessage);
+            utterance.rate = 0.95;
+            utterance.pitch = 1.05;
+
+            utterance.onend = () => {
+              if (mode === 'voice_then_tone') {
+                startLoopingAlarmChime();
+              } else if (mode === 'voice') {
+                // Loop speech every 5 seconds until dismissed
+                speechLoopTimeout = setTimeout(speakUtterance, 5000);
+              }
+            };
+
+            utterance.onerror = () => {
+              // Fallback to alarm tone if speech synthesis errors out
+              startLoopingAlarmChime();
+            };
+
+            window.speechSynthesis.speak(utterance);
+          };
+
+          speakUtterance();
+          return;
+        } catch (e) {
+          // Never crash if TTS is not installed or errors
+          startLoopingAlarmChime();
+          return;
+        }
+      } else {
+        startLoopingAlarmChime();
+        return;
+      }
+    }
+
+    // Default: alarm_tone
+    startLoopingAlarmChime();
+  }
+
   // Show bird with forward arrival animation
   function showBird(task, reminderId) {
     currentTask = task;
     currentReminderId = reminderId;
     isFlyingReverse = false;
+
+    // Trigger looping alarm experience with voice / tone until dismissed
+    triggerAlarmExperience(task);
 
     // Populate note overlay
     if (noteTitle) noteTitle.textContent = task.title || "Task Reminder";
@@ -156,6 +333,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function flyAwayReverse(callback) {
     if (isFlyingReverse) return;
     isFlyingReverse = true;
+    stopAlarmAudioAndSpeech();
     if (flightTimer) clearTimeout(flightTimer);
 
     if (actionPopup) actionPopup.style.display = "none";
@@ -193,6 +371,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Hide bird and return full desktop click-through
   function hideBird() {
+    stopAlarmAudioAndSpeech();
     if (flightTimer) clearTimeout(flightTimer);
     if (flightWrapper) {
       flightWrapper.classList.remove("is-flying", "is-landed", "is-flying-reverse");

@@ -1386,6 +1386,29 @@ document.addEventListener("DOMContentLoaded", () => {
         webSearchToggle.checked = (s.web_search_enabled === "true" || s.web_search_enabled === true);
       }
 
+      // Alarm-Grade Reminder settings
+      const settingUserDisplayName = document.getElementById("settingUserDisplayName");
+      const settingSoundModeSelect = document.getElementById("settingSoundModeSelect");
+      const settingSongPickerGroup = document.getElementById("settingSongPickerGroup");
+      const settingPickedSongName = document.getElementById("settingPickedSongName");
+      const dndAllowAlarmsToggle = document.getElementById("dndAllowAlarmsToggle");
+
+      if (settingUserDisplayName && s.user_display_name !== undefined) {
+        settingUserDisplayName.value = s.user_display_name;
+      }
+      if (settingSoundModeSelect && s.reminder_sound_mode) {
+        settingSoundModeSelect.value = s.reminder_sound_mode;
+        if (settingSongPickerGroup) {
+          settingSongPickerGroup.style.display = (s.reminder_sound_mode === "song") ? "block" : "none";
+        }
+      }
+      if (settingPickedSongName && s.reminder_custom_song_uri) {
+        settingPickedSongName.textContent = "Custom song configured 🎵";
+      }
+      if (dndAllowAlarmsToggle && s.dnd_allow_alarms !== undefined) {
+        dndAllowAlarmsToggle.checked = (s.dnd_allow_alarms === "true" || s.dnd_allow_alarms === true);
+      }
+
       // Check electron desktop integration
       if (window.electronAPI) {
         try {
@@ -1403,6 +1426,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function saveSettings() {
     try {
+      const settingUserDisplayName = document.getElementById("settingUserDisplayName");
+      const settingSoundModeSelect = document.getElementById("settingSoundModeSelect");
+      const dndAllowAlarmsToggle = document.getElementById("dndAllowAlarmsToggle");
+
       const payload = {
         persistence: persistenceSelect ? persistenceSelect.value : "normal",
         country: countrySelect ? countrySelect.value : "US",
@@ -1410,7 +1437,11 @@ document.addEventListener("DOMContentLoaded", () => {
         quiet_hours_enabled: quietHoursToggle ? (quietHoursToggle.checked ? "true" : "false") : "true",
         quiet_hours_start: quietStartInput ? quietStartInput.value : "22:00",
         quiet_hours_end: quietEndInput ? quietEndInput.value : "08:00",
-        web_search_enabled: webSearchToggle ? (webSearchToggle.checked ? "true" : "false") : "true"
+        web_search_enabled: webSearchToggle ? (webSearchToggle.checked ? "true" : "false") : "true",
+        reminder_sound_mode: settingSoundModeSelect ? settingSoundModeSelect.value : "alarm_tone",
+        reminder_custom_song_uri: window._customSongUri || undefined,
+        user_display_name: settingUserDisplayName ? settingUserDisplayName.value.trim() : "",
+        dnd_allow_alarms: dndAllowAlarmsToggle ? (dndAllowAlarmsToggle.checked ? "true" : "false") : "true"
       };
       await fetch("/api/settings", {
         method: "POST",
@@ -1436,6 +1467,74 @@ document.addEventListener("DOMContentLoaded", () => {
   if (quietStartInput) quietStartInput.addEventListener("change", saveSettings);
   if (quietEndInput) quietEndInput.addEventListener("change", saveSettings);
   if (webSearchToggle) webSearchToggle.addEventListener("change", saveSettings);
+
+  const settingUserDisplayName = document.getElementById("settingUserDisplayName");
+  const settingSoundModeSelect = document.getElementById("settingSoundModeSelect");
+  const settingSongPickerGroup = document.getElementById("settingSongPickerGroup");
+  const settingPickSongBtn = document.getElementById("settingPickSongBtn");
+  const settingSongFileInput = document.getElementById("settingSongFileInput");
+  const settingPickedSongName = document.getElementById("settingPickedSongName");
+  const previewVoiceBtn = document.getElementById("previewVoiceBtn");
+  const dndAllowAlarmsToggle = document.getElementById("dndAllowAlarmsToggle");
+
+  if (settingUserDisplayName) settingUserDisplayName.addEventListener("change", saveSettings);
+  if (dndAllowAlarmsToggle) dndAllowAlarmsToggle.addEventListener("change", saveSettings);
+
+  if (settingSoundModeSelect) {
+    settingSoundModeSelect.addEventListener("change", () => {
+      if (settingSongPickerGroup) {
+        settingSongPickerGroup.style.display = (settingSoundModeSelect.value === "song") ? "block" : "none";
+      }
+      saveSettings();
+    });
+  }
+
+  if (settingPickSongBtn && settingSongFileInput) {
+    settingPickSongBtn.addEventListener("click", () => {
+      settingSongFileInput.click();
+    });
+    settingSongFileInput.addEventListener("change", (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (file) {
+        if (settingPickedSongName) {
+          settingPickedSongName.textContent = file.name;
+        }
+        const reader = new FileReader();
+        reader.onload = function(evt) {
+          window._customSongUri = evt.target.result;
+          saveSettings();
+          showToast(`🎵 Custom song selected: ${file.name}`);
+        };
+        reader.readAsDataURL(file);
+      }
+    });
+  }
+
+  if (previewVoiceBtn) {
+    previewVoiceBtn.addEventListener("click", () => {
+      const name = (settingUserDisplayName && settingUserDisplayName.value.trim()) || "Friend";
+      const sampleText = `Hey ${name}, it is time to write your notes`;
+
+      if (window.Capacitor && window.Capacitor.isPluginAvailable("SinbhaNative")) {
+        try {
+          window.Capacitor.Plugins.SinbhaNative.previewSpeechVoice({ text: sampleText });
+          showToast("🔊 Playing voice preview...");
+          return;
+        } catch (e) {}
+      }
+
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(sampleText);
+        utterance.rate = 0.95;
+        utterance.pitch = 1.05;
+        window.speechSynthesis.speak(utterance);
+        showToast("🔊 Playing voice preview...");
+      } else {
+        showToast("⚠️ Speech synthesis not supported on this device.");
+      }
+    });
+  }
 
   // Desktop toggles
   if (dndToggle) {

@@ -17,6 +17,10 @@ object AlarmScheduler {
     const val EXTRA_TASK_TITLE = "extra_task_title"
     const val EXTRA_DUE_TEXT = "extra_due_text"
     const val EXTRA_REMINDER_ID = "extra_reminder_id"
+    const val EXTRA_SOUND_MODE = "extra_sound_mode"
+    const val EXTRA_CUSTOM_SONG_URI = "extra_custom_song_uri"
+    const val EXTRA_USER_NAME = "extra_user_name"
+    const val EXTRA_SPEECH_TEXT = "extra_speech_text"
 
     fun scheduleExactAlarm(
         context: Context,
@@ -24,7 +28,11 @@ object AlarmScheduler {
         taskTitle: String,
         dueText: String,
         reminderId: String?,
-        triggerAtMillis: Long
+        triggerAtMillis: Long,
+        soundMode: String = "alarm_tone",
+        customSongUri: String? = null,
+        userName: String = "Friend",
+        speechText: String? = null
     ) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
 
@@ -33,6 +41,10 @@ object AlarmScheduler {
             putExtra(EXTRA_TASK_TITLE, taskTitle)
             putExtra(EXTRA_DUE_TEXT, dueText)
             putExtra(EXTRA_REMINDER_ID, reminderId)
+            putExtra(EXTRA_SOUND_MODE, soundMode)
+            putExtra(EXTRA_CUSTOM_SONG_URI, customSongUri)
+            putExtra(EXTRA_USER_NAME, userName)
+            putExtra(EXTRA_SPEECH_TEXT, speechText)
         }
 
         val requestCode = (taskId * 31 + (reminderId?.hashCode() ?: 0)).let { if (it < 0) -it else it }
@@ -43,21 +55,31 @@ object AlarmScheduler {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (alarmManager.canScheduleExactAlarms()) {
-                alarmManager.setExactAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    triggerAtMillis,
-                    pendingIntent
-                )
-            } else {
-                alarmManager.setAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    triggerAtMillis,
-                    pendingIntent
-                )
+        // Show intent for system lock screen / clock widget
+        val showIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra("open_task_id", taskId)
+        }
+        val showPendingIntent = PendingIntent.getActivity(
+            context,
+            requestCode + 100000,
+            showIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // The most reliable alarm scheduling method in Android: AlarmManager.setAlarmClock()
+        // Highest priority wakeup, exempt from Doze, and displays in system clock/lockscreen
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                val clockInfo = AlarmManager.AlarmClockInfo(triggerAtMillis, showPendingIntent)
+                alarmManager.setAlarmClock(clockInfo, pendingIntent)
+                return
             }
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        } catch (e: Exception) {
+            // If exact alarm permission is missing or restricted on Android 12+, fall back to idle wakeup
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             alarmManager.setExactAndAllowWhileIdle(
                 AlarmManager.RTC_WAKEUP,
                 triggerAtMillis,
@@ -111,6 +133,10 @@ object AlarmScheduler {
                 put("time", item.reminderTime)
                 put("label", item.label)
                 put("is_explicit", item.isExplicit)
+                put("sound_mode", item.soundMode)
+                put("custom_song_uri", item.customSongUri)
+                put("user_name", item.userName)
+                put("speech_text", item.speechText)
             }
             jsonArray.put(jsonItem)
 
@@ -122,7 +148,11 @@ object AlarmScheduler {
                     item.taskTitle,
                     item.label,
                     item.reminderId,
-                    triggerMillis
+                    triggerMillis,
+                    item.soundMode,
+                    item.customSongUri,
+                    item.userName,
+                    item.speechText
                 )
             }
         }
@@ -148,7 +178,11 @@ object AlarmScheduler {
                         item.optString("task_title", "Reminder"),
                         item.optString("label", "Due now 🌸"),
                         item.optString("reminder_id", null),
-                        triggerMillis
+                        triggerMillis,
+                        item.optString("sound_mode", prefs.reminderSoundMode),
+                        item.optString("custom_song_uri", prefs.customSongUri),
+                        item.optString("user_name", prefs.userDisplayName ?: "Friend"),
+                        item.optString("speech_text", null)
                     )
                 }
             }
@@ -163,12 +197,20 @@ object AlarmScheduler {
         taskTitle: String,
         label: String,
         reminderId: String?,
-        triggerAtMillis: Long
+        triggerAtMillis: Long,
+        soundMode: String? = null,
+        customSongUri: String? = null,
+        userName: String? = null,
+        speechText: String? = null
     ) {
         val prefs = PreferencesManager(context)
         val cached = prefs.cachedRemindersJson
         val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
         val formattedTime = sdf.format(Date(triggerAtMillis))
+
+        val resolvedSoundMode = soundMode ?: prefs.reminderSoundMode
+        val resolvedSongUri = customSongUri ?: prefs.customSongUri
+        val resolvedUserName = userName ?: (prefs.userDisplayName ?: "Friend")
 
         val newArray = JSONArray()
         var updated = false
@@ -188,6 +230,10 @@ object AlarmScheduler {
                             put("time", formattedTime)
                             put("label", label)
                             put("is_explicit", true)
+                            put("sound_mode", resolvedSoundMode)
+                            put("custom_song_uri", resolvedSongUri)
+                            put("user_name", resolvedUserName)
+                            put("speech_text", speechText ?: item.optString("speech_text", null))
                         }
                         newArray.put(updatedItem)
                         updated = true
@@ -208,6 +254,10 @@ object AlarmScheduler {
                 put("time", formattedTime)
                 put("label", label)
                 put("is_explicit", true)
+                put("sound_mode", resolvedSoundMode)
+                put("custom_song_uri", resolvedSongUri)
+                put("user_name", resolvedUserName)
+                put("speech_text", speechText)
             }
             newArray.put(newItem)
         }

@@ -5,6 +5,7 @@ Supports connection pooling, UTC timestamps, per-user isolation, and rate-limiti
 """
 
 import os
+import re
 import json
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -1084,7 +1085,11 @@ def get_all_settings(user_id: int) -> dict:
         "quiet_hours_end": "08:00",
         "country": "US",
         "timezone": "UTC",
-        "web_search_enabled": "true"
+        "web_search_enabled": "true",
+        "reminder_sound_mode": "alarm_tone",
+        "reminder_custom_song_uri": "",
+        "user_display_name": "",
+        "dnd_allow_alarms": "true"
     }
     with get_db_session() as session:
         settings = session.scalars(select(UserSetting).where(UserSetting.user_id == user_id)).all()
@@ -1092,6 +1097,29 @@ def get_all_settings(user_id: int) -> dict:
         for s in settings:
             result[s.key] = s.value
         return result
+
+def get_user_display_name(user_id: int) -> str:
+    """Returns the user's name from profile settings, facts, or email."""
+    custom_name = get_setting(user_id, "user_display_name")
+    if custom_name and custom_name.strip():
+        return custom_name.strip()
+
+    with get_db_session() as session:
+        facts = session.scalars(select(Fact).where(Fact.user_id == user_id)).all()
+        for f in facts:
+            txt = decrypt_text(f.fact).lower()
+            m = re.search(r"(?:my name is|the user'?s name is|user'?s name is|i am called|call me)\s+([a-zA-Z]+)", txt)
+            if m:
+                return m.group(1).capitalize()
+
+        user = session.scalar(select(User).where(User.id == user_id))
+        if user and user.email:
+            local = user.email.split("@")[0]
+            clean = re.sub(r"[^a-zA-Z]", " ", local).strip().title()
+            if clean:
+                return clean.split()[0]
+
+    return "Friend"
 
 def set_emergency_stopped(user_id: int, stopped: bool) -> None:
     """Sets emergency STOP state per user."""
@@ -1150,7 +1178,17 @@ def check_due_reminders(user_id: int, now_dt: datetime = None) -> list:
     pending_tasks = [t for t in get_all_tasks(user_id) if t["status"] == "pending"]
     due_items = []
 
+    user_name = get_user_display_name(user_id)
+    default_sound_mode = settings.get("reminder_sound_mode", "alarm_tone")
+    default_song_uri = settings.get("reminder_custom_song_uri", "")
+
     for t in pending_tasks:
+        clean_task_title = (t.get("title") or "your task").strip()
+        task_action = clean_task_title[3:].strip() if clean_task_title.lower().startswith("to ") else clean_task_title
+        speech_text = f"Hey {user_name}, it is time to {task_action}"
+        task_sound_mode = t.get("sound_mode") or default_sound_mode
+        task_song_uri = t.get("custom_song_uri") or default_song_uri
+
         # Check snooze
         snooze_str = t.get("snoozed_until")
         if snooze_str:
@@ -1163,12 +1201,21 @@ def check_due_reminders(user_id: int, now_dt: datetime = None) -> list:
                     continue
                 else:
                     # Expired snooze becomes a due reminder
+                    t_copy = dict(t)
+                    t_copy["sound_mode"] = task_sound_mode
+                    t_copy["custom_song_uri"] = task_song_uri
+                    t_copy["user_name"] = user_name
+                    t_copy["speech_text"] = speech_text
                     due_items.append({
-                        "task": t,
+                        "task": t_copy,
                         "reminder_id": f"snooze_{t['id']}",
                         "is_explicit": True,
                         "reminder_label": "Snoozed Reminder",
-                        "reminder_time": snooze_str
+                        "reminder_time": snooze_str,
+                        "sound_mode": task_sound_mode,
+                        "custom_song_uri": task_song_uri,
+                        "user_name": user_name,
+                        "speech_text": speech_text
                     })
                     continue
             except Exception:
@@ -1186,12 +1233,23 @@ def check_due_reminders(user_id: int, now_dt: datetime = None) -> list:
                 continue
 
             if r_time <= now_str:
+                rem_sound_mode = r.get("sound_mode") or task_sound_mode
+                rem_song_uri = r.get("custom_song_uri") or task_song_uri
+                t_copy = dict(t)
+                t_copy["sound_mode"] = rem_sound_mode
+                t_copy["custom_song_uri"] = rem_song_uri
+                t_copy["user_name"] = user_name
+                t_copy["speech_text"] = speech_text
                 due_items.append({
-                    "task": t,
+                    "task": t_copy,
                     "reminder_id": r_id,
                     "is_explicit": True,
                     "reminder_label": r.get("label", "Scheduled Reminder"),
-                    "reminder_time": r_time
+                    "reminder_time": r_time,
+                    "sound_mode": rem_sound_mode,
+                    "custom_song_uri": rem_song_uri,
+                    "user_name": user_name,
+                    "speech_text": speech_text
                 })
                 matched_explicit = True
                 break
@@ -1209,12 +1267,21 @@ def check_due_reminders(user_id: int, now_dt: datetime = None) -> list:
         if due_d:
             due_full = f"{due_d} {due_t if due_t else '09:00'}"
             if due_full <= now_str:
+                t_copy = dict(t)
+                t_copy["sound_mode"] = task_sound_mode
+                t_copy["custom_song_uri"] = task_song_uri
+                t_copy["user_name"] = user_name
+                t_copy["speech_text"] = speech_text
                 due_items.append({
-                    "task": t,
+                    "task": t_copy,
                     "reminder_id": None,
                     "is_explicit": False,
                     "reminder_label": "Overdue Check-in",
-                    "reminder_time": due_full
+                    "reminder_time": due_full,
+                    "sound_mode": task_sound_mode,
+                    "custom_song_uri": task_song_uri,
+                    "user_name": user_name,
+                    "speech_text": speech_text
                 })
 
     due_items.sort(key=reminder_sort_key)

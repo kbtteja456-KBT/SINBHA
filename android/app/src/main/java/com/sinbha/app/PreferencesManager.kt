@@ -44,8 +44,28 @@ class PreferencesManager(private val context: Context) {
         private const val KEY_LAST_SYNC_TIME = "last_sync_time"
         private const val KEY_RECENT_ERRORS = "recent_errors_json"
         private const val KEY_DEVICE_ID = "device_id"
+        private const val KEY_REMINDER_SOUND_MODE = "reminder_sound_mode"
+        private const val KEY_CUSTOM_SONG_URI = "custom_song_uri"
+        private const val KEY_USER_DISPLAY_NAME = "user_display_name"
+        private const val KEY_DND_ALLOW_ALARMS = "dnd_allow_alarms"
         const val DEFAULT_BACKEND_URL = "https://sinbha-backend.onrender.com"
     }
+
+    var reminderSoundMode: String
+        get() = prefs.getString(KEY_REMINDER_SOUND_MODE, "alarm_tone") ?: "alarm_tone"
+        set(value) = prefs.edit().putString(KEY_REMINDER_SOUND_MODE, value).apply()
+
+    var customSongUri: String?
+        get() = prefs.getString(KEY_CUSTOM_SONG_URI, null)
+        set(value) = prefs.edit().putString(KEY_CUSTOM_SONG_URI, value).apply()
+
+    var userDisplayName: String?
+        get() = prefs.getString(KEY_USER_DISPLAY_NAME, "Friend")
+        set(value) = prefs.edit().putString(KEY_USER_DISPLAY_NAME, value).apply()
+
+    var dndAllowAlarms: Boolean
+        get() = prefs.getBoolean(KEY_DND_ALLOW_ALARMS, true)
+        set(value) = prefs.edit().putBoolean(KEY_DND_ALLOW_ALARMS, value).apply()
 
     var deviceId: String?
         get() = prefs.getString(KEY_DEVICE_ID, null)

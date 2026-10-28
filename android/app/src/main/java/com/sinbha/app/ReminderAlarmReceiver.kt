@@ -22,9 +22,8 @@ import java.util.Locale
 /**
  * Receiver invoked by AlarmManager when an exact reminder fires.
  * Enforces STOP rules, Quiet Hours, and system DND.
- * Guarantees high-priority sound, vibration, and lockscreen alerts even
- * when phone is asleep or app is swiped away. Launches the floating bird
- * overlay when the user is actively using the phone.
+ * Launches the full-screen AlarmActivity (over lockscreen) with ALARM audio stream,
+ * rising volume, looping sound/TTS, and Done/Snooze actions.
  */
 class ReminderAlarmReceiver : BroadcastReceiver() {
 
@@ -40,24 +39,71 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
             return
         }
 
+        // 2. Respect DND choices
+        if (!prefs.dndAllowAlarms) {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && nm != null) {
+                val filter = nm.currentInterruptionFilter
+                if (filter == NotificationManager.INTERRUPTION_FILTER_NONE ||
+                    filter == NotificationManager.INTERRUPTION_FILTER_PRIORITY) {
+                    // Suppressed by user DND preference
+                    return
+                }
+            }
+        }
+
         val taskId = intent.getIntExtra(AlarmScheduler.EXTRA_TASK_ID, -1)
         val taskTitle = intent.getStringExtra(AlarmScheduler.EXTRA_TASK_TITLE) ?: "Task Reminder"
         val dueText = intent.getStringExtra(AlarmScheduler.EXTRA_DUE_TEXT) ?: "Due now 🌸"
+        val reminderId = intent.getStringExtra(AlarmScheduler.EXTRA_REMINDER_ID)
+        val soundMode = intent.getStringExtra(AlarmScheduler.EXTRA_SOUND_MODE) ?: prefs.reminderSoundMode
+        val customSongUri = intent.getStringExtra(AlarmScheduler.EXTRA_CUSTOM_SONG_URI) ?: prefs.customSongUri
+        val userName = intent.getStringExtra(AlarmScheduler.EXTRA_USER_NAME) ?: (prefs.userDisplayName ?: "Friend")
+        val speechText = intent.getStringExtra(AlarmScheduler.EXTRA_SPEECH_TEXT)
 
-        // 2. Wake up device screen briefly so user sees the reminder alert immediately
+        // 3. Wake up device screen so user sees the reminder alert immediately
         try {
             val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
             val wakeLock = pm?.newWakeLock(
                 PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
                 "sinbha:reminder_alarm_wake"
             )
-            wakeLock?.acquire(10000L) // 10 seconds to light up screen
+            wakeLock?.acquire(15000L) // 15 seconds to turn on screen
         } catch (e: Exception) {}
 
-        // 3. Always display high-priority sound, vibration, and heads-up notification!
-        showHighPriorityNotification(context, taskId, taskTitle, dueText)
+        // 4. Intent for full-screen Clock-app Alarm Experience
+        val alarmIntent = Intent(context, AlarmActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_NO_USER_ACTION or
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            putExtra(AlarmScheduler.EXTRA_TASK_ID, taskId)
+            putExtra(AlarmScheduler.EXTRA_TASK_TITLE, taskTitle)
+            putExtra(AlarmScheduler.EXTRA_DUE_TEXT, dueText)
+            putExtra(AlarmScheduler.EXTRA_REMINDER_ID, reminderId)
+            putExtra(AlarmScheduler.EXTRA_SOUND_MODE, soundMode)
+            putExtra(AlarmScheduler.EXTRA_CUSTOM_SONG_URI, customSongUri)
+            putExtra(AlarmScheduler.EXTRA_USER_NAME, userName)
+            putExtra(AlarmScheduler.EXTRA_SPEECH_TEXT, speechText)
+        }
 
-        // 4. If user allowed overlay: launch floating bird over active apps/lockscreen
+        val fullScreenPendingIntent = PendingIntent.getActivity(
+            context,
+            taskId * 10 + 7,
+            alarmIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // 5. Always display high-priority notification with fullScreenIntent configured
+        showHighPriorityNotification(context, taskId, taskTitle, dueText, fullScreenPendingIntent)
+
+        // 6. Direct activity launch over lock screen / background
+        try {
+            context.startActivity(alarmIntent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        // 7. If user allowed overlay: launch floating bird over active apps
         val canOverlay = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             Settings.canDrawOverlays(context)
         } else {
@@ -69,20 +115,13 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
         }
     }
 
-    private fun isQuietHoursActive(prefs: PreferencesManager): Boolean {
-        if (!prefs.isQuietHoursEnabled) return false
-        val nowStr = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-        val start = prefs.quietHoursStart
-        val end = prefs.quietHoursEnd
-
-        return if (start > end) {
-            nowStr >= start || nowStr < end
-        } else {
-            nowStr in start..<end
-        }
-    }
-
-    private fun showHighPriorityNotification(context: Context, taskId: Int, title: String, dueText: String) {
+    private fun showHighPriorityNotification(
+        context: Context,
+        taskId: Int,
+        title: String,
+        dueText: String,
+        fullScreenIntent: PendingIntent
+    ) {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
             ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
@@ -93,7 +132,7 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
                 "SINBHA Task Reminders",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Urgent reminder alerts with Done and Snooze actions"
+                description = "Urgent reminder alerts with Full-screen Alarm, Done, and Snooze"
                 enableVibration(true)
                 vibrationPattern = longArrayOf(0, 500, 200, 500, 200, 500)
                 enableLights(true)
@@ -104,6 +143,7 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
                     .build()
                 setSound(soundUri, audioAttributes)
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                setBypassDnd(true)
             }
             manager.createNotificationChannel(channel)
         }
@@ -120,16 +160,16 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // Action: Snooze 2m
-        val snooze2Intent = Intent(context, ReminderActionReceiver::class.java).apply {
+        // Action: Snooze 5m
+        val snooze5Intent = Intent(context, ReminderActionReceiver::class.java).apply {
             action = ReminderActionReceiver.ACTION_SNOOZE
             putExtra(ReminderActionReceiver.EXTRA_TASK_ID, taskId)
-            putExtra(ReminderActionReceiver.EXTRA_MINUTES, 2)
+            putExtra(ReminderActionReceiver.EXTRA_MINUTES, 5)
         }
-        val pSnooze2 = PendingIntent.getBroadcast(
+        val pSnooze5 = PendingIntent.getBroadcast(
             context,
             taskId * 10 + 4,
-            snooze2Intent,
+            snooze5Intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -146,21 +186,9 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // Action: Open App
-        val openIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            putExtra("open_task_id", taskId)
-        }
-        val pOpen = PendingIntent.getActivity(
-            context,
-            taskId * 10 + 3,
-            openIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
         val notif = NotificationCompat.Builder(context, REMINDER_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_sinbha)
-            .setContentTitle("🕊️ $title")
+            .setContentTitle("⏰ $title")
             .setContentText(dueText)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
@@ -170,9 +198,10 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
             .setVibrate(longArrayOf(0, 500, 200, 500, 200, 500))
             .setDefaults(Notification.DEFAULT_ALL)
             .setAutoCancel(true)
-            .setContentIntent(pOpen)
+            .setContentIntent(fullScreenIntent)
+            .setFullScreenIntent(fullScreenIntent, true)
             .addAction(R.drawable.ic_sinbha, "✓ Done", pDone)
-            .addAction(R.drawable.ic_sinbha, "⏰ 2m", pSnooze2)
+            .addAction(R.drawable.ic_sinbha, "⏰ 5m", pSnooze5)
             .addAction(R.drawable.ic_sinbha, "⏰ 15m", pSnooze15)
             .build()
 

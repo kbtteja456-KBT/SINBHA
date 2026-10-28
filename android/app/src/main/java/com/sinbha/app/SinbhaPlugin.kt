@@ -221,6 +221,13 @@ class SinbhaPlugin : Plugin() {
             true
         }
 
+        val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        val hasFullScreenIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && nm != null) {
+            nm.canUseFullScreenIntent()
+        } else {
+            true
+        }
+
         val isBatteryIgnored = pm.isIgnoringBatteryOptimizations(ctx.packageName)
 
         val manufacturer = Build.MANUFACTURER.lowercase()
@@ -232,6 +239,7 @@ class SinbhaPlugin : Plugin() {
             put("overlay", hasOverlay)
             put("notifications", hasNotifications)
             put("exactAlarm", hasExactAlarm)
+            put("fullScreenIntent", hasFullScreenIntent)
             put("batteryIgnored", isBatteryIgnored)
             put("manufacturer", Build.MANUFACTURER)
             put("brand", Build.BRAND)
@@ -294,6 +302,21 @@ class SinbhaPlugin : Plugin() {
                 "autostart" -> {
                     openBrandAutostartSettings(ctx, pkg)
                 }
+                "fullScreenIntent", "fullscreen" -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                        val intent = Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
+                            data = Uri.parse("package:$pkg")
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        ctx.startActivity(intent)
+                    } else {
+                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = Uri.parse("package:$pkg")
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        ctx.startActivity(intent)
+                    }
+                }
                 else -> {
                     // Open default App Info
                     val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
@@ -316,6 +339,32 @@ class SinbhaPlugin : Plugin() {
             } catch (ex: Exception) {
                 call.reject("Failed to open settings: ${ex.message}")
             }
+        }
+    }
+
+    /**
+     * Previews spoken alarm message through native Android TTS.
+     */
+    @PluginMethod
+    fun previewSpeechVoice(call: PluginCall) {
+        val text = call.getString("text") ?: "Hey Friend, it is time to write your notes"
+        val ctx = context
+        try {
+            var previewTts: TextToSpeech? = null
+            previewTts = TextToSpeech(ctx) { status ->
+                if (status == TextToSpeech.SUCCESS) {
+                    previewTts?.language = Locale.getDefault()
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                        previewTts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "sinbha_preview_utterance")
+                    } else {
+                        @Suppress("DEPRECATION")
+                        previewTts?.speak(text, TextToSpeech.QUEUE_FLUSH, null)
+                    }
+                }
+            }
+            call.resolve(JSObject().put("success", true))
+        } catch (e: Exception) {
+            call.reject("Failed to preview voice: ${e.message}")
         }
     }
 
