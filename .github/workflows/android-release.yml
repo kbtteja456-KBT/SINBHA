@@ -74,11 +74,10 @@ jobs:
           ./gradlew assembleRelease --no-daemon --stacktrace > ../gradle_build.log 2>&1 || {
             BUILD_STATUS=$?
             echo "::error::Android Release Gradle Build Failed with exit code $BUILD_STATUS!"
-            echo "## ❌ Android Gradle Release Build Failed" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            tail -n 120 ../gradle_build.log >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            tail -n 35 ../gradle_build.log | while IFS= read -r line; do
+            grep -E "^e: |^error: " ../gradle_build.log | head -n 25 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            grep -A 25 "What went wrong:" ../gradle_build.log | head -n 25 | while IFS= read -r line; do
               echo "::error::$line"
             done
             cat ../gradle_build.log
