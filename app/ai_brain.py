@@ -2,6 +2,7 @@ import os
 import json
 import re
 import datetime
+from typing import Optional, Dict, Any, List, Tuple
 import httpx
 from dotenv import load_dotenv
 

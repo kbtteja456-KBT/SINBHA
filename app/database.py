@@ -1684,14 +1684,14 @@ def get_device_by_id(user_id: int, device_id: str) -> Optional[dict]:
         )
         return _device_to_dict(dev) if dev else None
 
-def approve_device_pairing(user_id: int, code: str, approver_device_id: Optional[str] = None) -> dict:
+def approve_device_pairing(user_id: int, code: str = "", approver_device_id: Optional[str] = None, code_or_target_id: Optional[str] = None) -> dict:
     """
     Approves a pending device pairing using its 6-digit one-time code.
     Step 16b Rules:
     - Pairing approval always requires typing the 6-digit code.
     - Locks the code after 5 wrong attempts.
     """
-    clean_code = str(code).strip()
+    clean_code = str(code_or_target_id or code).strip()
     with get_db_session() as session:
         if approver_device_id:
             approver = session.scalar(

@@ -1999,7 +1999,7 @@ async def approve_pairing_endpoint(payload: DevicePairApproveRequest, user: dict
     """
     res = db.approve_device_pairing(
         user_id=user["id"],
-        code_or_target_id=payload.code,
+        code=payload.code,
         approver_device_id=payload.approver_device_id
     )
     if not res.get("success"):
