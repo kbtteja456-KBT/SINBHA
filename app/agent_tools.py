@@ -407,9 +407,12 @@ async def handle_send_note(user_id: int, args: dict, ctx: dict) -> dict:
     if not trusted:
         return {"success": False, "error": "No trusted devices paired. Please pair a device first."}
 
-    target_dev = _resolve_target_device(trusted, target_platform, relay, user_id)
+    dev_res = _resolve_target_device(trusted, target_platform, relay, user_id)
+    if dev_res["status"] == "ambiguous":
+        return {"success": False, "needs_user_confirmation": False, "message": dev_res["message"], "ambiguous": True}
+    target_dev = dev_res.get("device")
     if not target_dev:
-        return {"success": False, "error": f"No trusted {target_platform} device found."}
+        return {"success": False, "error": dev_res.get("message") or f"No trusted {target_platform} device found."}
 
     cmd_id = f"cmd_ai_{int(time.time() * 1000)}"
     cmd_data = {
@@ -441,9 +444,12 @@ async def handle_ring_phone(user_id: int, args: dict, ctx: dict) -> dict:
     if not trusted:
         return {"success": False, "error": "No trusted devices paired."}
 
-    target_dev = _resolve_target_device(trusted, target_platform, relay, user_id)
+    dev_res = _resolve_target_device(trusted, target_platform, relay, user_id)
+    if dev_res["status"] == "ambiguous":
+        return {"success": False, "needs_user_confirmation": False, "message": dev_res["message"], "ambiguous": True}
+    target_dev = dev_res.get("device")
     if not target_dev:
-        return {"success": False, "error": f"No trusted {target_platform} device found."}
+        return {"success": False, "error": dev_res.get("message") or f"No trusted {target_platform} device found."}
 
     cmd_id = f"cmd_ai_{int(time.time() * 1000)}"
     cmd_data = {
@@ -479,9 +485,12 @@ async def handle_open_url(user_id: int, args: dict, ctx: dict) -> dict:
     if not trusted:
         return {"success": False, "error": "No trusted devices paired."}
 
-    target_dev = _resolve_target_device(trusted, target_platform, relay, user_id)
+    dev_res = _resolve_target_device(trusted, target_platform, relay, user_id)
+    if dev_res["status"] == "ambiguous":
+        return {"success": False, "needs_user_confirmation": False, "message": dev_res["message"], "ambiguous": True}
+    target_dev = dev_res.get("device")
     if not target_dev:
-        return {"success": False, "error": f"No trusted {target_platform} device found."}
+        return {"success": False, "error": dev_res.get("message") or f"No trusted {target_platform} device found."}
 
     is_online = relay.is_device_connected(user_id, target_dev["device_id"])
     cmd_id = f"cmd_app_{int(time.time() * 1000)}"
@@ -509,30 +518,304 @@ async def handle_open_url(user_id: int, args: dict, ctx: dict) -> dict:
 _PHONE_PLATFORMS = ("android", "mobile", "ios")
 _LAPTOP_PLATFORMS = ("windows", "desktop", "laptop")
 
-def _resolve_target_device(trusted: list, target_hint: str, relay, user_id: int) -> Optional[dict]:
-    """Resolves the best matching trusted device from a platform hint."""
+def _resolve_target_device(trusted: list, target_hint: str, relay, user_id: int) -> dict:
+    """
+    Resolves the best matching trusted device from a platform or name hint.
+    Detects ambiguity (e.g. user has 2 phones and says 'my phone') and prompts for clarification.
+    Returns: {"status": "ok"|"ambiguous"|"none"|"not_found", "device": dict|None, "message": str|None}
+    """
     if not trusted:
-        return None
+        return {"status": "none", "device": None, "message": "No companion devices currently connected."}
 
-    want_phone = any(k in target_hint for k in ("phone", "mobile", "android", "cell"))
-    want_laptop = any(k in target_hint for k in ("laptop", "pc", "desktop", "windows", "computer"))
+    req = (target_hint or "").strip().lower()
 
+    if not req or req in ("default", "any", "auto"):
+        if len(trusted) == 1:
+            return {"status": "ok", "device": trusted[0]}
+        # Prefer online desktop, then online phone
+        for d in trusted:
+            if relay and relay.is_device_connected(user_id, d.get("device_id")):
+                return {"status": "ok", "device": d}
+        return {"status": "ok", "device": trusted[0]}
+
+    # Direct match by name or id
+    for d in trusted:
+        if d.get("device_id", "").lower() == req or d.get("name", "").lower() == req:
+            return {"status": "ok", "device": d}
+
+    want_phone = any(k in req for k in ("phone", "mobile", "android", "cell", "second phone"))
+    want_laptop = any(k in req for k in ("laptop", "pc", "desktop", "windows", "computer", "my laptop"))
+
+    matched = []
     if want_laptop:
-        for d in trusted:
-            if d.get("platform", "").lower() in _LAPTOP_PLATFORMS:
-                return d
+        matched = [d for d in trusted if d.get("platform", "").lower() in _LAPTOP_PLATFORMS]
     elif want_phone:
-        for d in trusted:
-            if d.get("platform", "").lower() in _PHONE_PLATFORMS:
-                return d
+        matched = [d for d in trusted if d.get("platform", "").lower() in _PHONE_PLATFORMS]
+    else:
+        matched = [d for d in trusted if req in d.get("name", "").lower()]
 
-    # Default: last device (usually phone if >1 device)
-    return trusted[-1] if len(trusted) > 1 else trusted[0]
+    if len(matched) == 1:
+        return {"status": "ok", "device": matched[0]}
+    elif len(matched) > 1:
+        names = [f"'{d.get('name', 'Device')}'" for d in matched]
+        return {
+            "status": "ambiguous",
+            "device": None,
+            "candidates": matched,
+            "message": f"Which device would you like to use? I see {', '.join(names)} connected."
+        }
+
+    return {"status": "not_found", "device": None, "message": f"Could not find companion device matching '{target_hint}'."}
+
 
 
 # ============================================================
 #  JSON SCHEMAS FOR EACH TOOL
 # ============================================================
+
+
+# --------------- Step C2 Laptop Tools Schemas & Handlers ---------------
+
+ALLOWED_KEY_COMBINATIONS = {
+    "enter", "return", "tab", "esc", "escape", "space", "backspace", "delete",
+    "up", "down", "left", "right", "pageup", "pagedown", "home", "end",
+    "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
+    "ctrl+c", "ctrl+v", "ctrl+z", "ctrl+a", "ctrl+s", "ctrl+f", "ctrl+w",
+    "alt+f4", "alt+tab"
+}
+
+def validate_safe_typing_text(text: str) -> tuple[bool, str]:
+    """Validates that typing text does not contain passwords, OTPs, or payment commands."""
+    if not text:
+        return False, "Text to type cannot be empty."
+
+    lower = text.lower()
+    # Password detection
+    if re.search(r"(?:password|passwd|passcode|secret)\s*[:=]\s*\S+", text, re.IGNORECASE) or \
+       re.search(r"\b(?:my password is|my secret is)\b", lower):
+        return False, "Typing passwords or secrets is strictly blocked for security."
+
+    # OTP detection (4-8 digits accompanied by otp/code/verification/pin)
+    if re.search(r"\b(?:otp|verification code|one-time password|auth code|pin)\b", lower) or \
+       (re.search(r"\b\d{4,8}\b", text) and any(w in lower for w in ("code", "otp", "pin", "verify", "verification"))):
+        return False, "Typing OTP codes or authentication pins is strictly blocked for security."
+
+    # Credit card / Payment detection
+    if re.search(r"\b(?:\d[ -]*?){13,19}\b", text) and any(w in lower for w in ("card", "visa", "mastercard", "cvv", "cvc", "expir")):
+        return False, "Typing credit card or payment credentials is strictly blocked for security."
+
+    if any(k in lower for k in ("pay $", "make payment", "send money", "checkout now", "wire transfer", "bank transfer")):
+        return False, "Automated payments are strictly blocked for security."
+
+    return True, ""
+
+
+async def handle_find_installed_app(user_id: int, args: dict, ctx: dict) -> dict:
+    """Finds installed applications on the user's laptop using pre-indexed search."""
+    query = sanitize_text_arg(args.get("query", ""), 80).lower()
+    db = ctx["db"]
+    relay = ctx["relay_manager"]
+
+    devs = db.get_user_devices(user_id) if db else []
+    trusted = [d for d in devs if d.get("status") == "trusted"]
+    target_res = _resolve_target_device(trusted, args.get("target_device", "laptop"), relay, user_id)
+
+    if target_res["status"] == "ambiguous":
+        return {"success": False, "message": target_res["message"], "ambiguous": True}
+
+    # Known standard apps fallback
+    known_apps = [
+        "whatsapp", "spotify", "chrome", "google chrome", "notepad", "calculator", "calc",
+        "explorer", "vscode", "code", "terminal", "claude", "chatgpt", "edge"
+    ]
+    matches = [a for a in known_apps if query in a]
+
+    return {
+        "success": True,
+        "query": query,
+        "matches": matches,
+        "target_device": target_res.get("device", {}).get("name", "laptop"),
+        "message": f"Found {len(matches)} installed apps matching '{query}'." if matches else f"No installed app found matching '{query}'."
+    }
+
+
+async def handle_open_app(user_id: int, args: dict, ctx: dict) -> dict:
+    """
+    Rule for 'open <app>': if the desktop app is installed, open it;
+    otherwise open the website in the preferred browser.
+    """
+    app_name = sanitize_text_arg(args.get("name", ""), 80)
+    explicit_browser = args.get("browser")
+    target_hint = args.get("target_device", "laptop")
+
+    db = ctx["db"]
+    relay = ctx["relay_manager"]
+
+    pref_browser = db.get_setting(user_id, "preferred_browser", "chrome") if db else "chrome"
+    browser = explicit_browser or pref_browser
+
+    devs = db.get_user_devices(user_id) if db else []
+    trusted = [d for d in devs if d.get("status") == "trusted"]
+    target_res = _resolve_target_device(trusted, target_hint, relay, user_id)
+
+    if target_res["status"] == "ambiguous":
+        return {"success": False, "needs_user_confirmation": False, "message": target_res["message"], "ambiguous": True}
+
+    target_dev = target_res.get("device")
+    if not target_dev:
+        return {"success": False, "error": target_res.get("message") or "No companion device available."}
+
+    # Check confirmation need: level 2
+    cmd_id = f"cmd_app_{int(time.time() * 1000)}"
+    if relay:
+        await relay.relay_command(user_id, {
+            "id": cmd_id,
+            "sender_device": trusted[0]["device_id"] if trusted else "server",
+            "target_device": target_dev["device_id"],
+            "type": "open_app",
+            "payload": {"app": app_name, "browser": browser, "preferred_browser": pref_browser},
+            "created_at": time.time(),
+            "expiry": 86400,
+        })
+
+    return {
+        "success": True,
+        "app": app_name,
+        "browser": browser,
+        "target_device": target_dev.get("name"),
+        "message": f"Opened {app_name} on {target_dev.get('name')} (using {browser}).",
+    }
+
+
+async def handle_type_text(user_id: int, args: dict, ctx: dict) -> dict:
+    """Types text safely into active window. Strictly prohibits passwords, OTPs, or payments."""
+    text = args.get("text", "")
+    press_enter = bool(args.get("press_enter", False))
+    target_hint = args.get("target_device", "laptop")
+
+    is_safe, error_msg = validate_safe_typing_text(text)
+    if not is_safe:
+        return {"success": False, "error": error_msg}
+
+    db = ctx["db"]
+    relay = ctx["relay_manager"]
+
+    devs = db.get_user_devices(user_id) if db else []
+    trusted = [d for d in devs if d.get("status") == "trusted"]
+    target_res = _resolve_target_device(trusted, target_hint, relay, user_id)
+
+    if target_res["status"] == "ambiguous":
+        return {"success": False, "needs_user_confirmation": False, "message": target_res["message"], "ambiguous": True}
+
+    target_dev = target_res.get("device")
+    if not target_dev:
+        return {"success": False, "error": target_res.get("message") or "No companion device available."}
+
+    cmd_id = f"cmd_type_{int(time.time() * 1000)}"
+    if relay:
+        await relay.relay_command(user_id, {
+            "id": cmd_id,
+            "sender_device": trusted[0]["device_id"] if trusted else "server",
+            "target_device": target_dev["device_id"],
+            "type": "type_input",
+            "payload": {"text": text, "press_enter": press_enter},
+            "created_at": time.time(),
+            "expiry": 86400,
+        })
+
+    return {
+        "success": True,
+        "target_device": target_dev.get("name"),
+        "text": text,
+        "press_enter": press_enter,
+        "needs_user_confirmation": True,
+        "message": f"Typed text into active window on {target_dev.get('name')}.",
+    }
+
+
+async def handle_press_keys(user_id: int, args: dict, ctx: dict) -> dict:
+    """Presses allowlisted keys safely."""
+    keys = args.get("keys", "").strip().lower()
+    target_hint = args.get("target_device", "laptop")
+
+    if keys not in ALLOWED_KEY_COMBINATIONS:
+        return {"success": False, "error": f"Key combination '{keys}' is not allowlisted."}
+
+    db = ctx["db"]
+    relay = ctx["relay_manager"]
+
+    devs = db.get_user_devices(user_id) if db else []
+    trusted = [d for d in devs if d.get("status") == "trusted"]
+    target_res = _resolve_target_device(trusted, target_hint, relay, user_id)
+
+    if target_res["status"] == "ambiguous":
+        return {"success": False, "needs_user_confirmation": False, "message": target_res["message"], "ambiguous": True}
+
+    target_dev = target_res.get("device")
+    if not target_dev:
+        return {"success": False, "error": target_res.get("message") or "No companion device available."}
+
+    cmd_id = f"cmd_keys_{int(time.time() * 1000)}"
+    if relay:
+        await relay.relay_command(user_id, {
+            "id": cmd_id,
+            "sender_device": trusted[0]["device_id"] if trusted else "server",
+            "target_device": target_dev["device_id"],
+            "type": "press_keys",
+            "payload": {"keys": keys},
+            "created_at": time.time(),
+            "expiry": 86400,
+        })
+
+    return {
+        "success": True,
+        "keys": keys,
+        "target_device": target_dev.get("name"),
+        "needs_user_confirmation": True,
+        "message": f"Pressed key '{keys}' on {target_dev.get('name')}.",
+    }
+
+_SCHEMA_FIND_INSTALLED_APP = {
+    "type": "object",
+    "properties": {
+        "query": {"type": "string", "description": "The application name or keyword to search for", "minLength": 1, "maxLength": 80},
+        "target_device": {"type": "string", "description": "Target device name or hint (e.g. 'my laptop')", "maxLength": 50, "default": "laptop"},
+    },
+    "required": ["query"],
+    "additionalProperties": False,
+}
+
+_SCHEMA_OPEN_APP = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string", "description": "Application name to open (e.g. 'whatsapp', 'spotify', 'claude', 'notepad')", "minLength": 1, "maxLength": 80},
+        "browser": {"type": "string", "description": "Preferred or requested browser: 'default', 'chrome', 'edge', or 'firefox'", "enum": ["default", "chrome", "edge", "firefox"]},
+        "target_device": {"type": "string", "description": "Target device name or hint (e.g. 'my laptop', 'second phone')", "maxLength": 50, "default": "laptop"},
+    },
+    "required": ["name"],
+    "additionalProperties": False,
+}
+
+_SCHEMA_TYPE_TEXT = {
+    "type": "object",
+    "properties": {
+        "text": {"type": "string", "description": "Text to type into focused window. Passwords, OTP codes, and payment credentials are strictly blocked.", "minLength": 1, "maxLength": 1000},
+        "press_enter": {"type": "boolean", "description": "Whether to press Enter key after typing", "default": False},
+        "target_device": {"type": "string", "description": "Target laptop name or hint", "maxLength": 50, "default": "laptop"},
+    },
+    "required": ["text"],
+    "additionalProperties": False,
+}
+
+_SCHEMA_PRESS_KEYS = {
+    "type": "object",
+    "properties": {
+        "keys": {"type": "string", "description": "Allowlisted key combination (e.g. 'enter', 'tab', 'esc', 'ctrl+c', 'ctrl+v', 'alt+tab', 'f5')", "maxLength": 30},
+        "target_device": {"type": "string", "description": "Target laptop name or hint", "maxLength": 50, "default": "laptop"},
+    },
+    "required": ["keys"],
+    "additionalProperties": False,
+}
 
 _SCHEMA_CREATE_TASK = {
     "type": "object",
@@ -628,6 +911,7 @@ _SCHEMA_OPEN_URL = {
     "type": "object",
     "properties": {
         "url": {"type": "string", "description": "The URL to open", "maxLength": 2000},
+        "browser": {"type": "string", "description": "Browser to use: 'default', 'chrome', 'edge', or 'firefox'", "enum": ["default", "chrome", "edge", "firefox"], "default": "default"},
         "target_device": {"type": "string", "description": "Where to open: 'laptop' or 'phone'", "maxLength": 50, "default": "laptop"},
     },
     "required": ["url"],
@@ -736,6 +1020,42 @@ def build_default_registry() -> ToolRegistry:
         risk_level=2,
         handler=handle_open_url,
         confirmation_template="Open {url} on {target_device}?",
+    ))
+
+
+    registry.register(Tool(
+        name="find_installed_app",
+        description="Search whether an application is installed on the user's laptop. Use when they ask if an app is installed or to locate an app.",
+        parameters=_SCHEMA_FIND_INSTALLED_APP,
+        risk_level=0,
+        handler=handle_find_installed_app,
+    ))
+
+    registry.register(Tool(
+        name="open_app",
+        description="Open an application on the user's laptop or phone. If installed, opens the desktop app; otherwise opens the website in the preferred browser.",
+        parameters=_SCHEMA_OPEN_APP,
+        risk_level=2,
+        handler=handle_open_app,
+        confirmation_template="Open {name} on {target_device}?",
+    ))
+
+    registry.register(Tool(
+        name="type_text",
+        description="Type text into the focused window on the user's laptop. Enforces strict safety: never types passwords, OTP codes, credit cards, or payment details.",
+        parameters=_SCHEMA_TYPE_TEXT,
+        risk_level=2,
+        handler=handle_type_text,
+        confirmation_template="Type into active window on {target_device}: '{text}'?",
+    ))
+
+    registry.register(Tool(
+        name="press_keys",
+        description="Press allowlisted keyboard keys or shortcuts (enter, tab, esc, ctrl+c, ctrl+v, alt+tab, etc.) on the user's laptop.",
+        parameters=_SCHEMA_PRESS_KEYS,
+        risk_level=2,
+        handler=handle_press_keys,
+        confirmation_template="Press '{keys}' on {target_device}?",
     ))
 
     return registry

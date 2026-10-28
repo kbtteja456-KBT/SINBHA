@@ -123,6 +123,36 @@ function validateTypeInputPayload(payload) {
     return { valid: false, error: 'Input text exceeds 10,000 characters' };
   }
 
+  // Security Invariants: Never type passwords, OTP codes, credit cards, or make payments
+  const lowerText = text.toLowerCase();
+  if (
+    /password\s*[:=]\s*\S+/i.test(text) ||
+    /secret\s*[:=]\s*\S+/i.test(text) ||
+    /\b(?:my\s+password\s+is|passcode\s*[:=])\b/i.test(text)
+  ) {
+    return { valid: false, error: 'Typing passwords or secrets is strictly prohibited' };
+  }
+
+  if (
+    /\b(?:otp|one-time\s*password|verification\s*code|auth\s*code)\b/i.test(lowerText) ||
+    (/\b\d{4,8}\b/.test(text) && /\b(?:code|otp|pin|verify)\b/i.test(lowerText))
+  ) {
+    return { valid: false, error: 'Typing OTP codes or two-factor tokens is strictly prohibited' };
+  }
+
+  if (
+    /\b(?:\d[ -]*?){13,19}\b/.test(text) &&
+    /\b(?:card|visa|mastercard|amex|cvv|cvc|expir)\b/i.test(lowerText)
+  ) {
+    return { valid: false, error: 'Typing credit card or payment details is strictly prohibited' };
+  }
+
+  if (
+    /\b(?:make\s+payment|send\s+money|pay\s+\$|checkout\s+now|wire\s+transfer)\b/i.test(lowerText)
+  ) {
+    return { valid: false, error: 'Making payments is strictly prohibited' };
+  }
+
   return { valid: true, text, pressEnter };
 }
 
@@ -360,9 +390,264 @@ async function safeGetDesktopBattery() {
   });
 }
 
+
+// ========================================================
+// Step C2: Laptop Tools (App Index, Browsers, Keys, Tracking)
+// ========================================================
+
+const ALLOWED_BROWSERS = new Set(['default', 'chrome', 'edge', 'firefox']);
+
+const ALLOWED_KEY_COMBINATIONS = new Set([
+  'enter', 'return', 'tab', 'esc', 'escape', 'space', 'backspace', 'delete',
+  'up', 'down', 'left', 'right', 'pageup', 'pagedown', 'home', 'end',
+  'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f10', 'f11', 'f12',
+  'ctrl+c', 'ctrl+v', 'ctrl+z', 'ctrl+a', 'ctrl+s', 'ctrl+f', 'ctrl+w',
+  'alt+f4', 'alt+tab'
+]);
+
+const KEY_TO_SENDKEYS = {
+  'enter': '~',
+  'return': '~',
+  'tab': '{TAB}',
+  'esc': '{ESC}',
+  'escape': '{ESC}',
+  'space': ' ',
+  'backspace': '{BS}',
+  'delete': '{DEL}',
+  'up': '{UP}',
+  'down': '{DOWN}',
+  'left': '{LEFT}',
+  'right': '{RIGHT}',
+  'pageup': '{PGUP}',
+  'pagedown': '{PGDN}',
+  'home': '{HOME}',
+  'end': '{END}',
+  'f1': '{F1}', 'f2': '{F2}', 'f3': '{F3}', 'f4': '{F4}', 'f5': '{F5}', 'f6': '{F6}',
+  'f7': '{F7}', 'f8': '{F8}', 'f9': '{F9}', 'f10': '{F10}', 'f11': '{F11}', 'f12': '{F12}',
+  'ctrl+c': '^c',
+  'ctrl+v': '^v',
+  'ctrl+z': '^z',
+  'ctrl+a': '^a',
+  'ctrl+s': '^s',
+  'ctrl+f': '^f',
+  'ctrl+w': '^w',
+  'alt+f4': '%{F4}',
+  'alt+tab': '%{TAB}'
+};
+
+let installedAppsCache = null;
+let lastIndexTime = 0;
+const INDEX_CACHE_TTL_MS = 3600000; // 1 hour
+
+/**
+ * Builds an index of installed applications using a fixed safe script (no user text in shell).
+ */
+function buildInstalledAppsIndex() {
+  const apps = new Map();
+
+  // 1. Well-known allowlisted apps
+  for (const [name, target] of Object.entries(ALLOWED_APP_TARGETS)) {
+    apps.set(name, {
+      name,
+      displayName: name.charAt(0).toUpperCase() + name.slice(1),
+      type: target.type,
+      target: target.target || target.binary || target.app
+    });
+  }
+
+  // 2. Scan Windows Start Menu folders (fixed paths, zero user text in shell commands)
+  const userStartMenu = path.join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Start Menu', 'Programs');
+  const allStartMenu = path.join(process.env.PROGRAMDATA || 'C:\\ProgramData', 'Microsoft', 'Windows', 'Start Menu', 'Programs');
+
+  const scanDir = (dir) => {
+    if (!fs.existsSync(dir)) return;
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true, recursive: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory() && entry.name.toLowerCase().endsWith('.lnk')) {
+          const appName = entry.name.slice(0, -4).trim();
+          const cleanKey = appName.toLowerCase();
+          const fullPath = path.join(entry.parentPath || dir, entry.name);
+          if (!apps.has(cleanKey)) {
+            apps.set(cleanKey, {
+              name: cleanKey,
+              displayName: appName,
+              type: 'start_menu_shortcut',
+              path: fullPath
+            });
+          }
+        }
+      }
+    } catch (e) {}
+  };
+
+  scanDir(userStartMenu);
+  scanDir(allStartMenu);
+
+  installedAppsCache = Array.from(apps.values());
+  lastIndexTime = Date.now();
+  return installedAppsCache;
+}
+
+/**
+ * Searches the pre-built index of installed applications (in-memory matching, no shell execution).
+ */
+function findInstalledApp(rawQuery) {
+  const vQuery = validateAppTarget(rawQuery);
+  if (!vQuery.valid) {
+    return { success: false, error: vQuery.error, matches: [] };
+  }
+  const query = vQuery.app;
+
+  if (!installedAppsCache || (Date.now() - lastIndexTime > INDEX_CACHE_TTL_MS)) {
+    buildInstalledAppsIndex();
+  }
+
+  const exact = [];
+  const prefix = [];
+  const contains = [];
+
+  for (const app of installedAppsCache) {
+    const name = app.name;
+    if (name === query) {
+      exact.push(app);
+    } else if (name.startsWith(query)) {
+      prefix.push(app);
+    } else if (name.includes(query)) {
+      contains.push(app);
+    }
+  }
+
+  const matches = [...exact, ...prefix, ...contains].slice(0, 10);
+  return {
+    success: true,
+    query,
+    count: matches.length,
+    matches: matches.map(m => ({ name: m.name, displayName: m.displayName, type: m.type }))
+  };
+}
+
+/**
+ * Opens a URL in a specific browser (default, chrome, edge, firefox).
+ * Enforces argument arrays with no shell execution.
+ */
+async function openUrlWithBrowser(rawUrl, rawBrowser = 'default') {
+  const vUrl = validateUrl(rawUrl);
+  if (!vUrl.valid) return { success: false, error: vUrl.error };
+  const url = vUrl.url;
+
+  const browser = (rawBrowser || 'default').toLowerCase().trim();
+  if (!ALLOWED_BROWSERS.has(browser)) {
+    return { success: false, error: `Browser '${browser}' is not supported. Use default, chrome, edge, or firefox.` };
+  }
+
+  if (browser === 'default') {
+    await shell.openExternal(url);
+    return { success: true, url, browser: 'default' };
+  }
+
+  const browserBinaries = {
+    chrome: 'chrome.exe',
+    edge: 'msedge.exe',
+    firefox: 'firefox.exe'
+  };
+
+  const binary = browserBinaries[browser];
+  return new Promise((resolve) => {
+    const child = spawn(binary, [url], { shell: false, detached: true, stdio: 'ignore' });
+    child.on('error', async () => {
+      await shell.openExternal(url);
+      resolve({ success: true, url, browser: 'default', fallback: true });
+    });
+    child.unref();
+    resolve({ success: true, url, browser });
+  });
+}
+
+/**
+ * Rule: if the desktop app is installed, open it; otherwise open the website in preferred browser.
+ */
+async function openAppWithFallback(appName, preferredBrowser = 'chrome') {
+  const vApp = validateAppTarget(appName);
+  if (!vApp.valid) return { success: false, error: vApp.error };
+  const target = vApp.app;
+
+  // 1. Try launching installed app
+  const launchRes = await safeLaunchDesktopApp(target);
+  if (launchRes && launchRes.success) {
+    return { success: true, method: 'installed_app', app: target, detail: launchRes };
+  }
+
+  // 2. Not installed: fallback to website in preferred browser
+  const webFallbacks = {
+    'claude': 'https://claude.ai',
+    'chatgpt': 'https://chatgpt.com',
+    'whatsapp': 'https://web.whatsapp.com',
+    'spotify': 'https://open.spotify.com',
+    'youtube': 'https://youtube.com',
+    'instagram': 'https://instagram.com',
+    'twitter': 'https://x.com',
+    'github': 'https://github.com',
+    'figma': 'https://figma.com',
+    'slack': 'https://slack.com'
+  };
+
+  const fallbackUrl = webFallbacks[target] || `https://www.google.com/search?q=${encodeURIComponent(target)}`;
+  const browserRes = await openUrlWithBrowser(fallbackUrl, preferredBrowser);
+  return {
+    success: true,
+    method: 'website_fallback',
+    app: target,
+    url: fallbackUrl,
+    browser: preferredBrowser,
+    detail: browserRes
+  };
+}
+
+/**
+ * Simulates allowlisted key presses safely via WScript.Shell SendKeys.
+ */
+async function safePressKeys(keys) {
+  if (typeof keys !== 'string' || !keys.trim()) {
+    return { success: false, error: 'Keys must be a non-empty string' };
+  }
+
+  const cleanKey = keys.toLowerCase().trim();
+  if (!ALLOWED_KEY_COMBINATIONS.has(cleanKey)) {
+    return {
+      success: false,
+      error: `Key combination '${keys}' is not allowlisted.`
+    };
+  }
+
+  const sendKeysToken = KEY_TO_SENDKEYS[cleanKey];
+  if (!sendKeysToken) {
+    return { success: false, error: `No SendKeys mapping for '${cleanKey}'` };
+  }
+
+  const psScript = `$ws = New-Object -ComObject WScript.Shell; Start-Sleep -Milliseconds 150; $ws.SendKeys('${sendKeysToken}')`;
+
+  return new Promise((resolve) => {
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', psScript],
+      { shell: false, windowsHide: true },
+      (err) => {
+        if (err) {
+          resolve({ success: false, error: err.message });
+        } else {
+          resolve({ success: true, key: cleanKey });
+        }
+      }
+    );
+  });
+}
+
 module.exports = {
   FORBIDDEN_SHELL_CHARS_REGEX,
   ALLOWED_APP_TARGETS,
+  ALLOWED_BROWSERS,
+  ALLOWED_KEY_COMBINATIONS,
   validateUrl,
   validateSearchQuery,
   validateAppTarget,
@@ -370,5 +655,10 @@ module.exports = {
   safeLaunchDesktopApp,
   safeTypeInput,
   safeLockWorkstation,
-  safeGetDesktopBattery
+  safeGetDesktopBattery,
+  buildInstalledAppsIndex,
+  findInstalledApp,
+  openUrlWithBrowser,
+  openAppWithFallback,
+  safePressKeys
 };

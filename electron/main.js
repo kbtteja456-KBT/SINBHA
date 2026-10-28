@@ -12,7 +12,11 @@ const {
   safeLaunchDesktopApp,
   safeTypeInput,
   safeLockWorkstation,
-  safeGetDesktopBattery
+  safeGetDesktopBattery,
+  findInstalledApp,
+  openUrlWithBrowser,
+  openAppWithFallback,
+  safePressKeys
 } = require('./command_security');
 const config = require('./config');
 
@@ -669,6 +673,27 @@ function setupIpcHandlers() {
 
   ipcMain.handle('get-desktop-battery', async () => {
     return safeGetDesktopBattery();
+  });
+
+  // Step C2: Laptop Tools IPC Handlers
+  ipcMain.handle('find-installed-app', async (_event, query) => {
+    return findInstalledApp(query);
+  });
+
+  ipcMain.handle('press-keys', async (_event, keys) => {
+    return safePressKeys(keys);
+  });
+
+  ipcMain.handle('open-url-with-browser', async (_event, payload) => {
+    const url = typeof payload === 'string' ? payload : (payload && payload.url);
+    const browser = typeof payload === 'object' && payload !== null ? payload.browser : 'default';
+    return openUrlWithBrowser(url, browser);
+  });
+
+  ipcMain.handle('open-app-with-fallback', async (_event, payload) => {
+    const appName = typeof payload === 'string' ? payload : (payload && payload.app);
+    const preferredBrowser = typeof payload === 'object' && payload !== null ? (payload.preferredBrowser || 'chrome') : 'chrome';
+    return openAppWithFallback(appName, preferredBrowser);
   });
 }
 
