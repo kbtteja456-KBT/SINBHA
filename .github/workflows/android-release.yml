@@ -71,17 +71,21 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           cd android
-          ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee ../gradle_build.log || {
-            echo "::error::Android Release Build Failed!"
+          ./gradlew assembleRelease --no-daemon --stacktrace > ../gradle_build.log 2>&1 || {
+            BUILD_STATUS=$?
+            echo "::error::Android Release Gradle Build Failed with exit code $BUILD_STATUS!"
             echo "## ❌ Android Gradle Release Build Failed" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             tail -n 120 ../gradle_build.log >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
-            tail -n 25 ../gradle_build.log | while IFS= read -r line; do
+            tail -n 35 ../gradle_build.log | while IFS= read -r line; do
               echo "::error::$line"
             done
-            exit 1
+            cat ../gradle_build.log
+            exit $BUILD_STATUS
           }
+          echo "Gradle assembleRelease completed successfully."
+          cat ../gradle_build.log
 
       - name: Shred and Remove Keystore File
         if: always()
@@ -89,18 +93,26 @@ jobs:
           rm -f android/app/release.keystore
           echo "Keystore deleted from build environment."
 
+      - name: Upload Build Log on Failure
+        if: failure()
+        uses: actions/upload-artifact@v4.6.0
+        with:
+          name: gradle-build-log
+          path: gradle_build.log
+          retention-days: 7
+
       - name: Prepare Release Artifacts and Checksum
         id: checksum
         run: |
-          echo "Scanning build outputs for APK..."
-          find android/app/build/outputs -type f || true
+          echo "Scanning entire android workspace for generated APK files..."
+          find android/ -name "*.apk" -type f || true
           
-          APK_FILE=$(find android/app/build/outputs/apk -name "*.apk" | grep -v "androidTest" | head -n 1)
+          APK_FILE=$(find android/ -name "*.apk" -type f | grep -v "androidTest" | head -n 1)
           if [ -z "$APK_FILE" ]; then
-            echo "::error::No APK file generated in android/app/build/outputs/apk!"
+            echo "::error::No APK file generated anywhere in android workspace!"
             exit 1
           fi
-          echo "Found APK file: $APK_FILE"
+          echo "Found APK file at: $APK_FILE"
           cp "$APK_FILE" SINBHA.apk
           
           # Generate SHA-256 checksum
