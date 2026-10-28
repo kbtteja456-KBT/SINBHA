@@ -1342,7 +1342,7 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
                 "notes": notes
             }
 
-    db.save_message(user_id, "assistant", ai_reply)
+    db.save_message(user_id, "assistant", ai_reply, thread_id=thread_id)
 
     # 9. Background fact extraction (suppressed on untrusted external links)
     new_facts_saved = []

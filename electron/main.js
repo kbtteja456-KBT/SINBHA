@@ -67,8 +67,11 @@ function createMainWindow() {
   });
 
   // Load the hosted cloud backend without stale cache
-  mainWindow.webContents.session.clearCache().catch(() => {});
-  mainWindow.loadURL(config.BACKEND_URL);
+  mainWindow.webContents.session.clearCache().then(() => {
+    return mainWindow.webContents.session.clearStorageData({ storages: ['cache', 'serviceworkers'] });
+  }).catch(() => {}).finally(() => {
+    mainWindow.loadURL(config.BACKEND_URL);
+  });
 
   // Allow Ctrl+R or F5 to hard-reload ignoring cache
   mainWindow.webContents.on('before-input-event', (_event, input) => {
