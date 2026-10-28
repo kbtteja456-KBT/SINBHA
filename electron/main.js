@@ -66,8 +66,19 @@ function createMainWindow() {
     }
   });
 
-  // Load the hosted cloud backend
+  // Load the hosted cloud backend without stale cache
+  mainWindow.webContents.session.clearCache().catch(() => {});
   mainWindow.loadURL(config.BACKEND_URL);
+
+  // Allow Ctrl+R or F5 to hard-reload ignoring cache
+  mainWindow.webContents.on('before-input-event', (_event, input) => {
+    if ((input.control || input.meta) && input.key.toLowerCase() === 'r') {
+      mainWindow.webContents.reloadIgnoringCache();
+    }
+    if (input.key === 'F5') {
+      mainWindow.webContents.reloadIgnoringCache();
+    }
+  });
 
   // Requirement 1: Reset notification flag as soon as the user logs in again
   session.defaultSession.cookies.on('changed', (_event, cookie, cause, removed) => {

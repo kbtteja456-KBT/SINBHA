@@ -1723,9 +1723,9 @@ async def app_version_check_endpoint():
         except Exception:
             pass
 
-    min_android = os.getenv("MIN_APP_VERSION_ANDROID", "1.0.0")
+    min_android = os.getenv("MIN_APP_VERSION_ANDROID", pkg_version)
     latest_android = os.getenv("LATEST_APP_VERSION_ANDROID", pkg_version)
-    min_desktop = os.getenv("MIN_APP_VERSION_DESKTOP", "1.0.0")
+    min_desktop = os.getenv("MIN_APP_VERSION_DESKTOP", pkg_version)
     latest_desktop = os.getenv("LATEST_APP_VERSION_DESKTOP", pkg_version)
 
     # Safety clamp: min_version must never exceed latest_version
@@ -1737,8 +1737,8 @@ async def app_version_check_endpoint():
         print(f"⚠️ [WARNING] Config error prevented: MIN_APP_VERSION_DESKTOP ({min_desktop}) was higher than LATEST_APP_VERSION_DESKTOP ({latest_desktop}). Clamping to latest to prevent accidental user lockout.")
         min_desktop = latest_desktop
 
-    default_dl_android = "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA.apk"
-    default_dl_desktop = "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA-Setup.exe"
+    default_dl_android = f"https://github.com/kbtteja456-KBT/sinbha-releases/releases/download/android-v{latest_android}/SINBHA.apk"
+    default_dl_desktop = f"https://github.com/kbtteja456-KBT/sinbha-releases/releases/download/windows-v{latest_desktop}/SINBHA-Setup.exe"
     download_android = os.getenv("DOWNLOAD_URL_ANDROID", default_dl_android)
     download_desktop = os.getenv("DOWNLOAD_URL_DESKTOP", default_dl_desktop)
 
