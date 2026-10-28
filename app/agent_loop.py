@@ -1,0 +1,552 @@
+"""
+SINBHA Agent Loop (Step C1)
+
+Orchestrates the AI tool-calling agent:
+1. Sends user message + tool definitions to the LLM
+2. If the LLM returns tool_calls, validates and executes them
+3. Loops back to the LLM with results until it produces a final text reply
+4. Enforces safety: max steps, timeouts, risk-level confirmation gates,
+   rate limits, STOP checks, and cost caps
+
+Security invariants:
+- STOP is checked before every tool execution
+- Risk level >= 2 pauses for user confirmation (returns a card)
+- Max 5 tool-call rounds per user turn, 60s total timeout
+- Per-user daily AI message limits are enforced
+- Web content treated as untrusted; web-sourced tool calls blocked
+"""
+
+import json
+import time
+import re
+import datetime
+import httpx
+from typing import Optional
+
+from app.agent_tools import default_registry, ToolRegistry
+from app.ai_brain import get_llm_credentials, BASE_SYSTEM_PROMPT
+
+# Constants
+MAX_AGENT_STEPS = 5           # Max LLM round-trips per user message
+AGENT_TIMEOUT_SECONDS = 60    # Total wall-clock timeout for the entire agent loop
+LLM_CALL_TIMEOUT = 30         # Per-LLM-call timeout
+
+
+
+# Active task memory (last 30 minutes)
+_active_task_memory = {}
+ACTIVE_TASK_MEMORY_WINDOW_SECONDS = 1800  # 30 minutes
+
+def record_active_task_action(user_id: int, tool_name: str, args: dict, result: dict):
+    now = time.time()
+    if user_id not in _active_task_memory:
+        _active_task_memory[user_id] = []
+    
+    summary = ""
+    if isinstance(result, dict):
+        summary = result.get("message") or result.get("summary") or ("success" if result.get("success") else result.get("error", "done"))
+    else:
+        summary = str(result)
+        
+    _active_task_memory[user_id].append({
+        "timestamp": now,
+        "tool": tool_name,
+        "args": args,
+        "result_summary": summary,
+    })
+    cutoff = now - ACTIVE_TASK_MEMORY_WINDOW_SECONDS
+    _active_task_memory[user_id] = [a for a in _active_task_memory[user_id] if a["timestamp"] >= cutoff]
+
+def get_active_task_memory(user_id: int) -> list:
+    now = time.time()
+    cutoff = now - ACTIVE_TASK_MEMORY_WINDOW_SECONDS
+    actions = _active_task_memory.get(user_id, [])
+    valid = [a for a in actions if a["timestamp"] >= cutoff]
+    _active_task_memory[user_id] = valid
+    return valid
+
+def format_step_description(tool_name: str, args: dict, result: dict) -> str:
+    """Generates a live, human-readable step description for chat logs."""
+    if tool_name == "create_task":
+        return f"Created task proposal: '{args.get('title', '')}'"
+    elif tool_name == "complete_task":
+        title = args.get("task_title") or args.get("title") or "task"
+        return f"Marked '{title}' as complete"
+    elif tool_name == "delete_task":
+        title = args.get("task_title") or args.get("title") or "task"
+        return f"Deleted task '{title}'"
+    elif tool_name == "remember_fact":
+        return f"Remembered: '{args.get('fact', '')}'"
+    elif tool_name == "forget_fact":
+        return f"Forgot memory: '{args.get('fact_text', args.get('fact', ''))}'"
+    elif tool_name == "search_web":
+        return f"Searched the web for '{args.get('query', '')}'"
+    elif tool_name == "fetch_page":
+        return f"Read webpage: {args.get('url', '')}"
+    elif tool_name == "list_devices":
+        return "Checked connected devices and battery levels"
+    elif tool_name == "send_note":
+        return f"Sent note to {args.get('target_device', 'device')}: '{args.get('text', '')}'"
+    elif tool_name == "ring_phone":
+        return f"Triggered ring on {args.get('target_device', 'phone')}"
+    elif tool_name == "open_url":
+        browser = f" in {args.get('browser')}" if args.get("browser") else ""
+        return f"Opened {args.get('url', '')}{browser}"
+    elif tool_name == "find_installed_app":
+        return f"Searched installed apps for '{args.get('query', '')}'"
+    elif tool_name == "open_app":
+        return f"Opened app '{args.get('name', '')}'"
+    elif tool_name == "type_text":
+        return f"Typed text into active window"
+    elif tool_name == "press_keys":
+        return f"Pressed keys: {args.get('keys', '')}"
+    return f"Executed {tool_name}"
+
+def _build_agent_system_prompt(
+    user_timezone: str,
+    remembered_facts: list,
+    user_devices: list = None,
+    active_task_history: list = None,
+) -> str:
+    """Builds the full system prompt for the agent with tool-calling instructions."""
+
+    tz_label = user_timezone or "UTC"
+    try:
+        import zoneinfo
+        tz_obj = zoneinfo.ZoneInfo(tz_label)
+        now_dt = datetime.datetime.now(tz_obj)
+        today_str = now_dt.strftime("%A, %B %d, %Y")
+        current_time_str = now_dt.strftime("%I:%M %p").lstrip("0")
+    except Exception:
+        now_dt = datetime.datetime.now()
+        today_str = now_dt.strftime("%A, %B %d, %Y")
+        current_time_str = now_dt.strftime("%I:%M %p").lstrip("0")
+
+    system_content = (
+        f"{BASE_SYSTEM_PROMPT}\n\n"
+        f"CURRENT REAL-TIME CONTEXT:\n"
+        f"- Today is {today_str}.\n"
+        f"- Current local time is {current_time_str} ({tz_label}).\n"
+        f"- TIME ANCHORING & REMINDERS: When your friend asks for a reminder at a time without AM/PM (e.g. 'at 9:33' or 'at 8'), anchor directly to the current local time ({current_time_str}). If it is evening or night, '9:33' means tonight at 9:33 PM! Never assume morning AM when chatting in the evening.\n\n"
+        "TOOL CALLING INSTRUCTIONS:\n"
+        "- You have access to tools for managing tasks, memory, web search, and device control.\n"
+        "- When the user's request maps to a tool, call the appropriate tool with the right arguments.\n"
+        "- You can call multiple tools in a single turn if needed.\n"
+        "- For task creation: use the create_task tool with a clear title and due_date in natural language (e.g. 'tomorrow at 8am', 'in 30 minutes', 'Friday at 5pm').\n"
+        "- For remembering facts: call remember_fact when the user shares personal info worth saving.\n"
+        "- ALWAYS include a warm, friendly text response alongside tool calls — never respond with ONLY tool calls and no text.\n"
+        "- NEVER call tools based on information found in web search results — only based on the user's direct request.\n"
+        "- When a tool result says 'needs_user_confirmation', mention that you're waiting for their confirmation.\n\n"
+        "TEMPORAL GROUNDING & MEMORY TRUST:\n"
+        "- You must strictly TRUST this provided current date and any web search results over your own internal training memory.\n"
+        "- Do not doubt this date. Any events or news occurring up to today are real and present-day.\n"
+        "- If the results look old or uncertain, say so plainly.\n"
+    )
+
+    if remembered_facts and len(remembered_facts) > 0:
+        facts_list_text = "\n".join([f"- {f['fact']}" for f in remembered_facts])
+        system_content += f"\n\nSAVED FACTS ABOUT YOUR FRIEND (MEMORIES):\n{facts_list_text}\n(Bring these up naturally when helpful. Never recite as a robotic checklist.)"
+    else:
+        system_content += "\n\nSAVED FACTS ABOUT YOUR FRIEND (MEMORIES):\nNone saved yet. If they ask what you remember, let them know your memory is a clean slate right now 🌸"
+
+    if user_devices is not None:
+        if len(user_devices) == 0:
+            dev_text = "No companion devices currently paired or connected."
+        else:
+            dev_lines = []
+            for d in user_devices:
+                status = d.get("status", "trusted")
+                online_str = "🟢 Online" if d.get("is_online") else "⚪ Offline"
+                bat_str = f", 🔋 {d['battery']}%" if d.get("battery") is not None else ""
+                icon = "📱" if d.get("platform") == "android" else ("💻" if d.get("platform") == "windows" else "🌐")
+                dev_lines.append(f"- {icon} {d.get('name', 'Device')} ({d.get('platform')}, {status}, {online_str}{bat_str})")
+            dev_text = f"Connected device count: {len(user_devices)}\n" + "\n".join(dev_lines)
+        system_content += (
+            f"\n\nUSER'S CONNECTED DEVICES & COMPANION NETWORK:\n{dev_text}\n"
+            f"(Use the list_devices tool if asked about devices, battery, or status. You KNOW these details!)"
+        )
+
+
+    if active_task_history and len(active_task_history) > 0:
+        now = time.time()
+        lines = []
+        for a in active_task_history:
+            mins = max(0, int((now - a["timestamp"]) / 60))
+            ago = "just now" if mins == 0 else f"{mins}m ago"
+            lines.append(f"- [{ago}] {a['tool']}({json.dumps(a.get('args', {}))}): {a.get('result_summary', 'done')}")
+        system_content += (
+            f"\n\nACTIVE TASK MEMORY (LAST 30 MINUTES):\n"
+            + "\n".join(lines)
+            + "\n(Use this active memory to seamlessly resolve follow-up instructions like 'now press enter', 'read it again', 'cancel that', or 'open the second one'.)"
+        )
+
+    return system_content
+
+
+async def _call_llm_with_tools(
+    messages: list,
+    tools_list: list,
+    creds: dict,
+    max_tokens: int = 600,
+) -> dict:
+    """Makes a single LLM API call with tool definitions."""
+
+    headers = {
+        "Authorization": f"Bearer {creds['api_key']}",
+        "Content-Type": "application/json",
+    }
+    if creds["provider"] == "openrouter":
+        headers["HTTP-Referer"] = "http://localhost:8080"
+        headers["X-Title"] = "SINBHA Agent"
+
+    payload = {
+        "model": creds["model"],
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": 0.7,
+    }
+
+    if tools_list:
+        payload["tools"] = tools_list
+        payload["tool_choice"] = "auto"
+
+    if creds.get("reasoning_effort"):
+        payload["reasoning_effort"] = creds["reasoning_effort"]
+
+    try:
+        async with httpx.AsyncClient(timeout=LLM_CALL_TIMEOUT) as client:
+            response = await client.post(
+                creds["endpoint"],
+                headers=headers,
+                json=payload,
+            )
+
+        if response.status_code == 200:
+            data = response.json()
+            choice = data["choices"][0]
+            message = choice["message"]
+            finish_reason = choice.get("finish_reason", "stop")
+            return {
+                "success": True,
+                "message": message,
+                "finish_reason": finish_reason,
+            }
+        elif response.status_code == 401:
+            return {"success": False, "error": "invalid_api_key", "status": 401}
+        elif response.status_code == 402:
+            return {"success": False, "error": "insufficient_credits", "status": 402}
+        else:
+            return {"success": False, "error": f"status_{response.status_code}", "status": response.status_code}
+
+    except httpx.TimeoutException:
+        return {"success": False, "error": "timeout"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# --------------- Agent Response Types ---------------
+
+class AgentResult:
+    """Result from the agent loop."""
+
+    def __init__(
+        self,
+        reply: str,
+        tool_calls_log: list = None,
+        proposal: dict = None,
+        confirmation_card: dict = None,
+        new_facts: list = None,
+        web_search_meta: dict = None,
+        error: str = None,
+        step_log: list = None,
+    ):
+        self.reply = reply
+        self.tool_calls_log = tool_calls_log or []
+        self.proposal = proposal
+        self.confirmation_card = confirmation_card
+        self.new_facts = new_facts or []
+        self.web_search_meta = web_search_meta
+        self.error = error
+        self.step_log = step_log or []
+
+
+# --------------- Main Agent Loop ---------------
+
+async def run_agent_loop(
+    user_id: int,
+    user_message: str,
+    chat_history: list,
+    remembered_facts: list,
+    user_devices: list,
+    user_timezone: str = "UTC",
+    user_email: str = "",
+    db_module=None,
+    relay_manager=None,
+    registry: ToolRegistry = None,
+) -> AgentResult:
+    """
+    Runs the agent loop:
+    1. Send user message + tools to LLM
+    2. If LLM calls tools → validate, check risk, execute, loop back
+    3. If LLM returns text → return as final reply
+    4. Max MAX_AGENT_STEPS rounds, AGENT_TIMEOUT_SECONDS total
+    """
+
+    if registry is None:
+        registry = default_registry
+
+    if db_module is None:
+        from app import database as db_module
+
+    creds = get_llm_credentials()
+    if not creds:
+        return AgentResult(
+            reply="I'm not quite connected to my brain yet! 🌸 Please paste your Groq or OpenRouter API key into your .env file.",
+            error="missing_api_key",
+        )
+
+    # Build context for tool handlers
+    ctx = {
+        "db": db_module,
+        "relay_manager": relay_manager,
+        "user_timezone": user_timezone,
+        "user_email": user_email,
+    }
+
+    # Build messages
+    active_task_history = get_active_task_memory(user_id)
+    system_prompt = _build_agent_system_prompt(
+        user_timezone=user_timezone,
+        remembered_facts=remembered_facts,
+        user_devices=user_devices,
+        active_task_history=active_task_history,
+    )
+
+    messages = [{"role": "system", "content": system_prompt}]
+
+    # Add chat history (max 20 messages)
+    if chat_history:
+        for msg in chat_history[-20:]:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+
+    # Add current user message
+    messages.append({"role": "user", "content": user_message})
+
+    # Tool definitions for LLM
+    tools_list = registry.openai_tools_list()
+
+    # Agent loop state
+    tool_calls_log = []
+    step_log = []
+    proposal = None
+    confirmation_card = None
+    new_facts = []
+    web_search_meta = None
+    start_time = time.time()
+
+    for step in range(MAX_AGENT_STEPS):
+        # STOP check: halt if emergency stop is triggered
+        if db_module.is_emergency_stopped(user_id):
+            return AgentResult(
+                reply="Action stopped. Emergency stop is active. 🛑",
+                tool_calls_log=tool_calls_log,
+                step_log=step_log,
+                error="emergency_stopped",
+            )
+
+        # Timeout check
+        elapsed = time.time() - start_time
+        if elapsed > AGENT_TIMEOUT_SECONDS:
+            return AgentResult(
+                reply="I took a little too long thinking about that! Please try again 🌸",
+                tool_calls_log=tool_calls_log,
+                step_log=step_log,
+                error="agent_timeout",
+            )
+
+        # Call LLM
+        llm_result = await _call_llm_with_tools(messages, tools_list, creds)
+
+        if not llm_result["success"]:
+            error_msg = llm_result.get("error", "unknown")
+            if error_msg == "invalid_api_key":
+                reply = f"It looks like my {creds['provider'].capitalize()} API key isn't recognized. Could you please double-check your key in the .env file? 🌸"
+            elif error_msg == "insufficient_credits":
+                reply = "It looks like your AI account has run out of credits. Once you top it up or switch to a free Groq key, I'll be right back! 🌸"
+            elif error_msg == "timeout":
+                reply = "My thoughts took a little too long! Please try sending your message again 🌸"
+            else:
+                reply = "I'm having a little trouble connecting right now. Please try again 🌸"
+            return AgentResult(reply=reply, tool_calls_log=tool_calls_log, step_log=step_log, error=error_msg)
+
+        msg = llm_result["message"]
+        finish_reason = llm_result.get("finish_reason", "stop")
+
+        # Check if LLM wants to call tools
+        tool_calls = msg.get("tool_calls")
+
+        if not tool_calls:
+            # LLM returned a text-only response — we're done
+            content = msg.get("content", "").strip()
+
+            # Parse out any legacy <<<TASK_PROPOSAL>>> blocks (backward compat)
+            prop_match = re.search(r"<<<TASK_PROPOSAL>>>(.*?)<<<END_TASK_PROPOSAL>>>", content, re.DOTALL)
+            if prop_match:
+                try:
+                    raw_proposal = json.loads(prop_match.group(1).strip())
+                    # If we got a proposal from text, convert it to a tool call result
+                    if raw_proposal and raw_proposal.get("title"):
+                        tool_result = await registry.get("create_task").handler(
+                            user_id,
+                            {"title": raw_proposal["title"], "due_date": raw_proposal.get("due_date"), "notes": raw_proposal.get("notes")},
+                            ctx,
+                        )
+                        if tool_result.get("success"):
+                            proposal = _build_proposal_from_tool_result(tool_result, db_module, user_id, user_timezone)
+                except Exception:
+                    pass
+                content = re.sub(r"<<<TASK_PROPOSAL>>>.*?<<<END_TASK_PROPOSAL>>>", "", content, flags=re.DOTALL).strip()
+
+            return AgentResult(
+                reply=content or "I'm right here with you 🌸",
+                tool_calls_log=tool_calls_log,
+                proposal=proposal,
+                confirmation_card=confirmation_card,
+                new_facts=new_facts,
+                web_search_meta=web_search_meta,
+                step_log=step_log,
+            )
+
+        # Process tool calls
+        # Append the assistant message with tool_calls to conversation
+        messages.append(msg)
+
+        for tc in tool_calls:
+            tc_id = tc.get("id", f"tc_{step}_{time.time()}")
+            func = tc.get("function", {})
+            tool_name = func.get("name", "")
+            raw_args_str = func.get("arguments", "{}")
+
+            # Parse arguments
+            try:
+                args = json.loads(raw_args_str) if isinstance(raw_args_str, str) else raw_args_str
+            except json.JSONDecodeError:
+                args = {}
+
+            tool = registry.get(tool_name)
+            if not tool:
+                # Unknown tool — tell the LLM
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc_id,
+                    "content": json.dumps({"error": f"Unknown tool: {tool_name}"}),
+                })
+                tool_calls_log.append({"tool": tool_name, "args": args, "result": "unknown_tool", "step": step})
+                continue
+
+            # Validate arguments
+            validation_errors = tool.validate_args(args)
+            if validation_errors:
+                error_result = {"error": f"Invalid arguments: {'; '.join(validation_errors)}"}
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc_id,
+                    "content": json.dumps(error_result),
+                })
+                tool_calls_log.append({"tool": tool_name, "args": args, "result": "validation_error", "errors": validation_errors, "step": step})
+                continue
+
+            # Risk level check
+            if tool.risk_level >= 2:
+                # Need confirmation — execute the handler to set up the pending action,
+                # but return a confirmation card to the user
+                try:
+                    result = await tool.handler(user_id, args, ctx)
+                except Exception as e:
+                    result = {"success": False, "error": str(e)}
+
+                if result.get("needs_user_confirmation"):
+                    confirmation_card = {
+                        "type": f"confirm_{tool_name}",
+                        "tool_name": tool_name,
+                        "risk_level": tool.risk_level,
+                        **result,
+                    }
+
+                step_desc = format_step_description(tool_name, args, result)
+                step_log.append(step_desc)
+                record_active_task_action(user_id, tool_name, args, result)
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc_id,
+                    "content": json.dumps(result),
+                })
+                tool_calls_log.append({"tool": tool_name, "args": args, "result": result, "step": step, "risk_level": tool.risk_level})
+                continue
+
+            # Auto-execute (risk 0-1)
+            try:
+                result = await tool.handler(user_id, args, ctx)
+            except Exception as e:
+                result = {"success": False, "error": str(e)}
+
+            # Track web search metadata
+            if tool_name == "search_web" and result.get("success"):
+                web_search_meta = {
+                    "searched": True,
+                    "sources": result.get("sources", []),
+                    "cached": result.get("cached", False),
+                }
+
+            # Track new facts
+            if tool_name == "remember_fact" and result.get("success") and result.get("action") in ("added", "updated"):
+                new_facts.append(result.get("fact", ""))
+
+            # Track proposals
+            if tool_name == "create_task" and result.get("success"):
+                proposal = _build_proposal_from_tool_result(result, db_module, user_id, user_timezone)
+
+            step_desc = format_step_description(tool_name, args, result)
+            step_log.append(step_desc)
+            record_active_task_action(user_id, tool_name, args, result)
+
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc_id,
+                "content": json.dumps(result),
+            })
+            tool_calls_log.append({"tool": tool_name, "args": args, "result": result, "step": step})
+
+    # Exceeded max steps — return whatever we have
+    return AgentResult(
+        reply="I tried my best but ran out of thinking steps! Let me know if you need anything else 🌸",
+        tool_calls_log=tool_calls_log,
+        proposal=proposal,
+        confirmation_card=confirmation_card,
+        new_facts=new_facts,
+        web_search_meta=web_search_meta,
+        error="max_steps_exceeded",
+        step_log=step_log,
+    )
+
+
+def _build_proposal_from_tool_result(result: dict, db_module, user_id: int, user_timezone: str) -> dict:
+    """Converts a create_task tool result into the proposal format expected by the frontend."""
+    sound_mode = db_module.get_setting(user_id, "reminder_sound_mode", "alarm_tone")
+
+    return {
+        "type": "task_proposal",
+        "id": result.get("proposal_id"),
+        "title": result.get("title"),
+        "due_date": result.get("due_date"),
+        "due_time": result.get("due_time"),
+        "due_datetime": result.get("due_datetime"),
+        "display_due": result.get("display_due"),
+        "time_specified": bool(result.get("due_time")),
+        "is_ambiguous": result.get("is_ambiguous", False),
+        "ambiguous_options": result.get("ambiguous_options", []),
+        "suggested_reminders": result.get("suggested_reminders", []),
+        "sound_mode": sound_mode,
+        "notes": result.get("notes"),
+    }

@@ -19,23 +19,9 @@ from fastapi.middleware.cors import CORSMiddleware
 APP_START_TIME = time.time()
 
 from app.ai_brain import (
-    call_sinbha_brain,
-    extract_explicit_facts,
-    detect_fact_correction,
-    is_forget_intent,
-    find_target_fact_to_forget,
-    parse_relative_date,
-    parse_relative_datetime,
-    find_matching_tasks,
-    detect_task_chat_intent,
     get_llm_credentials,
 )
 from app import database as db
-from app.search import (
-    execute_web_search,
-    detect_search_intent,
-    detect_search_intent_smart,
-)
 from app.web_intelligence import (
     agent_instance,
     ResearchSearchRequest,
@@ -628,562 +614,18 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
         else:
             db.clear_pending_action(user_id)
 
-
-    # 4. Check for task completion or deletion intent through chat (Step 6)
-    all_current_tasks = db.get_all_tasks(user_id)
-    task_intent = detect_task_chat_intent(user_msg, all_current_tasks)
-    
-    if task_intent["intent"] == "complete":
-        matched = task_intent["task"]
-        db.set_pending_task_action(user_id, "task_complete", matched["id"], matched["title"])
-        db.save_message(user_id, "user", user_msg)
-        reply = f"Woohoo! That's awesome! 🎉 Should I mark '{matched['title']}' as done?"
-        db.save_message(user_id, "assistant", reply)
-        return JSONResponse({
-            "reply": reply,
-            "proposal": {
-                "type": "task_complete",
-                "task_id": matched["id"],
-                "task_title": matched["title"],
-                "prompt": f"Mark '{matched['title']}' as done?"
-            }
-        })
-    elif task_intent["intent"] == "delete":
-        matched = task_intent["task"]
-        db.set_pending_task_action(user_id, "task_delete", matched["id"], matched["title"])
-        db.save_message(user_id, "user", user_msg)
-        reply = f"Are you sure you want me to remove '{matched['title']}' from your tasks? 🌸"
-        db.save_message(user_id, "assistant", reply)
-        return JSONResponse({
-            "reply": reply,
-            "proposal": {
-                "type": "task_delete",
-                "task_id": matched["id"],
-                "task_title": matched["title"],
-                "prompt": f"Delete '{matched['title']}'?"
-            }
-        })
-    elif task_intent["intent"] == "ambiguous_complete":
-        db.save_message(user_id, "user", user_msg)
-        c_names = ", ".join([f"'{c['title']}'" for c in task_intent["candidates"]])
-        reply = f"I found a few matching tasks: {c_names}. Which one did you finish? 🌸"
-        db.save_message(user_id, "assistant", reply)
-        return JSONResponse({"reply": reply, "proposal": None})
-    elif task_intent["intent"] == "ambiguous_delete":
-        db.save_message(user_id, "user", user_msg)
-        c_names = ", ".join([f"'{c['title']}'" for c in task_intent["candidates"]])
-        reply = f"I found a few matching tasks: {c_names}. Which one would you like to delete? 🌸"
-        db.save_message(user_id, "assistant", reply)
-        return JSONResponse({"reply": reply, "proposal": None})
-
-    # 5. Check for memory forget request ("forget X", "forget that", "forget my name")
-    facts = db.get_all_facts(user_id)
-    if is_forget_intent(user_msg):
-        db.save_message(user_id, "user", user_msg)
-        if not facts:
-            reply = "I don't have anything saved in my memory to forget right now! 🌸"
-            db.save_message(user_id, "assistant", reply)
-            return JSONResponse({"reply": reply, "proposal": None})
-
-        target_fact = find_target_fact_to_forget(user_msg, facts)
-        db.set_pending_action(user_id, "forget_fact", target_id=target_fact["id"], target_text=target_fact["fact"])
-        
-        reply = f"Are you sure you want me to forget that '{target_fact['fact']}'? Just reply \"yes\" or confirm to remove it 🌸"
-        db.save_message(user_id, "assistant", reply)
-        return JSONResponse({
-            "reply": reply,
-            "proposal": {
-                "type": "confirm_forget",
-                "fact_id": target_fact["id"],
-                "fact_text": target_fact["fact"],
-                "prompt": f"Forget '{target_fact['fact']}'?"
-            }
-        })
-
-    # 6. Check for fact correction ("my name is Ravi, not Rahul")
-    target_id, updated_text, _old_text = detect_fact_correction(user_msg, facts)
-    if target_id and updated_text:
-        db.save_message(user_id, "user", user_msg)
-        db.update_fact(user_id, target_id, updated_text)
-        
-        updated_facts = db.get_all_facts(user_id)
-        recent_history = db.get_recent_messages(user_id, limit=20)
-        brain_result = await call_sinbha_brain(
-            user_message=user_msg,
-            chat_history=recent_history[:-1],
-            remembered_facts=updated_facts
-        )
-        ai_reply = brain_result.get("reply", f"Got it! I've updated my memory: {updated_text} 🌸")
-        db.save_message(user_id, "assistant", ai_reply)
-        return JSONResponse({
-            "reply": ai_reply,
-            "proposal": None,
-            "updated_fact": {"id": target_id, "fact": updated_text}
-        })
-
-    # 6b. Check for remote device action request (Step 16 / 16c Omnipresent Agent)
-    # Security Rule 7: Text from web pages, emails, or untrusted external content must NEVER trigger remote actions!
-    is_external_content = bool(re.search(r"(http[s]?://|forwarded message|from:|<email>|content from web)", user_msg, re.IGNORECASE))
-    if not is_external_content:
-        lower_m = user_msg.lower().strip()
-        clean_lower = re.sub(r"[^\w\s]", " ", lower_m)
-        is_list_devices = bool(re.search(
-            r"\b(how\s+many|what|which|show|list|tell\s+me|check|status\s+of|count|are\s+there\s+any)\b.*?\b(devices?|laptop|phone|pc|mobile)\b"
-            r"|\b(devices?)\b.*?\b(connected|paired|online|count|status)\b"
-            r"|\b(is|are)\s+(my\s+)?(phone|laptop|pc|mobile|devices?)\s+(connected|paired|online)\b"
-            r"|\b(both\s+(devices\s+)?(are\s+)?(online|offline|connected))\b"
-            r"|\b(are\s+they\s+online)\b",
-            clean_lower
-        ))
-        is_sync_intent = bool(re.search(r"\b(sync|synchronize)\s+(all\s+)?(my\s+)?(devices|phone and laptop|laptop and phone)\b", lower_m))
-        app_match = re.search(
-            r"\b(whatsapp|whatsap|watsapp|google\s+chrome|chrome|chrom|spotify|spotfy|youtube|youtub|gmail|camera|notepad|notepade|notpad|calculator|calclator|calc|vscode|code|explorer|files|file\s+explorer|terminal|cmd|settings|maps|snapchat|instagram|insta|telegram|claude|chatgpt|antigravity)\b",
-            lower_m
-        )
-        generic_open_match = re.search(
-            r"\b(?:open|launch|start|run|play)\s+(?:the\s+)?([a-zA-Z0-9_\-\.]+)(?:\s+(?:in|on|at)\s+(?:my\s+)?(?:phone|mobile|android|laptop|pc|desktop|windows)|$|\.|\band\b)",
-            lower_m
-        )
-        is_generic_app = False
-        if generic_open_match:
-            cand = generic_open_match.group(1).lower().strip()
-            if cand and cand not in ("task", "tasks", "reminder", "reminders", "drawer", "modal", "tab", "screen", "session", "menu", "chat", "conversation", "note", "notes", "it", "this", "that", "something", "anything"):
-                is_generic_app = True
-
-        is_open_app_intent = bool(
-            re.search(r"\b(open|launch|start|run|play)\b", lower_m) and (app_match or is_generic_app)
-        ) or (
-            bool(re.search(r"\b(on\s+(my\s+)?(phone|mobile|android|laptop|pc|desktop)\s+(open|launch|start|run))\b", lower_m))
-        ) or (
-            app_match and len(lower_m.split()) <= 4 and not bool(re.search(r"\b(how|what|why|is|are|tell|who|can)\b", lower_m))
-        )
-        is_type_intent = bool(
-            re.search(r"^\s*(?:type|write|input)\s+", lower_m) or
-            re.search(r"\b(?:type|write)\s+([\"']?)(.+?)\b(?:\s+(?:and|then)\s+(?:press\s+)?(?:enter|send|return))\b", lower_m) or
-            re.search(r"\b(?:press|hit)\s+enter\b", lower_m)
-        )
-        is_lock_intent = bool(re.search(r"\b(lock|secure)\s+(my\s+)?(laptop|pc|desktop|computer|screen|workstation)\b", lower_m))
-        is_battery_intent = bool(re.search(r"\b(check|what\s+is|show|get)\s+(the\s+)?(battery|battery\s+percentage|battery\s+level|charge)\b|\b(phone|laptop)\s+battery\b", lower_m))
-        is_read_notifs_intent = bool(re.search(r"\b(read|check|show|get|what\s+are)\s+(my\s+)?(phone\s+)?(notifications|messages|notifs|whatsapp\s+messages|emails|mails|sms)\b|\bwhat\s+(messages|emails|notifications)\s+(do\s+i\s+have|came)\b", lower_m))
-        is_ring_intent = bool(re.search(r"\b(ring|find|buzz|ping|alarm)\s+(my\s+)?(phone|device|mobile|laptop|pc)\b", lower_m))
-        is_send_note_intent = bool(re.search(r"\b(send|push)\s+(a\s+)?(note|link|message)\s+to\s+(my\s+)?(phone|device|laptop|other\s+device)\b", lower_m))
-
-        if is_list_devices:
-            devs = db.get_user_devices(user_id)
-            if not devs:
-                reply = "You don't have any devices connected yet! Log into your account on your phone or laptop and they will auto-connect 🌸"
-            else:
-                total_count = len(devs)
-                online_count = sum(1 for d in devs if relay_manager.is_device_connected(user_id, d.get("device_id")))
-                if total_count == 1:
-                    hdr = f"You have **1 companion device** connected to your SINBHA network: 🌸\n"
-                else:
-                    hdr = f"You have **{total_count} companion devices** connected to your SINBHA network: 🌸\n"
-                lines = [hdr]
-                for d in devs:
-                    is_online = relay_manager.is_device_connected(user_id, d.get("device_id"))
-                    online_badge = "🟢 Online" if is_online else "⚪ Offline"
-                    icon = "📱" if d.get("platform") == "android" else ("💻" if d.get("platform") == "windows" else "🌐")
-                    tel = relay_manager.get_device_telemetry(user_id, d.get("device_id"))
-                    bat_str = f" • 🔋 {tel['battery']}%" if (tel and tel.get("battery") is not None) else ""
-                    lines.append(f"- {icon} **{d.get('name')}** ({online_badge}{bat_str}) [{d.get('status').capitalize()}]")
-                reply = "\n".join(lines)
-            db.save_message(user_id, "user", user_msg)
-            db.save_message(user_id, "assistant", reply)
-            return JSONResponse({"reply": reply, "proposal": None})
-
-        if is_sync_intent:
-            devs = db.get_user_devices(user_id)
-            for d in devs:
-                if d.get("status") == "trusted":
-                    await relay_manager.broadcast_event(user_id, "sync_tasks", {"reason": "chat_command"})
-            reply = "🌸 Sent an instant synchronization signal to all your connected devices!"
-            db.save_message(user_id, "user", user_msg)
-            db.save_message(user_id, "assistant", reply)
-            return JSONResponse({"reply": reply, "proposal": None})
-
-        if is_read_notifs_intent:
-            all_user_devices = db.get_user_devices(user_id)
-            trusted_devices = [d for d in all_user_devices if d.get("status") == "trusted"]
-            for d in trusted_devices:
-                if d.get("platform", "").lower() in ("android", "mobile"):
-                    cmd_id = f"cmd_qry_{int(time.time()*1000)}"
-                    await relay_manager.relay_command(user_id, {
-                        "id": cmd_id,
-                        "sender_device": trusted_devices[0]["device_id"],
-                        "target_device": d["device_id"],
-                        "type": "query_notifications",
-                        "payload": {},
-                        "created_at": time.time(),
-                        "expiry": 30
-                    })
-            notifs = relay_manager.get_user_notifications(user_id)
-            db.save_message(user_id, "user", user_msg)
-            if notifs:
-                lines = ["📬 **Recent Notifications from your Phone:**\n"]
-                for n in notifs[:8]:
-                    app_label = n.get("app", "App")
-                    title = n.get("title", "")
-                    text = n.get("text", "")
-                    lines.append(f"• **[{app_label}]** {title}: {text}")
-                reply = "\n".join(lines)
-            else:
-                reply = (
-                    "📬 No recent notifications recorded from your phone yet! 🌸\n\n"
-                    "**To enable notifications:**\n"
-                    "1. Open the SINBHA app on your phone.\n"
-                    "2. Allow **Notification Access** for SINBHA in your Android Settings.\n"
-                    "Once enabled, incoming messages, WhatsApp alerts, and emails will automatically sync across all your devices!"
-                )
-            db.save_message(user_id, "assistant", reply)
-            return JSONResponse({"reply": reply, "proposal": None})
-
-        if is_battery_intent:
-            all_user_devices = db.get_user_devices(user_id)
-            trusted_devices = [d for d in all_user_devices if d.get("status") == "trusted"]
-            for d in trusted_devices:
-                cmd_id = f"cmd_bat_{int(time.time()*1000)}"
-                await relay_manager.relay_command(user_id, {
-                    "id": cmd_id,
-                    "sender_device": trusted_devices[0]["device_id"],
-                    "target_device": d["device_id"],
-                    "type": "get_battery",
-                    "payload": {},
-                    "created_at": time.time(),
-                    "expiry": 30
-                })
-            lines = ["🔋 **Device Battery Status:**\n"]
-            found = False
-            for d in trusted_devices:
-                tel = relay_manager.get_device_telemetry(user_id, d.get("device_id"))
-                if tel and tel.get("battery") is not None:
-                    icon = "📱" if d.get("platform") == "android" else "💻"
-                    chg = " (⚡ Charging)" if tel.get("is_charging") else ""
-                    lines.append(f"- {icon} **{d.get('name')}**: **{tel['battery']}%**{chg}")
-                    found = True
-            db.save_message(user_id, "user", user_msg)
-            if found:
-                reply = "\n".join(lines)
-            else:
-                reply = "🔋 Sent a battery query signal to your companion devices! Open or wake the device to refresh telemetry 🌸"
-            db.save_message(user_id, "assistant", reply)
-            return JSONResponse({"reply": reply, "proposal": None})
-
-        if is_lock_intent:
-            all_user_devices = db.get_user_devices(user_id)
-            trusted_devices = [d for d in all_user_devices if d.get("status") == "trusted"]
-            target_dev = None
-            for d in trusted_devices:
-                if d.get("platform", "").lower() in ("windows", "desktop", "laptop"):
-                    target_dev = d
-                    break
-            db.save_message(user_id, "user", user_msg)
-            if target_dev:
-                is_online = relay_manager.is_device_connected(user_id, target_dev["device_id"])
-                cmd_id = f"cmd_lock_{int(time.time()*1000)}"
-                await relay_manager.relay_command(user_id, {
-                    "id": cmd_id,
-                    "sender_device": trusted_devices[0]["device_id"],
-                    "target_device": target_dev["device_id"],
-                    "type": "system_control",
-                    "payload": {"action": "lock_screen"},
-                    "created_at": time.time(),
-                    "expiry": 86400
-                })
-                if is_online:
-                    reply = f"🔒 Done! I've locked your {target_dev['name']} screen."
-                else:
-                    reply = f"🔒 Done! I've locked your {target_dev['name']} screen (queued offline — will lock as soon as the laptop is connected)!"
-            else:
-                reply = "I couldn't find a trusted Windows laptop/PC connected to lock! Please make sure your laptop is logged in to your account 🌸"
-            db.save_message(user_id, "assistant", reply)
-            return JSONResponse({"reply": reply, "proposal": None})
-
-        if is_open_app_intent:
-            all_user_devices = db.get_user_devices(user_id)
-            trusted_devices = [d for d in all_user_devices if d.get("status") == "trusted"]
-            if app_match:
-                raw_app = app_match.group(1).lower()
-            elif generic_open_match and is_generic_app:
-                raw_app = generic_open_match.group(1).lower().strip()
-            else:
-                raw_app = "whatsapp"
-            app_map = {
-                "google chrome": "chrome",
-                "chrom": "chrome",
-                "calc": "calculator",
-                "calclator": "calculator",
-                "vscode": "code",
-                "notepade": "notepad",
-                "notpad": "notepad",
-                "whatsap": "whatsapp",
-                "watsapp": "whatsapp",
-                "youtub": "youtube",
-                "spotfy": "spotify",
-                "insta": "instagram",
-                "file explorer": "files",
-            }
-            app_clean = app_map.get(raw_app, raw_app)
-
-            # Extract search query (e.g. "search whatsapp", "search vignan portal")
-            search_match = re.search(r"\bsearch(?:\s+for)?\s+([a-zA-Z0-9_\s.-]+?)(?:\s+in|\s+on|\s+and|$|\.)", lower_m)
-            search_query = search_match.group(1).strip() if search_match else None
-
-            # Extract text to type (e.g. "type x", "type 'hello'")
-            type_match = re.search(r"\btype\s+([\"']?)(.+?)\1(?:\s+in|\s+and|$|\.)", lower_m)
-            type_text = type_match.group(2).strip() if type_match else None
-
-            # Extract URL or web query
-            url_match = re.search(r"https?://[^\s]+|(?:\b[a-zA-Z0-9-]+\.(?:com|org|edu|in|net|ai|io)\b[^\s]*)", lower_m)
-            target_url = url_match.group(0).strip() if url_match else None
-            if not target_url:
-                if "vignan" in lower_m:
-                    target_url = "https://www.google.com/search?q=vignan+student+portal"
-                    if not search_query:
-                        search_query = "vignan student portal"
-                elif "claude" in lower_m and ("chrome" in lower_m or "browser" in lower_m):
-                    target_url = "https://claude.ai"
-                elif "chatgpt" in lower_m and ("chrome" in lower_m or "browser" in lower_m):
-                    target_url = "https://chatgpt.com"
-
-            target_dev = None
-            wants_phone = bool(re.search(r"\b(phone|mobile|android|cell)\b", lower_m))
-            wants_laptop = bool(re.search(r"\b(laptop|pc|desktop|windows|computer)\b", lower_m))
-            if wants_laptop:
-                for d in trusted_devices:
-                    if d.get("platform", "").lower() in ("windows", "desktop", "laptop"):
-                        target_dev = d
-                        break
-            elif wants_phone:
-                for d in trusted_devices:
-                    if d.get("platform", "").lower() in ("android", "mobile"):
-                        target_dev = d
-                        break
-            else:
-                if app_clean in ("camera", "snapchat", "instagram"):
-                    for d in trusted_devices:
-                        if d.get("platform", "").lower() in ("android", "mobile"):
-                            target_dev = d
-                            break
-                elif app_clean in ("notepad", "calculator", "code", "explorer", "files", "terminal", "cmd", "antigravity"):
-                    for d in trusted_devices:
-                        if d.get("platform", "").lower() in ("windows", "desktop", "laptop"):
-                            target_dev = d
-                            break
-                if not target_dev and trusted_devices:
-                    target_dev = trusted_devices[-1] if len(trusted_devices) > 1 else trusted_devices[0]
-
-            db.save_message(user_id, "user", user_msg)
-            if target_dev:
-                is_online = relay_manager.is_device_connected(user_id, target_dev["device_id"])
-                cmd_id = f"cmd_app_{int(time.time()*1000)}"
-                await relay_manager.relay_command(user_id, {
-                    "id": cmd_id,
-                    "sender_device": trusted_devices[0]["device_id"],
-                    "target_device": target_dev["device_id"],
-                    "type": "open_app",
-                    "payload": {
-                        "app": app_clean,
-                        "search_query": search_query,
-                        "url": target_url,
-                        "type_text": type_text,
-                    },
-                    "created_at": time.time(),
-                    "expiry": 86400
-                })
-                extra_note = ""
-                if search_query:
-                    extra_note = f" (searching '{search_query}')"
-                elif type_text:
-                    extra_note = f" (typing '{type_text}')"
-                elif target_url:
-                    extra_note = f" ({target_url})"
-
-                if is_online:
-                    reply = f"🌸 Done! Opened {app_clean.capitalize()} on your {target_dev['name']}{extra_note}."
-                else:
-                    reply = f"🌸 Done! Opened {app_clean.capitalize()} command sent to your {target_dev['name']} (queued offline — will launch automatically as soon as the device is active/connected)!"
-            else:
-                reply = f"I'd love to open {app_clean.capitalize()}, but you don't have a paired companion device online to open it on! 🌸"
-            db.save_message(user_id, "assistant", reply)
-            return JSONResponse({"reply": reply, "proposal": None})
-
-        if is_type_intent and not is_open_app_intent:
-            all_user_devices = db.get_user_devices(user_id)
-            trusted_devices = [d for d in all_user_devices if d.get("status") == "trusted"]
-            
-            # Extract text to type
-            type_match = re.search(r"\b(?:type|write|input)\s+([\"']?)(.+?)\1(?:\s+(?:and|then)\s+(?:press\s+)?(?:enter|send|return)|$|\.)", user_msg, re.IGNORECASE)
-            text_to_type = type_match.group(2).strip() if type_match else ""
-            if not text_to_type and ("enter" in lower_m or "send" in lower_m):
-                press_only_enter = True
-            else:
-                press_only_enter = False
-            press_enter = bool(re.search(r"\b(enter|send|return)\b", lower_m))
-
-            target_dev = None
-            wants_phone = bool(re.search(r"\b(phone|mobile|android|cell)\b", lower_m))
-            if wants_phone:
-                for d in trusted_devices:
-                    if d.get("platform", "").lower() in ("android", "mobile"):
-                        target_dev = d
-                        break
-            else:
-                for d in trusted_devices:
-                    if d.get("platform", "").lower() in ("windows", "desktop", "laptop"):
-                        target_dev = d
-                        break
-                if not target_dev and trusted_devices:
-                    target_dev = trusted_devices[0]
-
-            db.save_message(user_id, "user", user_msg)
-            if target_dev:
-                is_online = relay_manager.is_device_connected(user_id, target_dev["device_id"])
-                cmd_id = f"cmd_type_{int(time.time()*1000)}"
-                await relay_manager.relay_command(user_id, {
-                    "id": cmd_id,
-                    "sender_device": trusted_devices[0]["device_id"],
-                    "target_device": target_dev["device_id"],
-                    "type": "type_input",
-                    "payload": {
-                        "text": text_to_type,
-                        "press_enter": press_enter
-                    },
-                    "created_at": time.time(),
-                    "expiry": 86400
-                })
-                enter_note = " and pressed Enter ↵" if press_enter else ""
-                reply = f"🌸 Done! Typed '{text_to_type}'{enter_note} on your {target_dev['name']}."
-            else:
-                reply = f"I'd love to type that, but no companion device is connected! 🌸"
-            db.save_message(user_id, "assistant", reply)
-            return JSONResponse({"reply": reply, "proposal": None})
-
-        if is_ring_intent or is_send_note_intent:
-            all_user_devices = db.get_user_devices(user_id)
-            trusted_devices = [d for d in all_user_devices if d.get("status") == "trusted"]
-            pending_devices = [d for d in all_user_devices if d.get("status") == "pending"]
-
-            if trusted_devices:
-                wants_laptop = bool(re.search(r"\b(laptop|pc|desktop|windows|computer)\b", lower_m))
-                target_dev = None
-                if wants_laptop:
-                    for d in trusted_devices:
-                        if d.get("platform", "").lower() in ("windows", "desktop", "laptop"):
-                            target_dev = d
-                            break
-                else:
-                    for d in trusted_devices:
-                        if d.get("platform", "").lower() in ("android", "mobile", "ios"):
-                            target_dev = d
-                            break
-                if not target_dev:
-                    target_dev = trusted_devices[-1] if len(trusted_devices) > 1 else trusted_devices[0]
-
-                action_type = "ring_phone" if is_ring_intent else "send_note"
-                cmd_id = f"cmd_ai_{int(time.time()*1000)}"
-                cmd_data = {
-                    "id": cmd_id,
-                    "sender_device": trusted_devices[0]["device_id"],
-                    "target_device": target_dev["device_id"],
-                    "type": action_type,
-                    "payload": {"text": user_msg, "source": "ai_assistant"},
-                    "created_at": time.time(),
-                    "expiry": 60
-                }
-                relay_res = await relay_manager.relay_command(user_id, cmd_data)
-                db.save_message(user_id, "user", user_msg)
-                action_desc = f"Ringing your '{target_dev['name']}' now! 🔔" if is_ring_intent else f"Sent note to your '{target_dev['name']}'! 💌"
-                reply = f"🌸 {action_desc}"
-                db.save_message(user_id, "assistant", reply)
-                return JSONResponse({
-                    "reply": reply,
-                    "proposal": None,
-                    "remote_command_result": relay_res
-                })
-            elif pending_devices:
-                p_dev = pending_devices[0]
-                action_word = "ring" if is_ring_intent else "send a note to"
-                reply = (
-                    f"I'd love to {action_word} your phone, but your '{p_dev['name']}' is still waiting to be approved in Settings! 🌸\n\n"
-                    f"1. Check the 6-digit code shown on your phone screen.\n"
-                    f"2. In Settings ⚙️ -> My Devices on your laptop, click the green '[🔑 Enter Code]' button next to '{p_dev['name']}'.\n"
-                    f"3. Type the 6 digits to approve and trust the phone.\n\n"
-                    f"Once it's trusted, ask me to {action_word} your phone again and it will work right away!"
-                )
-                db.save_message(user_id, "user", user_msg)
-                db.save_message(user_id, "assistant", reply)
-                return JSONResponse({"reply": reply, "proposal": None})
-            else:
-                action_word = "ring" if is_ring_intent else "send a note to"
-                reply = (
-                    f"I'd love to {action_word} your phone, but you don't have any devices paired yet! 🌸\n\n"
-                    f"To pair your phone, open the SINBHA Android app, log in, then approve the pairing in Settings ⚙️ -> My Devices on your laptop."
-                )
-                db.save_message(user_id, "user", user_msg)
-                db.save_message(user_id, "assistant", reply)
-                return JSONResponse({"reply": reply, "proposal": None})
-
-    # 7. Standard message flow: call SINBHA brain
+    # 4. Agent Tool-Calling Loop (Step C1)
+    # All intent detection (tasks, facts, device commands, web search) is now handled
+    # by the AI agent through tool calling instead of regex/if-else chains.
     db.save_message(user_id, "user", user_msg)
     db.log_audit(user_id, "CHAT_MESSAGE", f"User sent: '{user_msg[:80]}...'")
 
     recent_history = db.get_recent_messages(user_id, limit=20)
     current_facts = db.get_all_facts(user_id)
 
-    # 7b. Web Search check (Step 15)
-    web_search_meta = None
-    web_search_context = None
-    web_search_setting = db.get_setting(user_id, "web_search_enabled", "true")
-
-    if web_search_setting == "true":
-        needs_search, s_query, d_url = await detect_search_intent_smart(user_msg, recent_history[:-1])
-        if needs_search:
-            # Handle contextual follow-up phrases like "search and tell me" or "check it"
-            if s_query and len(s_query.split()) <= 4 and re.search(r"^(search|check|look\s*up|tell\s*me|yeah|yes)", s_query, re.IGNORECASE):
-                for prev in reversed(recent_history[:-1]):
-                    if prev.get("role") == "user":
-                        prev_text = prev.get("content", "")
-                        if len(prev_text) > 4 and not re.search(r"^(hi|hello|hey|yes|no|ok|okay)\b", prev_text, re.IGNORECASE):
-                            s_query = f"{prev_text} {s_query}".strip()
-                            break
-
-            search_res = await execute_web_search(
-                user_id=user_id,
-                raw_query=s_query,
-                direct_url=d_url,
-                user_facts=current_facts,
-                user_email=user.get("email")
-            )
-            if search_res.limit_reached:
-                ai_reply = search_res.limit_message
-                db.save_message(user_id, "assistant", ai_reply)
-                db.log_audit(user_id, "SEARCH_LIMIT_REACHED", f"Search limit reached for user #{user_id}")
-                return JSONResponse({
-                    "reply": ai_reply,
-                    "proposal": None,
-                    "new_facts": [],
-                    "web_search": {"searched": False, "limit_reached": True, "sources": []}
-                })
-
-            if search_res.searched:
-                web_search_context = search_res.context_text
-                web_search_meta = {
-                    "searched": True,
-                    "sources": search_res.sources,
-                    "cached": search_res.cached
-                }
-            elif search_res.error == "missing_api_key":
-                web_search_meta = {
-                    "searched": False,
-                    "error": "missing_api_key",
-                    "sources": []
-                }
-
+    # Resolve user timezone
     offset = payload.tz_offset_minutes if payload.tz_offset_minutes is not None else payload.tz_offset
     user_tz = payload.timezone or user.get("timezone") or db.get_setting(user_id, "timezone", None)
-    
-    # If tz was unset or defaulted to UTC but client is in India (-330 offset), automatically ground to Asia/Kolkata
     if offset == -330 and (not user_tz or user_tz == "UTC"):
         user_tz = "Asia/Kolkata"
     elif not user_tz:
@@ -1200,131 +642,97 @@ async def chat_endpoint(payload: ChatRequest, request: Request, user: dict = Dep
         except Exception:
             pass
 
+    # Build annotated device list for agent context
     user_devices_list = db.get_user_devices(user_id)
     annotated_devs = []
     for d in user_devices_list:
         is_onl = relay_manager.is_device_connected(user_id, d.get("device_id"))
         tel = relay_manager.get_device_telemetry(user_id, d.get("device_id"))
         annotated_devs.append({
+            "device_id": d.get("device_id"),
             "name": d.get("name"),
             "platform": d.get("platform"),
             "status": d.get("status"),
             "is_online": is_onl,
-            "battery": tel.get("battery") if tel else None
+            "battery": tel.get("battery") if tel else None,
         })
 
-    brain_result = await call_sinbha_brain(
+    # Run the agent loop
+    from app.agent_loop import run_agent_loop
+    agent_result = await run_agent_loop(
+        user_id=user_id,
         user_message=user_msg,
         chat_history=recent_history[:-1],
         remembered_facts=current_facts,
-        web_search_context=web_search_context,
+        user_devices=annotated_devs,
         user_timezone=user_tz,
-        user_devices=annotated_devs
+        user_email=user.get("email", ""),
+        db_module=db,
+        relay_manager=relay_manager,
     )
-    ai_reply = brain_result.get("reply", "I'm right here with you 🌸")
 
-    # 8. Check if AI proposed a structured task
-    task_proposal_obj = None
-    raw_prop = brain_result.get("raw_task_proposal")
-    if raw_prop and isinstance(raw_prop, dict) and raw_prop.get("title"):
-        title = str(raw_prop.get("title", "")).strip()
-        raw_due = raw_prop.get("due_date")
-        notes = raw_prop.get("notes")
-
-        if len(title) >= 3 and title.lower() not in ("none", "task", "null"):
-            try:
-                import zoneinfo
-                tz_obj = zoneinfo.ZoneInfo(user_tz)
-                client_now = datetime.datetime.now(tz_obj)
-            except Exception:
-                client_now = datetime.datetime.now()
-                if payload.tz_offset_minutes is not None:
-                    utc_now = datetime.datetime.now(datetime.timezone.utc)
-                    client_now = (utc_now - datetime.timedelta(minutes=payload.tz_offset_minutes)).replace(tzinfo=None)
-
-            dt_res = parse_relative_datetime(raw_due, base_dt=client_now, user_timezone=user_tz)
-            
-            if dt_res.get("is_past") and dt_res.get("past_message"):
-                if dt_res["past_message"] not in ai_reply:
-                    ai_reply += "\n\n" + dt_res["past_message"]
-
-            if dt_res.get("is_ambiguous"):
-                real_due = dt_res["due_date"]
-                due_time = None
-                due_datetime = None
-                display_due = dt_res["display"]
-                suggested_rems = dt_res.get("suggested_reminders", [])
-            else:
-                real_due = dt_res["due_date"]
-                due_time = dt_res["due_time"]
-                due_datetime = dt_res["due_datetime"]
-                display_due = dt_res["display"]
-                suggested_rems = dt_res["suggested_reminders"]
-
-                if not dt_res["time_specified"] and real_due:
-                    if "what time" not in ai_reply.lower() and "time" not in ai_reply.lower():
-                        ai_reply += "\n\nWhat time are you aiming to get it done by? (I can also set a reminder whenever you like) 🌸"
-
-            # Check sound mode intent from chat message
-            req_sound_mode = None
-            lower_msg = user_msg.lower()
-            if "voice then tone" in lower_msg or "voice then alarm" in lower_msg or "voice then sound" in lower_msg:
-                req_sound_mode = "voice_then_tone"
-            elif "song" in lower_msg or "music" in lower_msg:
-                req_sound_mode = "song"
-            elif "voice" in lower_msg or "speak" in lower_msg or "read aloud" in lower_msg:
-                req_sound_mode = "voice"
-            elif "alarm tone" in lower_msg or "tone" in lower_msg:
-                req_sound_mode = "alarm_tone"
-
-            if req_sound_mode and suggested_rems:
-                for sr in suggested_rems:
-                    sr["sound_mode"] = req_sound_mode
-
-            prop_id = db.set_pending_proposal(
-                user_id=user_id,
-                title=title,
-                due_date=real_due,
-                notes=notes,
-                due_time=due_time,
-                due_datetime=due_datetime,
-                suggested_reminders=suggested_rems
-            )
-            task_proposal_obj = {
-                "type": "task_proposal",
-                "id": prop_id,
-                "title": title,
-                "due_date": real_due,
-                "due_time": due_time,
-                "due_datetime": due_datetime,
-                "display_due": display_due,
-                "time_specified": dt_res["time_specified"],
-                "is_ambiguous": dt_res.get("is_ambiguous", False),
-                "ambiguous_options": dt_res.get("ambiguous_options", []),
-                "suggested_reminders": suggested_rems,
-                "sound_mode": req_sound_mode or db.get_setting(user_id, "reminder_sound_mode", "alarm_tone"),
-                "notes": notes
-            }
-
+    ai_reply = agent_result.reply
     db.save_message(user_id, "assistant", ai_reply)
 
-    # 9. Background fact extraction (suppressed on untrusted external links)
-    new_facts_saved = []
-    if not (web_search_meta and web_search_meta.get("searched") and bool(re.search(r"https?://", user_msg))):
-        try:
-            extracted = await extract_explicit_facts(user_msg)
-            for f in extracted:
-                res = db.update_or_add_fact(user_id, f)
-                if res.get("action") in ("added", "updated"):
-                    new_facts_saved.append(f)
-        except Exception as e:
-            print(f"Fact extraction note: {e}")
+    # Build proposal object for the frontend (if the agent created a task proposal)
+    task_proposal_obj = agent_result.proposal
+
+    # If the agent returned a confirmation card, include it as a proposal for the frontend
+    if not task_proposal_obj and agent_result.confirmation_card:
+        card = agent_result.confirmation_card
+        tool_name = card.get("tool_name", "")
+        if tool_name == "complete_task":
+            task_proposal_obj = {
+                "type": "task_complete",
+                "task_id": card.get("task_id"),
+                "task_title": card.get("task_title"),
+                "prompt": card.get("message", f"Mark '{card.get('task_title')}' as done?"),
+            }
+        elif tool_name == "delete_task":
+            task_proposal_obj = {
+                "type": "task_delete",
+                "task_id": card.get("task_id"),
+                "task_title": card.get("task_title"),
+                "prompt": card.get("message", f"Delete '{card.get('task_title')}'?"),
+            }
+        elif tool_name == "forget_fact":
+            task_proposal_obj = {
+                "type": "confirm_forget",
+                "fact_id": card.get("fact_id"),
+                "fact_text": card.get("fact_text"),
+                "prompt": card.get("message", f"Forget '{card.get('fact_text')}'?"),
+            }
+        elif tool_name in ("send_note", "ring_phone", "open_url"):
+            task_proposal_obj = {
+                "type": f"confirm_{tool_name}",
+                "message": card.get("message"),
+                "details": card,
+            }
+
+    # Check sound mode intent from chat message for task proposals
+    if task_proposal_obj and task_proposal_obj.get("type") == "task_proposal":
+        req_sound_mode = None
+        lower_msg = user_msg.lower()
+        if "voice then tone" in lower_msg or "voice then alarm" in lower_msg or "voice then sound" in lower_msg:
+            req_sound_mode = "voice_then_tone"
+        elif "song" in lower_msg or "music" in lower_msg:
+            req_sound_mode = "song"
+        elif "voice" in lower_msg or "speak" in lower_msg or "read aloud" in lower_msg:
+            req_sound_mode = "voice"
+        elif "alarm tone" in lower_msg or "tone" in lower_msg:
+            req_sound_mode = "alarm_tone"
+        if req_sound_mode:
+            task_proposal_obj["sound_mode"] = req_sound_mode
+            if task_proposal_obj.get("suggested_reminders"):
+                for sr in task_proposal_obj["suggested_reminders"]:
+                    sr["sound_mode"] = req_sound_mode
 
     return JSONResponse({
         "reply": ai_reply,
         "proposal": task_proposal_obj,
-        "new_facts": new_facts_saved,
-        "web_search": web_search_meta
+        "new_facts": agent_result.new_facts,
+        "web_search": agent_result.web_search_meta,
+        "step_log": agent_result.step_log,
     })
 
 # ----------------- Task Management Endpoints (Per-User) -----------------
