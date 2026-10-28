@@ -5,6 +5,7 @@
   "main": "electron/main.js",
   "author": "kbtteja456-KBT",
   "scripts": {
+    "test": "node --test tests/*.test.js",
     "start": "electron .",
     "prebuild": "node scripts/check_secrets.js",
     "build:win": "npm run prebuild && electron-builder --win --publish never",

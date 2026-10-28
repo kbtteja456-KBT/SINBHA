@@ -48,6 +48,7 @@ for (const file of FORBIDDEN_FILES) {
 const filesToScan = [
   path.join(ROOT_DIR, 'electron', 'config.js'),
   path.join(ROOT_DIR, 'electron', 'main.js'),
+  path.join(ROOT_DIR, 'electron', 'command_security.js'),
   path.join(ROOT_DIR, 'electron', 'preload.js'),
   path.join(ROOT_DIR, 'electron', 'overlay.js'),
   path.join(ROOT_DIR, 'capacitor.config.json'),

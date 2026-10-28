@@ -5,11 +5,18 @@
 // waking-up recovery screen, and background reminder notifications.
 // ========================================================
 
-const { app, BrowserWindow, Tray, Menu, ipcMain, screen, session, shell, dialog, Notification } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, screen, session, shell, dialog, Notification, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { exec } = require('child_process');
+const os = require('os');
+const { spawn, execFile } = require('child_process');
 const config = require('./config');
+const {
+  executeLaunchApp,
+  executeTypeInput,
+  executeLockWorkstation,
+  executeGetBattery
+} = require('./command_security');
 
 let mainWindow = null;
 let overlayWindow = null;
@@ -649,192 +656,21 @@ function setupIpcHandlers() {
     }
   });
 
-  // Step 16c: Full Cross-Device App Launcher & Control
+  // Step 16c: Full Cross-Device App Launcher & Control (Hardened with spawn & allowlists, no exec)
   ipcMain.handle('launch-desktop-app', async (_event, appNameOrTarget) => {
-    try {
-      let target = '';
-      let searchQuery = null;
-      let targetUrl = null;
-      let typeText = null;
-
-      if (typeof appNameOrTarget === 'object' && appNameOrTarget !== null) {
-        target = String(appNameOrTarget.app || '').toLowerCase().trim();
-        searchQuery = appNameOrTarget.search_query || appNameOrTarget.query || null;
-        targetUrl = appNameOrTarget.url || null;
-        typeText = appNameOrTarget.type_text || appNameOrTarget.text || null;
-      } else {
-        target = String(appNameOrTarget || '').toLowerCase().trim();
-      }
-
-      // 1. Direct URL opening
-      if (targetUrl) {
-        const fullUrl = targetUrl.startsWith('http://') || targetUrl.startsWith('https://') ? targetUrl : `https://${targetUrl}`;
-        await shell.openExternal(fullUrl);
-        return { success: true, app: target, method: 'url', url: fullUrl };
-      }
-
-      // 2. Search query with browser or YouTube
-      if (searchQuery) {
-        if (target === 'youtube') {
-          const ytUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(searchQuery)}`;
-          await shell.openExternal(ytUrl);
-          return { success: true, app: 'youtube', method: 'search', query: searchQuery };
-        }
-        const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}`;
-        exec(`start chrome "${searchUrl}"`, (err) => {
-          if (err) shell.openExternal(searchUrl);
-        });
-        return { success: true, app: target || 'chrome', method: 'search', query: searchQuery };
-      }
-
-      // 3. Typing text into Notepad
-      if (target === 'notepad' && typeText) {
-        const tempPath = path.join(os.tmpdir(), 'sinbha_note.txt');
-        fs.writeFileSync(tempPath, typeText, 'utf8');
-        exec(`start notepad.exe "${tempPath}"`);
-        return { success: true, app: 'notepad', method: 'notepad_file', text: typeText };
-      }
-
-      // 4. Known desktop mappings
-      const appMap = {
-        'whatsapp': 'whatsapp:',
-        'chrome': 'chrome',
-        'google chrome': 'chrome',
-        'spotify': 'spotify:',
-        'notepad': 'notepad',
-        'calculator': 'calc',
-        'calc': 'calc',
-        'explorer': 'explorer',
-        'files': 'explorer',
-        'file manager': 'explorer',
-        'code': 'code',
-        'vscode': 'code',
-        'terminal': 'wt',
-        'cmd': 'cmd',
-        'youtube': 'https://youtube.com',
-        'snapchat': 'https://web.snapchat.com',
-        'instagram': 'https://www.instagram.com'
-      };
-
-      const resolved = appMap[target];
-      if (resolved) {
-        if (resolved.startsWith('http://') || resolved.startsWith('https://') || resolved.endsWith(':')) {
-          await shell.openExternal(resolved);
-          return { success: true, app: target, method: 'protocol_or_url' };
-        } else {
-          exec(`start "" "${resolved}"`, (err) => {
-            if (err) exec(`start ${resolved}`);
-          });
-          return { success: true, app: target, method: 'exec' };
-        }
-      }
-
-      // 5. Special handlers for Claude and ChatGPT
-      if (target === 'claude') {
-        // Check Claude Desktop or Start Menu
-        const localClaude = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Claude', 'Claude.exe');
-        if (fs.existsSync(localClaude)) {
-          exec(`start "" "${localClaude}"`);
-          return { success: true, app: 'claude', method: 'desktop_exe' };
-        }
-        await shell.openExternal('https://claude.ai');
-        return { success: true, app: 'claude', method: 'web_fallback' };
-      }
-
-      if (target === 'chatgpt') {
-        const localGpt = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'ChatGPT', 'ChatGPT.exe');
-        if (fs.existsSync(localGpt)) {
-          exec(`start "" "${localGpt}"`);
-          return { success: true, app: 'chatgpt', method: 'desktop_exe' };
-        }
-        await shell.openExternal('https://chatgpt.com');
-        return { success: true, app: 'chatgpt', method: 'web_fallback' };
-      }
-
-      // 6. Generic Start Menu / Program Files dynamic search
-      const userStartMenu = path.join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Start Menu', 'Programs');
-      const allStartMenu = path.join(process.env.PROGRAMDATA || 'C:\\ProgramData', 'Microsoft', 'Windows', 'Start Menu', 'Programs');
-      
-      const searchShortcuts = (dir) => {
-        if (!fs.existsSync(dir)) return null;
-        try {
-          const files = fs.readdirSync(dir, { recursive: true });
-          for (const f of files) {
-            const fStr = String(f);
-            if (fStr.toLowerCase().endsWith('.lnk') && fStr.toLowerCase().includes(target)) {
-              return path.join(dir, fStr);
-            }
-          }
-        } catch (e) {}
-        return null;
-      };
-
-      const foundLnk = searchShortcuts(userStartMenu) || searchShortcuts(allStartMenu);
-      if (foundLnk) {
-        exec(`start "" "${foundLnk}"`);
-        return { success: true, app: target, method: 'start_menu_shortcut', path: foundLnk };
-      }
-
-      // 7. General Windows start fallback
-      const cleanName = target.replace(/[^a-zA-Z0-9_\-]/g, '');
-      if (cleanName) {
-        exec(`start "" "${cleanName}"`, (err) => {
-          if (err) {
-            shell.openExternal(`https://www.google.com/search?q=${encodeURIComponent(target)}`);
-          }
-        });
-        return { success: true, app: cleanName, method: 'fallback_start' };
-      }
-
-      return { success: false, error: 'App not recognized' };
-    } catch (e) {
-      return { success: false, error: e.message };
-    }
+    return executeLaunchApp(appNameOrTarget, { shell, spawn, fs, os, processEnv: process.env });
   });
 
   ipcMain.handle('type-input', async (_event, payload) => {
-    try {
-      const text = typeof payload === 'string' ? payload : (payload.text || '');
-      const pressEnter = typeof payload === 'object' && (payload.press_enter || payload.enter);
-
-      if (text) {
-        clipboard.writeText(text);
-      }
-
-      const enterKey = pressEnter ? '~' : '';
-      const pasteAction = text ? '^v' : '';
-      const script = `$ws = New-Object -ComObject WScript.Shell; Start-Sleep -Milliseconds 300; $ws.SendKeys('${pasteAction}${enterKey}')`;
-      exec(`powershell -NoProfile -Command "${script}"`);
-      return { success: true, text: text, enter: pressEnter };
-    } catch (e) {
-      return { success: false, error: e.message };
-    }
+    return executeTypeInput(payload, { clipboard, spawn });
   });
 
   ipcMain.handle('lock-workstation', async () => {
-    try {
-      exec('rundll32.exe user32.dll,LockWorkStation');
-      return { success: true };
-    } catch (e) {
-      return { success: false, error: e.message };
-    }
+    return executeLockWorkstation({ spawn });
   });
 
   ipcMain.handle('get-desktop-battery', async () => {
-    try {
-      return new Promise((resolve) => {
-        exec('powershell -NoProfile -Command "(Get-WmiObject -Class Win32_Battery).EstimatedChargeRemaining"', (err, stdout) => {
-          if (err || !stdout.trim()) {
-            resolve({ hasBattery: false, percentage: 100, isPlugged: true });
-          } else {
-            const pct = parseInt(stdout.trim(), 10);
-            resolve({ hasBattery: true, percentage: isNaN(pct) ? 100 : pct });
-          }
-        });
-      });
-    } catch (e) {
-      return { hasBattery: false, percentage: 100 };
-    }
+    return executeGetBattery({ execFile });
   });
 }
 
