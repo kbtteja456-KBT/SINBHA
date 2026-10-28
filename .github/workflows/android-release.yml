@@ -92,8 +92,16 @@ jobs:
       - name: Prepare Release Artifacts and Checksum
         id: checksum
         run: |
-          # Copy APK to root with clean public filename
-          cp android/app/build/outputs/apk/release/app-release.apk SINBHA.apk
+          echo "Scanning build outputs for APK..."
+          find android/app/build/outputs -type f || true
+          
+          APK_FILE=$(find android/app/build/outputs/apk -name "*.apk" | grep -v "androidTest" | head -n 1)
+          if [ -z "$APK_FILE" ]; then
+            echo "::error::No APK file generated in android/app/build/outputs/apk!"
+            exit 1
+          fi
+          echo "Found APK file: $APK_FILE"
+          cp "$APK_FILE" SINBHA.apk
           
           # Generate SHA-256 checksum
           sha256sum SINBHA.apk > SINBHA.apk.sha256
@@ -133,10 +141,10 @@ jobs:
           tag_name: ${{ steps.release_meta.outputs.tag_name }}
           name: ${{ steps.release_meta.outputs.release_title }}
           body: |
-            ## 🌸 SINBHA Android Companion Release
+            ## 🐘 SINBHA Android Companion Release (Pure Pink & White Theme)
             **Version:** ${{ steps.release_meta.outputs.tag_name }}
             
-            ${{ inputs.release_notes || 'Official production APK with exact alarms, background reminders, and flying bird overlay companion.' }}
+            ${{ inputs.release_notes || 'Official production APK with exact clock-grade alarms, background reminders, and flying elephant companion.' }}
             
             ### 📦 Download & Verification
             - Download `SINBHA.apk` below and open it on your Android device.
