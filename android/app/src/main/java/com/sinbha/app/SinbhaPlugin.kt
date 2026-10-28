@@ -117,8 +117,6 @@ class SinbhaPlugin : Plugin() {
     }
 
     private lateinit var prefs: PreferencesManager
-    private var previewPlayer: MediaPlayer? = null
-    private var previewTts: android.speech.tts.TextToSpeech? = null
 
     override fun load() {
         super.load()
@@ -738,7 +736,7 @@ class SinbhaPlugin : Plugin() {
                         try {
                             val uri = Uri.parse(songUriStr)
                             previewPlayer = MediaPlayer().apply {
-                                setDataSource(context, uri)
+                                setDataSource(context.applicationContext, uri)
                                 setAudioAttributes(
                                     AudioAttributes.Builder()
                                         .setUsage(AudioAttributes.USAGE_ALARM)
@@ -801,7 +799,7 @@ class SinbhaPlugin : Plugin() {
         val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
             ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
         previewPlayer = MediaPlayer().apply {
-            setDataSource(context, soundUri)
+            setDataSource(context.applicationContext, soundUri)
             setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_ALARM)

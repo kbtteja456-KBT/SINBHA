@@ -320,7 +320,7 @@ class AlarmActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 reminderId = "snooze_$taskId",
                 triggerAtMillis = snoozeMillis,
                 soundOption = soundOption,
-                songUri = songUriStr,
+                songUri = songUriStr ?: "",
                 userName = userName,
                 spokenText = spokenText
             )
@@ -328,7 +328,7 @@ class AlarmActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             CoroutineScope(Dispatchers.IO).launch {
                 try {
                     val client = SinbhaApiClient(applicationContext)
-                    client.snoozeTask(taskId, snoozeMinutes)
+                    client.snoozeReminder(taskId, snoozeMinutes)
                 } catch (e: Exception) {}
             }
         }
