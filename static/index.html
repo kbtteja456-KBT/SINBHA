@@ -12,7 +12,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=1.4.0">
 </head>
 <body>
 
@@ -1078,9 +1078,20 @@
               }
               if (link) {
                 link.href = downloadUrl;
+                link.onclick = function(e) {
+                  if (window.electronAPI && typeof window.electronAPI.openExternal === 'function') {
+                    e.preventDefault();
+                    window.electronAPI.openExternal(downloadUrl);
+                  } else if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Browser) {
+                    e.preventDefault();
+                    window.Capacitor.Plugins.Browser.open({ url: downloadUrl });
+                  } else {
+                    window.open(downloadUrl, '_system');
+                  }
+                };
               }
               if (laterBtn) {
-                laterBtn.style.display = isMandatory ? 'none' : 'block';
+                laterBtn.style.display = 'block';
                 laterBtn.onclick = function() {
                   modal.style.display = 'none';
                 };
@@ -1106,6 +1117,6 @@
     })();
   </script>
 
-  <script src="/static/script.js?v=1.0.8"></script>
+  <script src="/static/script.js?v=1.4.0"></script>
 </body>
 </html>
