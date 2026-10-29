@@ -154,8 +154,15 @@ def _build_agent_system_prompt(
         today_str = now_dt.strftime("%A, %B %d, %Y")
         current_time_str = now_dt.strftime("%I:%M %p").lstrip("0")
 
+    base_prompt = re.sub(
+        r"TASK PROPOSING & DUE TIME GUIDELINES \(STEP 5 & 6B\):.*?HONESTY AND SAFETY",
+        "HONESTY AND SAFETY",
+        BASE_SYSTEM_PROMPT,
+        flags=re.DOTALL,
+    )
+
     system_content = (
-        f"{BASE_SYSTEM_PROMPT}\n\n"
+        f"{base_prompt}\n\n"
         f"CURRENT REAL-TIME CONTEXT:\n"
         f"- Today is {today_str}.\n"
         f"- Current local time is {current_time_str} ({tz_label}).\n"
@@ -322,7 +329,17 @@ async def _call_llm_with_tools(
             elif response.status_code == 429:
                 log_llm_reliability("rate_limit", provider, model, attempt=attempt+1, status_code=429, latency_ms=latency_ms)
                 if attempt < max_retries:
-                    await asyncio.sleep(1.0 * (2 ** attempt))
+                    wait_time = 1.0 * (2 ** attempt)
+                    try:
+                        if "retry-after" in response.headers:
+                            wait_time = max(wait_time, float(response.headers["retry-after"]))
+                        elif response.text:
+                            m_wait = re.search(r"try again in (\d+(\.\d+)?)s", response.text)
+                            if m_wait:
+                                wait_time = max(wait_time, float(m_wait.group(1)) + 0.2)
+                    except Exception:
+                        pass
+                    await asyncio.sleep(min(wait_time, 5.0))
                     continue
                 return {"success": False, "error": "rate_limit", "status": 429, "provider": provider, "model": model}
 
@@ -454,7 +471,7 @@ async def run_agent_loop(
 
     # Add chat history (max 20 messages)
     if chat_history:
-        for msg in chat_history[-20:]:
+        for msg in chat_history[-10:]:
             messages.append({"role": msg["role"], "content": msg["content"]})
 
     # Add current user message
@@ -523,6 +540,15 @@ async def run_agent_loop(
 
         # Call LLM
         llm_result = await _call_llm_with_tools(messages, tools_list, creds)
+
+        # Automatic fallback for Groq rate limit: try secondary model with separate rate limit bucket
+        if not llm_result["success"] and llm_result.get("error") == "rate_limit" and creds.get("provider") == "groq":
+            fallback_model = "openai/gpt-oss-20b" if creds.get("model") != "openai/gpt-oss-20b" else "qwen/qwen3.8-27b"
+            fallback_creds = dict(creds)
+            fallback_creds["model"] = fallback_model
+            fallback_creds["reasoning_effort"] = None
+            logger.info(f"Groq primary model {creds.get('model')} rate-limited; trying fallback model {fallback_model}")
+            llm_result = await _call_llm_with_tools(messages, tools_list, fallback_creds)
 
         if not llm_result["success"]:
             error_msg = llm_result.get("error", "unknown")
