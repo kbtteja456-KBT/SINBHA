@@ -538,6 +538,25 @@ class CommandRelayManager:
                 except Exception:
                     pass
 
+    async def notify_screen_agent_state(self, user_id: int, active: bool, goal: str):
+        """
+        Step C3a: Broadcasts screen agent state (active, goal) to connected clients
+        so Electron / Desktop displays visible border and floating Stop button.
+        """
+        packet = {
+            "type": "screen_agent_state",
+            "active": active,
+            "goal": goal,
+            "timestamp": time.time(),
+        }
+        msg = json.dumps(packet)
+        for (uid, dev_id), ws in list(self.active_websockets.items()):
+            if uid == user_id:
+                try:
+                    await ws.send_text(msg)
+                except Exception:
+                    pass
+
     def get_pending_offline_commands(self, user_id: int, device_id: str) -> List[dict]:
         """
         Drains pending offline commands for a device.

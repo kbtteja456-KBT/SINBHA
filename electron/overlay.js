@@ -573,12 +573,28 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Escape key dismisses bird popup immediately
+  // Escape key dismisses bird popup immediately or halts active screen agent
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       hideBird();
+      const frame = document.getElementById("screenAgentControlFrame");
+      if (frame && frame.style.display !== "none") {
+        if (window.electronAPI && typeof window.electronAPI.triggerEmergencyStop === "function") {
+          window.electronAPI.triggerEmergencyStop();
+        }
+      }
     }
   });
+
+  // Step C3a: Stop button click handler
+  const stopAgentBtn = document.getElementById("screenAgentStopBtn");
+  if (stopAgentBtn) {
+    stopAgentBtn.addEventListener("click", () => {
+      if (window.electronAPI && typeof window.electronAPI.triggerEmergencyStop === "function") {
+        window.electronAPI.triggerEmergencyStop();
+      }
+    });
+  }
 
   // Listen to IPC events from Electron Main
   if (window.electronAPI) {
@@ -591,5 +607,18 @@ document.addEventListener("DOMContentLoaded", () => {
     window.electronAPI.onHideBird(() => {
       hideBird();
     });
+
+    if (typeof window.electronAPI.onScreenAgentState === "function") {
+      window.electronAPI.onScreenAgentState((state) => {
+        const frame = document.getElementById("screenAgentControlFrame");
+        const goalEl = document.getElementById("screenAgentGoalText");
+        if (frame) {
+          frame.style.display = (state && state.active) ? "block" : "none";
+          if (goalEl && state && state.goal) {
+            goalEl.textContent = state.goal;
+          }
+        }
+      });
+    }
   }
 });

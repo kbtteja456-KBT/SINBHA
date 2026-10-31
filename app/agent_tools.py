@@ -1425,6 +1425,54 @@ async def handle_press_keys(user_id: int, args: dict, ctx: dict) -> dict:
         "message": f"Pressed key '{keys}' on {target_dev.get('name')}.",
     }
 
+
+async def handle_screen_task(user_id: int, args: dict, ctx: dict) -> dict:
+    """
+    Step C3a: Autonomous Windows Screen Agent.
+    Pre-checks: prefers open_app, open_url, find_installed_app before using pixels.
+    If pixels/visual workflow is needed, executes the vision-action loop.
+    """
+    goal = sanitize_text_arg(args.get("goal", ""), 500)
+    if not goal:
+        return {"success": False, "error": "Goal description cannot be empty."}
+
+    relay = ctx.get("relay_manager")
+
+    # 1. Prefer open_app, open_url, find_installed_app before using pixels
+    clean_goal = goal.strip().lower()
+
+    # Check simple open app
+    m_open = re.match(r"^(?:open|launch|start)\s+([a-zA-Z0-9_\-\. ]+)$", clean_goal)
+    if m_open and not any(w in clean_goal for w in ("and", "then", "type", "click", "search", "save")):
+        app_target = m_open.group(1).strip()
+        return await handle_open_app(user_id, {"name": app_target, "target_device": "laptop"}, ctx)
+
+    # Check simple open url
+    m_url = re.search(r"https?://\S+", goal)
+    if m_url and len(clean_goal.split()) <= 4:
+        return await handle_open_url(user_id, {"url": m_url.group(0), "target_device": "laptop"}, ctx)
+
+    # 2. Run Vision-Action Loop via screen_agent
+    from app.screen_agent import run_screen_task_loop
+    res = await run_screen_task_loop(
+        user_id=user_id,
+        goal=goal,
+        max_steps=25,
+        time_limit_seconds=180.0,
+        relay_manager=relay
+    )
+    return res
+
+
+_SCHEMA_SCREEN_TASK = {
+    "type": "object",
+    "properties": {
+        "goal": {"type": "string", "description": "The specific task or visual UI workflow to perform on the Windows desktop", "minLength": 2, "maxLength": 500},
+    },
+    "required": ["goal"],
+    "additionalProperties": False,
+}
+
 _SCHEMA_GET_DEVICE_STATUS = {
     "type": "object",
     "properties": {
@@ -1722,6 +1770,15 @@ def build_default_registry() -> ToolRegistry:
         risk_level=2,
         handler=handle_press_keys,
         confirmation_template="Press '{keys}' on {target_device}?",
+    ))
+
+    registry.register(Tool(
+        name="screen_task",
+        description="Autonomous Windows desktop screen agent. Uses vision to navigate, click, type, and complete visual workflows on screen.",
+        parameters=_SCHEMA_SCREEN_TASK,
+        risk_level=3,
+        handler=handle_screen_task,
+        confirmation_template="Allow SINBHA Screen Agent to perform '{goal}' on screen?",
     ))
 
     return registry
