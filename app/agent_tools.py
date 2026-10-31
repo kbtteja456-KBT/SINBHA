@@ -1137,7 +1137,7 @@ async def handle_open_app(user_id: int, args: dict, ctx: dict) -> dict:
 
     # Command Lifecycle Waiter (Item 1 & 2)
     if relay and hasattr(relay, "wait_for_command_completion"):
-        completion = await relay.wait_for_command_completion(user_id, cmd_id, timeout=10.0)
+        completion = await relay.wait_for_command_completion(user_id, cmd_id, timeout=15.0)
         if isinstance(completion, dict):
             status = completion.get("status")
             result_data = completion.get("result") or {}

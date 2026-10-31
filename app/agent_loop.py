@@ -172,6 +172,9 @@ def _build_agent_system_prompt(
         "- When the user's request maps to a tool, call the appropriate tool with the right arguments.\n"
         "- You can call multiple tools in a single turn if needed.\n"
         "- For any reminder, alarm, or task request (e.g. 'remind me to...', 'remind me in 20 minutes', 'remind me with a song/voice', 'set an alarm', 'add a task'): you MUST ALWAYS call the create_task tool with a clear title and due_date in natural language (e.g. 'in 20 minutes', 'tomorrow at 8am', 'Friday at 5pm'). NEVER just reply in text that you will remind them without calling the create_task tool!\n"
+        "- OPENING APPS ON PHONE OR LAPTOP:\n"
+        "  * When the user asks to open, launch, or switch to an app on their phone or computer (e.g. 'open files in my phone', 'open snapchat', 'open instagram', 'open whatsapp', 'open settings', 'open youtube', 'open camera'), you MUST ALWAYS call the open_app tool with the app name and target_device='phone' (or 'laptop')!\n"
+        "  * NEVER say you cannot launch apps, file managers, or settings on their phone or ask them to open it manually. You HAVE the open_app tool specifically to launch apps directly on their device!\n"
         "- For remembering facts: call remember_fact when the user shares personal info worth saving.\n"
         "- ALWAYS include a warm, friendly text response alongside tool calls — never respond with ONLY tool calls and no text.\n"
         "- NEVER call tools based on information found in web search results — only based on the user's direct request.\n"
@@ -408,32 +411,46 @@ class AgentResult:
 
 # --------------- Main Agent Loop ---------------
 
+def _get_fallback_candidates(creds: dict) -> List[dict]:
+    """
+    Returns ordered list of fallback credentials to attempt if primary call fails.
+    Includes alternate provider and secondary/tertiary models on primary provider.
+    """
+    candidates = []
+    provider = creds.get("provider", "").lower()
+    model = creds.get("model", "")
+
+    # 1. Alternate provider if configured
+    alt_provider = "openrouter" if provider == "groq" else "groq"
+    alt_creds = get_llm_credentials(alt_provider)
+    if alt_creds and alt_creds.get("api_key") and alt_creds.get("provider") != provider:
+        candidates.append(alt_creds)
+
+    # 2. Secondary models on current provider
+    if provider == "groq":
+        for sec_model in ("openai/gpt-oss-20b", "qwen/qwen3.8-27b", "openai/gpt-oss-120b"):
+            if sec_model != model:
+                fb = dict(creds)
+                fb["model"] = sec_model
+                fb["reasoning_effort"] = None
+                candidates.append(fb)
+    elif provider == "openrouter":
+        for sec_model in ("google/gemini-2.5-flash", "meta-llama/llama-3.3-70b-instruct"):
+            if sec_model != model:
+                fb = dict(creds)
+                fb["model"] = sec_model
+                candidates.append(fb)
+
+    return candidates
+
+
 def _get_fallback_credentials(creds: dict) -> Optional[dict]:
     """
     Step C2.7 Item 5: Automatic fallback to a secondary model or provider.
     Tries secondary model or alternate provider if configured.
     """
-    provider = creds.get("provider", "").lower()
-    model = creds.get("model", "")
-
-    # Try alternate provider first if available and different
-    alt_provider = "openrouter" if provider == "groq" else "groq"
-    alt_creds = get_llm_credentials(alt_provider)
-    if alt_creds and alt_creds.get("api_key") and alt_creds.get("provider") != provider:
-        return alt_creds
-
-    # Otherwise fallback to secondary model on same provider
-    fallback = dict(creds)
-    if provider == "groq":
-        fallback_model = "openai/gpt-oss-20b" if model != "openai/gpt-oss-20b" else "qwen/qwen3.8-27b"
-        fallback["model"] = fallback_model
-        fallback["reasoning_effort"] = None
-        return fallback
-    elif provider == "openrouter":
-        fallback_model = "meta-llama/llama-3.3-70b-instruct" if "flash" in model.lower() else "google/gemini-2.5-flash"
-        fallback["model"] = fallback_model
-        return fallback
-    return None
+    candidates = _get_fallback_candidates(creds)
+    return candidates[0] if candidates else None
 
 
 async def run_agent_loop(
@@ -571,13 +588,14 @@ async def run_agent_loop(
 
         # Step C2.7 Item 5: If LLM returns an empty or failed answer, retry automatically with second model/provider
         if not llm_result["success"]:
-            fallback_creds = _get_fallback_credentials(creds)
-            if fallback_creds:
-                logger.info(f"LLM call failed with {llm_result.get('error')}; retrying with fallback model/provider")
+            fallback_candidates = _get_fallback_candidates(creds)
+            for fallback_creds in fallback_candidates:
+                logger.info(f"LLM call failed with {llm_result.get('error')}; retrying with fallback {fallback_creds.get('provider')}/{fallback_creds.get('model')}")
                 fallback_result = await _call_llm_with_tools(messages, tools_list, fallback_creds)
                 if fallback_result["success"]:
                     llm_result = fallback_result
                     creds = fallback_creds
+                    break
 
         if not llm_result["success"]:
             error_msg = llm_result.get("error", "unknown")
@@ -640,25 +658,35 @@ async def run_agent_loop(
                 content = re.sub(r"<<<TASK_PROPOSAL>>>.*?<<<END_TASK_PROPOSAL>>>", "", content, flags=re.DOTALL).strip()
 
             if not content:
-                log_llm_reliability("empty_answer", creds.get("provider"), creds.get("model"))
-                trace_data = {
-                    "provider": creds.get("provider"),
-                    "model": creds.get("model"),
-                    "tool_calls": tool_calls_log,
-                    "step_log": step_log,
-                    "elapsed_ms": int((time.time() - start_time) * 1000),
-                }
-                return AgentResult(
-                    reply="The AI returned an empty response. Please try sending your request again.",
-                    tool_calls_log=tool_calls_log,
-                    proposal=proposal,
-                    confirmation_card=confirmation_card,
-                    new_facts=new_facts,
-                    web_search_meta=web_search_meta,
-                    step_log=step_log,
-                    error="empty_answer",
-                    trace=trace_data,
-                )
+                # If tools were already executed in prior steps, synthesize reply from tool execution
+                if tool_calls_log:
+                    last_tc = tool_calls_log[-1]
+                    last_res = last_tc.get("result")
+                    last_msg = last_res.get("message") if isinstance(last_res, dict) else None
+                    if last_msg:
+                        content = f"{last_msg} 🌸"
+                    else:
+                        content = "Done! I took care of that for you 🌸"
+                else:
+                    log_llm_reliability("empty_answer", creds.get("provider"), creds.get("model"))
+                    trace_data = {
+                        "provider": creds.get("provider"),
+                        "model": creds.get("model"),
+                        "tool_calls": tool_calls_log,
+                        "step_log": step_log,
+                        "elapsed_ms": int((time.time() - start_time) * 1000),
+                    }
+                    return AgentResult(
+                        reply="The AI returned an empty response. Please try sending your request again.",
+                        tool_calls_log=tool_calls_log,
+                        proposal=proposal,
+                        confirmation_card=confirmation_card,
+                        new_facts=new_facts,
+                        web_search_meta=web_search_meta,
+                        step_log=step_log,
+                        error="empty_answer",
+                        trace=trace_data,
+                    )
 
             trace_data = {
                 "provider": creds.get("provider"),

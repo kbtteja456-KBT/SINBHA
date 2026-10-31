@@ -365,12 +365,15 @@ class SinbhaCompanionService : Service() {
         wakeLock?.acquire(15_000L) // 15 seconds max
 
         try {
-            // 1. Report "received"
-            apiClient.reportCommandStatus(cmdId, "received")
+            // 1. Report "received" and "started" asynchronously so network HTTP latency does not delay app launch
+            serviceScope.launch {
+                apiClient.reportCommandStatus(cmdId, "received")
+            }
             sendWsStatus(cmdId, "received")
 
-            // 2. Report "started" BEFORE launching
-            apiClient.reportCommandStatus(cmdId, "started")
+            serviceScope.launch {
+                apiClient.reportCommandStatus(cmdId, "started")
+            }
             sendWsStatus(cmdId, "started")
 
             // 3. Execute command and report result

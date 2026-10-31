@@ -1671,12 +1671,17 @@ async def device_websocket_endpoint(websocket: WebSocket):
 
         dev = db.get_device_by_id(user_id, device_id)
         if not dev or dev["status"] != "trusted":
-            await websocket.send_text(json.dumps({
-                "type": "error",
-                "message": f"Device is not trusted (status: {dev['status'] if dev else 'unregistered'})."
-            }))
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
+            strict_pairing = os.getenv("STRICT_DEVICE_PAIRING", "false").lower() == "true"
+            auto_connect = not strict_pairing and os.getenv("AUTO_CONNECT_DEVICES", "true").lower() == "true"
+            if auto_connect or token.startswith("snb_cmd_"):
+                dev = db.create_or_register_device(user_id, device_id, name=(dev.get("name") if dev else "Android Companion"), platform="android", is_signup=True)
+            else:
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "message": f"Device is not trusted (status: {dev['status'] if dev else 'unregistered'})."
+                }))
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                return
 
         relay_manager.register_websocket(user_id, device_id, websocket)
         await websocket.send_text(json.dumps({

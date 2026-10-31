@@ -187,3 +187,4 @@ def is_command_supported_by_device(
     plat = (device_platform or "android").lower()
     default_tools = DEFAULT_PLATFORM_SUPPORTED_TOOLS.get(plat) or DEFAULT_PLATFORM_SUPPORTED_TOOLS["android"]
     return norm_type in [t.lower() for t in default_tools]
+
