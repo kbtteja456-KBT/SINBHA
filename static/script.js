@@ -2425,19 +2425,35 @@ document.addEventListener("DOMContentLoaded", () => {
             } catch (e) {}
           }
 
+          const devId = typeof getOrCreateDeviceId === "function" ? getOrCreateDeviceId() : null;
           const res = await fetch("/api/auth/device-token", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ device_token: existingToken, device_name: "Android Phone" })
+            body: JSON.stringify({ device_token: existingToken, device_name: "Android Phone", device_id: devId })
           });
           if (res.ok) {
             const tData = await res.json();
-            if (tData.device_token && window.Capacitor?.Plugins?.SinbhaNative) {
+            let commandToken = tData.command_token;
+            if (!commandToken && devId) {
+              try {
+                const cRes = await fetch("/api/devices/command-token", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ device_id: devId, device_name: "Android Phone" })
+                });
+                if (cRes.ok) {
+                  const cData = await cRes.json();
+                  commandToken = cData.command_token;
+                }
+              } catch (e) {}
+            }
+            if ((tData.device_token || commandToken) && window.Capacitor?.Plugins?.SinbhaNative) {
               await window.Capacitor.Plugins.SinbhaNative.syncSession({
                 token: tData.device_token,
+                commandToken: commandToken,
                 userId: tData.user_id,
                 email: tData.email,
-                deviceId: typeof getOrCreateDeviceId === "function" ? getOrCreateDeviceId() : null,
+                deviceId: devId,
                 emergency_stopped: tData.emergency_stopped,
                 quiet_hours: {
                   enabled: quietHoursToggle ? (quietHoursToggle.checked ? "true" : "false") : "true",
@@ -2445,7 +2461,7 @@ document.addEventListener("DOMContentLoaded", () => {
                   end: quietEndInput ? quietEndInput.value : "08:00"
                 }
               });
-              console.log("Dedicated mobile device token stored/renewed in Android encrypted keystore.");
+              console.log("Dedicated mobile device token & command token stored in Android encrypted keystore.");
             }
           }
         } catch (e) {
@@ -2762,6 +2778,27 @@ document.addEventListener("DOMContentLoaded", () => {
           lines.push(`Device Token: ${diag.tokenStatus}`);
           lines.push(`Last Sync Time: ${diag.lastSyncTime}`);
           
+          lines.push("\n--- COMMAND CHANNEL (C2.6) ---");
+          const cmdChan = diag.commandChannel || {};
+          const isWs = diag.wsConnected || cmdChan.wsConnected;
+          lines.push(`• WebSocket: ${isWs ? "CONNECTED 🌸 (Real-time native WebSocket)" : "DISCONNECTED (Polling fallback active)"}`);
+          if (diag.lastWsError && diag.lastWsError !== "None") {
+            lines.push(`  WS Error: ${diag.lastWsError}`);
+          }
+          const pTime = diag.lastPollTime || cmdChan.lastPollTime || "Never polled";
+          const hStatus = diag.lastHttpStatus !== undefined ? diag.lastHttpStatus : (cmdChan.lastHttpStatus !== undefined ? cmdChan.lastHttpStatus : -1);
+          const lastErr = diag.lastError || cmdChan.lastError;
+          const statusDesc = (hStatus >= 200 && hStatus <= 299) ? `HTTP ${hStatus} (OK)` : (hStatus === -1 ? "Offline / Network timeout" : `HTTP ${hStatus} (ERROR)`);
+          lines.push(`• Last Poll: ${pTime} [${statusDesc}]`);
+          if (lastErr && lastErr !== "None") {
+            lines.push(`• Last Poll Error: ${lastErr}`);
+          }
+
+          if (diag.isOnePlusOppo || cmdChan.isOnePlusOppo) {
+            lines.push("\n--- ONEPLUS / OPPO (COLOROS / OXYGENOS) GUIDANCE ---");
+            lines.push(diag.backgroundGuidance || cmdChan.backgroundGuidance || "1) App Info -> Battery -> Allow background activity & Auto-launch. 2) Settings -> Battery -> Don't optimize. 3) Recents -> Lock SINBHA.");
+          }
+
           lines.push("\n--- PERMISSIONS ---");
           lines.push(`• Floating Bird Overlay: ${diag.permissions?.overlay ? "GRANTED" : "ACTION NEEDED"}`);
           lines.push(`• Notifications: ${diag.permissions?.notifications ? "GRANTED" : "ACTION NEEDED"}`);

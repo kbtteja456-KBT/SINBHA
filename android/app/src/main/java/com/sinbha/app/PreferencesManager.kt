@@ -31,6 +31,7 @@ class PreferencesManager(private val context: Context) {
 
     companion object {
         private const val KEY_SESSION_TOKEN = "session_token"
+        private const val KEY_COMMAND_TOKEN = "command_token"
         private const val KEY_BACKEND_URL = "backend_url"
         private const val KEY_USER_EMAIL = "user_email"
         private const val KEY_USER_ID = "user_id"
@@ -42,6 +43,11 @@ class PreferencesManager(private val context: Context) {
         private const val KEY_CACHED_REMINDERS = "cached_reminders_json"
         private const val KEY_AUTH_PAUSED_ALERT_SHOWN = "auth_paused_alert_shown"
         private const val KEY_LAST_SYNC_TIME = "last_sync_time"
+        private const val KEY_LAST_POLL_TIME = "last_poll_time"
+        private const val KEY_LAST_HTTP_STATUS = "last_http_status"
+        private const val KEY_LAST_ERROR = "last_error"
+        private const val KEY_WS_CONNECTED = "ws_connected"
+        private const val KEY_LAST_WS_ERROR = "last_ws_error"
         private const val KEY_RECENT_ERRORS = "recent_errors_json"
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_REMINDER_SOUND_MODE = "reminder_sound_mode"
@@ -105,6 +111,30 @@ class PreferencesManager(private val context: Context) {
         get() = prefs.getString(KEY_SESSION_TOKEN, null)
         set(value) = prefs.edit().putString(KEY_SESSION_TOKEN, value).apply()
 
+    var commandToken: String?
+        get() = prefs.getString(KEY_COMMAND_TOKEN, null)
+        set(value) = prefs.edit().putString(KEY_COMMAND_TOKEN, value).apply()
+
+    var lastPollTime: String?
+        get() = prefs.getString(KEY_LAST_POLL_TIME, null)
+        set(value) = prefs.edit().putString(KEY_LAST_POLL_TIME, value).apply()
+
+    var lastHttpStatus: Int
+        get() = prefs.getInt(KEY_LAST_HTTP_STATUS, -1)
+        set(value) = prefs.edit().putInt(KEY_LAST_HTTP_STATUS, value).apply()
+
+    var lastError: String?
+        get() = prefs.getString(KEY_LAST_ERROR, null)
+        set(value) = prefs.edit().putString(KEY_LAST_ERROR, value).apply()
+
+    var wsConnected: Boolean
+        get() = prefs.getBoolean(KEY_WS_CONNECTED, false)
+        set(value) = prefs.edit().putBoolean(KEY_WS_CONNECTED, value).apply()
+
+    var lastWsError: String?
+        get() = prefs.getString(KEY_LAST_WS_ERROR, null)
+        set(value) = prefs.edit().putString(KEY_LAST_WS_ERROR, value).apply()
+
     var backendUrl: String
         get() = prefs.getString(KEY_BACKEND_URL, DEFAULT_BACKEND_URL) ?: DEFAULT_BACKEND_URL
         set(value) = prefs.edit().putString(KEY_BACKEND_URL, value).apply()
@@ -148,10 +178,18 @@ class PreferencesManager(private val context: Context) {
     fun clearSession() {
         prefs.edit()
             .remove(KEY_SESSION_TOKEN)
+            .remove(KEY_COMMAND_TOKEN)
             .remove(KEY_USER_EMAIL)
             .remove(KEY_USER_ID)
             .remove(KEY_CACHED_REMINDERS)
+            .remove(KEY_LAST_POLL_TIME)
+            .remove(KEY_LAST_HTTP_STATUS)
+            .remove(KEY_LAST_ERROR)
+            .remove(KEY_WS_CONNECTED)
+            .remove(KEY_LAST_WS_ERROR)
             .putBoolean(KEY_AUTH_PAUSED_ALERT_SHOWN, false)
+            .apply()
+    }
             .apply()
     }
 }

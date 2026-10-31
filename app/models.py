@@ -73,6 +73,7 @@ class DeviceToken(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     device_token = Column(String(128), unique=True, nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    device_id = Column(String(64), nullable=True, index=True)
     device_name = Column(String(128), default="Android Companion", nullable=False)
     scope = Column(String(64), default="reminders_only", nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)

@@ -134,6 +134,19 @@ def set_engine_url(new_url: str):
 def init_db():
     """Initializes schema tables and indexes."""
     Base.metadata.create_all(bind=engine)
+    try:
+        with engine.connect() as conn:
+            if engine.dialect.name == "sqlite":
+                res = conn.exec_driver_sql("PRAGMA table_info(device_tokens)").fetchall()
+                col_names = [r[1] for r in res]
+                if "device_id" not in col_names:
+                    conn.exec_driver_sql("ALTER TABLE device_tokens ADD COLUMN device_id VARCHAR(64)")
+                    conn.commit()
+            elif engine.dialect.name == "postgresql":
+                conn.exec_driver_sql("ALTER TABLE device_tokens ADD COLUMN IF NOT EXISTS device_id VARCHAR(64)")
+                conn.commit()
+    except Exception:
+        pass
 
 # ----------------- User Authentication & Account Operations (Step 9 & 10) -----------------
 
@@ -502,6 +515,174 @@ def revoke_user_device_tokens(user_id: int):
     """Revokes all device tokens for a user (called on password change, logout, or account delete)."""
     with get_db_session() as session:
         session.execute(delete(DeviceToken).where(DeviceToken.user_id == user_id))
+
+def create_device_command_token(user_id: int, device_id: str, device_name: str = "Android Companion", days_valid: int = 30) -> dict:
+    """
+    Step C2.6 Item 1:
+    Creates a dedicated, scoped device 'command token' for Android companion.
+    Prefix: snb_cmd_...
+    Scoped strictly to device command endpoints (pending, command-status, heartbeat, websocket).
+    Revocable per device (logout, Disconnect All, password change).
+    """
+    token = f"snb_cmd_{secrets.token_urlsafe(40)}"
+    now = utc_now()
+    expires_at = min(now + timedelta(days=days_valid), now + timedelta(days=MAX_DEVICE_TOKEN_LIFETIME_DAYS))
+    clean_dev_id = device_id.strip() if device_id else None
+    with get_db_session() as session:
+        if clean_dev_id:
+            session.execute(
+                delete(DeviceToken).where(
+                    and_(
+                        DeviceToken.user_id == user_id,
+                        DeviceToken.device_id == clean_dev_id,
+                        DeviceToken.scope == "command_only"
+                    )
+                )
+            )
+        dev_entry = DeviceToken(
+            device_token=token,
+            user_id=user_id,
+            device_id=clean_dev_id,
+            device_name=device_name,
+            scope="command_only",
+            expires_at=expires_at
+        )
+        session.add(dev_entry)
+    return {
+        "command_token": token,
+        "expires_at": expires_at.isoformat(),
+        "scope": "command_only",
+        "device_id": clean_dev_id,
+        "device_name": device_name
+    }
+
+def get_user_by_command_token(token: str) -> Optional[dict]:
+    """
+    Resolves active user from a dedicated device command token (snb_cmd_...).
+    Checks token scope is strictly 'command_only'.
+    Checks device is not revoked.
+    """
+    if not token or not token.startswith("snb_cmd_"):
+        return None
+    with get_db_session() as session:
+        dt = session.scalar(select(DeviceToken).where(DeviceToken.device_token == token))
+        if not dt or dt.scope != "command_only":
+            return None
+
+        now = utc_now()
+        created = dt.created_at
+        if created:
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            max_limit = created + timedelta(days=MAX_DEVICE_TOKEN_LIFETIME_DAYS)
+            if now > max_limit:
+                session.delete(dt)
+                return None
+        else:
+            max_limit = now + timedelta(days=MAX_DEVICE_TOKEN_LIFETIME_DAYS)
+
+        exp = dt.expires_at
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if now > exp:
+            session.delete(dt)
+            return None
+
+        # Check if device was revoked
+        if dt.device_id:
+            dev = session.scalar(
+                select(Device).where(
+                    and_(Device.user_id == dt.user_id, Device.device_id == dt.device_id)
+                )
+            )
+            if dev and dev.status == "revoked":
+                return None
+
+        # Rolling renewal
+        dt.last_used_at = now
+        dt.expires_at = min(now + timedelta(days=30), max_limit)
+
+        user = dt.user
+        if not user:
+            return None
+
+        return {
+            "id": user.id,
+            "email": user.email,
+            "is_admin": bool(user.is_admin),
+            "emergency_stopped": bool(user.emergency_stopped),
+            "timezone": user.timezone or "UTC",
+            "token_scope": "command_only",
+            "is_device_token": True,
+            "is_command_token": True,
+            "device_id": dt.device_id,
+            "device_name": dt.device_name,
+            "expires_at": dt.expires_at.isoformat()
+        }
+
+def renew_device_command_token(token: str, days: int = 30) -> Optional[dict]:
+    """Extends expiration of an active command token."""
+    if not token or not token.startswith("snb_cmd_"):
+        return None
+    with get_db_session() as session:
+        dt = session.scalar(select(DeviceToken).where(DeviceToken.device_token == token))
+        if not dt or dt.scope != "command_only":
+            return None
+
+        now = utc_now()
+        created = dt.created_at
+        if created:
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            max_limit = created + timedelta(days=MAX_DEVICE_TOKEN_LIFETIME_DAYS)
+            if now > max_limit:
+                session.delete(dt)
+                return None
+        else:
+            max_limit = now + timedelta(days=MAX_DEVICE_TOKEN_LIFETIME_DAYS)
+
+        exp = dt.expires_at
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if now > exp:
+            session.delete(dt)
+            return None
+
+        dt.last_used_at = now
+        dt.expires_at = min(now + timedelta(days=days), max_limit)
+        return {
+            "command_token": dt.device_token,
+            "expires_at": dt.expires_at.isoformat(),
+            "device_id": dt.device_id,
+            "device_name": dt.device_name
+        }
+
+def revoke_device_command_token(token: str):
+    """Revokes a specific command token."""
+    if not token:
+        return
+    with get_db_session() as session:
+        session.execute(delete(DeviceToken).where(DeviceToken.device_token == token))
+
+def revoke_device_command_tokens(user_id: int, device_id: Optional[str] = None):
+    """Revokes command tokens for a specific device or all devices of a user."""
+    with get_db_session() as session:
+        if device_id:
+            session.execute(
+                delete(DeviceToken).where(
+                    and_(
+                        DeviceToken.user_id == user_id,
+                        DeviceToken.device_id == device_id.strip(),
+                        DeviceToken.scope == "command_only"
+                    )
+                )
+            )
+        else:
+            session.execute(
+                delete(DeviceToken).where(
+                    and_(DeviceToken.user_id == user_id, DeviceToken.scope == "command_only")
+                )
+            )
 
 def change_user_password(user_id: int, old_password: str, new_password: str) -> None:
     """
@@ -1816,6 +1997,12 @@ def revoke_device(user_id: int, device_id: str) -> dict:
         if not dev:
             raise ValueError("Device not found.")
         dev.status = "revoked"
+        # Revoke command tokens and device tokens for this specific device
+        session.execute(
+            delete(DeviceToken).where(
+                and_(DeviceToken.user_id == user_id, DeviceToken.device_id == device_id)
+            )
+        )
         log_audit(
             user_id,
             "DEVICE_REVOKED",
@@ -1831,6 +2018,12 @@ def disconnect_all_devices(user_id: int) -> int:
             update(Device).where(Device.user_id == user_id).values(status="revoked")
         )
         count = result.rowcount
+        # Revoke all command tokens and device tokens
+        session.execute(
+            delete(DeviceToken).where(
+                and_(DeviceToken.user_id == user_id, DeviceToken.scope == "command_only")
+            )
+        )
         log_audit(
             user_id,
             "DEVICES_DISCONNECT_ALL",

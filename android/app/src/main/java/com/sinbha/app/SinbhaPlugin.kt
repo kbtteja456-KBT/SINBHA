@@ -140,6 +140,10 @@ class SinbhaPlugin : Plugin() {
         }
 
         prefs.sessionToken = token
+        val cmdToken = call.getString("commandToken")
+        if (!cmdToken.isNullOrEmpty()) {
+            prefs.commandToken = cmdToken
+        }
         prefs.userEmail = call.getString("email")
         prefs.userId = call.getInt("userId", -1) ?: -1
         prefs.isEmergencyStopped = call.getBoolean("emergency_stopped", false) ?: false
@@ -614,12 +618,39 @@ class SinbhaPlugin : Plugin() {
             }
         } catch (e: Exception) {}
 
+        val isOnePlusOppo = Build.MANUFACTURER.equals("oneplus", true) ||
+                Build.MANUFACTURER.equals("oppo", true) ||
+                Build.BRAND.equals("oneplus", true) ||
+                Build.BRAND.equals("oppo", true)
+        val guidanceText = if (isOnePlusOppo) {
+            "OnePlus/Oppo (ColorOS/OxygenOS): 1) App Info -> Battery -> Allow background activity & Auto-launch. 2) Settings -> Battery -> More settings -> App battery management -> SINBHA -> Don't optimize. 3) Recents -> Lock SINBHA."
+        } else {
+            "Disable battery optimizations for SINBHA to ensure background companion commands execute reliably."
+        }
+
         val res = JSObject().apply {
             put("versionName", pInfo.versionName)
             put("versionCode", vCode)
             put("tokenStatus", tokenStatusStr)
             put("hasToken", tokenExists)
             put("lastSyncTime", prefs.lastSyncTime ?: "Never synced yet")
+            put("lastPollTime", prefs.lastPollTime ?: "Never polled")
+            put("lastHttpStatus", prefs.lastHttpStatus)
+            put("lastError", prefs.lastError ?: "None")
+            put("wsConnected", prefs.wsConnected)
+            put("lastWsError", prefs.lastWsError ?: "None")
+            put("isOnePlusOppo", isOnePlusOppo)
+            put("backgroundGuidance", guidanceText)
+            put("commandChannel", JSObject().apply {
+                put("hasCommandToken", !prefs.commandToken.isNullOrEmpty())
+                put("lastPollTime", prefs.lastPollTime ?: "Never polled")
+                put("lastHttpStatus", prefs.lastHttpStatus)
+                put("lastError", prefs.lastError ?: "None")
+                put("wsConnected", prefs.wsConnected)
+                put("lastWsError", prefs.lastWsError ?: "None")
+                put("isOnePlusOppo", isOnePlusOppo)
+                put("backgroundGuidance", guidanceText)
+            })
             put("permissions", JSObject().apply {
                 put("overlay", hasOverlay)
                 put("notifications", hasNotifications)
@@ -637,6 +668,19 @@ class SinbhaPlugin : Plugin() {
         }
 
         call.resolve(res)
+    }
+
+    @PluginMethod
+    fun getInstalledApps(call: PluginCall) {
+        val apps = SinbhaAppLauncher.getInstalledApps(context)
+        val arr = JSArray()
+        for (a in apps) {
+            arr.put(JSObject().apply {
+                put("name", a["name"])
+                put("package", a["package"])
+            })
+        }
+        call.resolve(JSObject().put("apps", arr))
     }
 
     /**

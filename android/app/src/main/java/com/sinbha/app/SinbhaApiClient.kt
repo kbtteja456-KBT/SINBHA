@@ -263,33 +263,128 @@ class SinbhaApiClient(private val context: Context) {
     }
 
     suspend fun fetchPendingCommands(deviceId: String): List<JSONObject> = withContext(Dispatchers.IO) {
-        val token = prefs.sessionToken ?: return@withContext emptyList()
+        val token = prefs.commandToken ?: prefs.sessionToken ?: return@withContext emptyList()
         val list = mutableListOf<JSONObject>()
+        val nowStr = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+        prefs.lastPollTime = nowStr
         try {
             val encodedId = java.net.URLEncoder.encode(deviceId, "UTF-8")
             val url = URL("${prefs.backendUrl}/api/devices/commands/pending?device_id=$encodedId")
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 setRequestProperty("Authorization", "Bearer $token")
+                setRequestProperty("X-Command-Token", token)
                 setRequestProperty("Cookie", "sinbha_session=$token")
                 setRequestProperty("X-Requested-With", "XMLHttpRequest")
                 connectTimeout = 6000
                 readTimeout = 6000
             }
 
-            if (conn.responseCode in 200..299) {
+            val code = conn.responseCode
+            prefs.lastHttpStatus = code
+            if (code in 200..299) {
+                prefs.lastError = null
                 val responseText = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
                 val root = JSONObject(responseText)
                 val arr = root.optJSONArray("commands") ?: JSONArray()
                 for (i in 0 until arr.length()) {
                     list.add(arr.getJSONObject(i))
                 }
+            } else {
+                val errBody = try {
+                    conn.errorStream?.let { BufferedReader(InputStreamReader(it)).use { r -> r.readText() } } ?: ""
+                } catch (e: Exception) { "" }
+                val errMsg = "HTTP $code: $errBody".trim()
+                prefs.lastError = errMsg
+                prefs.recordError("Command poll failed ($errMsg)")
             }
             conn.disconnect()
         } catch (e: Exception) {
-            // Silently catch network timeouts in background polling
+            prefs.lastHttpStatus = -1
+            val errMsg = "Network error: ${e.message}"
+            prefs.lastError = errMsg
+            prefs.recordError("Command poll network error: ${e.message}")
         }
         return@withContext list
+    }
+
+    suspend fun reportCommandStatus(
+        commandId: String,
+        status: String,
+        result: JSONObject? = null,
+        error: String? = null
+    ): Boolean = withContext(Dispatchers.IO) {
+        val token = prefs.commandToken ?: prefs.sessionToken ?: return@withContext false
+        try {
+            val url = URL("${prefs.backendUrl}/api/devices/command-status")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("Authorization", "Bearer $token")
+                setRequestProperty("X-Command-Token", token)
+                setRequestProperty("Cookie", "sinbha_session=$token")
+                setRequestProperty("X-Requested-With", "XMLHttpRequest")
+                connectTimeout = 8000
+                readTimeout = 8000
+                doOutput = true
+            }
+
+            val body = JSONObject().apply {
+                put("command_id", commandId)
+                put("status", status)
+                if (result != null) put("result", result)
+                if (!error.isNullOrBlank()) put("error", error)
+            }.toString()
+
+            OutputStreamWriter(conn.outputStream).use { it.write(body) }
+            val code = conn.responseCode
+            conn.disconnect()
+            code in 200..299
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    suspend fun sendHeartbeat(
+        deviceId: String,
+        installedApps: JSONArray? = null,
+        battery: Int? = null,
+        isCharging: Boolean = false
+    ): Boolean = withContext(Dispatchers.IO) {
+        val token = prefs.commandToken ?: prefs.sessionToken ?: return@withContext false
+        try {
+            val url = URL("${prefs.backendUrl}/api/devices/heartbeat")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("Authorization", "Bearer $token")
+                setRequestProperty("X-Command-Token", token)
+                setRequestProperty("Cookie", "sinbha_session=$token")
+                setRequestProperty("X-Requested-With", "XMLHttpRequest")
+                connectTimeout = 8000
+                readTimeout = 8000
+                doOutput = true
+            }
+
+            val body = JSONObject().apply {
+                put("device_id", deviceId)
+                put("platform", "android")
+                put("version", "1.4.7")
+                if (battery != null) put("battery", battery)
+                put("is_charging", isCharging)
+                if (installedApps != null && installedApps.length() > 0) {
+                    put("installed_apps", installedApps)
+                }
+            }.toString()
+
+            OutputStreamWriter(conn.outputStream).use { it.write(body) }
+            val code = conn.responseCode
+            conn.disconnect()
+            code in 200..299
+        } catch (e: Exception) {
+            false
+        }
     }
 }
 

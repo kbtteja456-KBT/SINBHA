@@ -49,8 +49,11 @@ class CommandRelayManager:
         self._lifecycle_waiters: Dict[str, asyncio.Future] = {}
 
         # Device capabilities reported via handshake: (user_id, device_id) -> dict
-        # { version, platform, supported_tools, updated_at }
+        # { version, platform, supported_tools, installed_apps, updated_at }
         self.device_capabilities: Dict[Tuple[int, str], dict] = {}
+
+        # Installed apps reported by companion devices: (user_id, device_id) -> List[dict]
+        self.device_installed_apps: Dict[Tuple[int, str], List[dict]] = {}
 
     DEFAULT_SUPPORTED_TOOLS = {
         "windows": [
@@ -79,7 +82,8 @@ class CommandRelayManager:
         device_id: str,
         platform: str,
         app_version: str,
-        supported_tools: Optional[List[str]] = None
+        supported_tools: Optional[List[str]] = None,
+        installed_apps: Optional[List[dict]] = None
     ) -> dict:
         """Stores device capability handshake reported by companion app."""
         tools = supported_tools or self.get_default_supported_tools(platform)
@@ -87,10 +91,60 @@ class CommandRelayManager:
             "platform": platform,
             "app_version": app_version,
             "supported_tools": tools,
+            "installed_apps": installed_apps or self.device_installed_apps.get((user_id, device_id), []),
             "updated_at": time.time()
         }
         self.device_capabilities[(user_id, device_id)] = caps
+        if installed_apps:
+            self.device_installed_apps[(user_id, device_id)] = installed_apps
         return caps
+
+    def get_device_installed_apps(self, user_id: int, device_id: str) -> List[dict]:
+        """Returns installed apps reported by this companion device."""
+        if (user_id, device_id) in self.device_installed_apps:
+            return self.device_installed_apps[(user_id, device_id)]
+        caps = self.device_capabilities.get((user_id, device_id))
+        if caps and caps.get("installed_apps"):
+            return caps["installed_apps"]
+        return []
+
+    def find_installed_app_match(self, user_id: int, device_id: str, app_query: str) -> Optional[dict]:
+        """
+        Step C2.6 Item 6: Typo-tolerant matching of app_query against phone reported installed apps.
+        Never falls back silently to a website.
+        """
+        import difflib
+        apps = self.get_device_installed_apps(user_id, device_id)
+        if not apps:
+            return None
+
+        clean_query = app_query.strip().lower().replace(" ", "").replace("_", "").replace("-", "")
+        # 1. Exact match on package or name
+        for a in apps:
+            name = (a.get("name") or "").lower()
+            pkg = (a.get("package") or "").lower()
+            clean_name = name.replace(" ", "").replace("_", "").replace("-", "")
+            if clean_query == clean_name or clean_query == pkg or pkg.endswith("." + clean_query):
+                return a
+
+        # 2. Substring match
+        for a in apps:
+            name = (a.get("name") or "").lower()
+            pkg = (a.get("package") or "").lower()
+            clean_name = name.replace(" ", "").replace("_", "").replace("-", "")
+            if clean_query in clean_name or clean_name in clean_query or clean_query in pkg:
+                return a
+
+        # 3. Fuzzy Levenshtein / SequenceMatcher match (cutoff 0.6)
+        names = [(a.get("name") or "").lower() for a in apps]
+        matches = difflib.get_close_matches(app_query.lower(), names, n=1, cutoff=0.6)
+        if matches:
+            best_name = matches[0]
+            for a in apps:
+                if (a.get("name") or "").lower() == best_name:
+                    return a
+
+        return None
 
     def get_device_supported_tools(self, user_id: int, device_id: str, platform: Optional[str] = None) -> List[str]:
         """Returns the list of tools verified to be supported on the target device."""
@@ -168,9 +222,10 @@ class CommandRelayManager:
             })
         )
 
-        # If waiting future exists and status is final (succeeded or failed), resolve it
+        # If waiting future exists and status is final (succeeded, failed, executed, needs_tap), resolve it
+        terminal_statuses = ("succeeded", "failed", "executed", "needs_tap")
         waiter = self._lifecycle_waiters.get(cmd_id)
-        if waiter and not waiter.done() and status in ("succeeded", "failed"):
+        if waiter and not waiter.done() and status in terminal_statuses:
             waiter.set_result(entry)
 
         return entry
@@ -185,10 +240,12 @@ class CommandRelayManager:
         timeout: float = 10.0
     ) -> dict:
         """
-        Awaits until the command moves to 'succeeded' or 'failed', or times out (~10s).
+        Awaits until the command moves to terminal state ('succeeded', 'failed', 'executed', 'needs_tap'),
+        or times out (~10s).
         """
+        terminal_statuses = ("succeeded", "failed", "executed", "needs_tap")
         entry = self.command_lifecycles.get(cmd_id)
-        if entry and entry.get("status") in ("succeeded", "failed"):
+        if entry and entry.get("status") in terminal_statuses:
             return entry
 
         try:

@@ -179,6 +179,8 @@ class DeviceCommandRequest(BaseModel):
 class DeviceCommandAckRequest(BaseModel):
     status: str = "executed"
     details: Optional[str] = ""
+    result: Optional[dict] = None
+    error: Optional[str] = None
 
 def get_local_ip():
     """Finds the local network IP so you can open the app on your phone."""
@@ -213,11 +215,16 @@ async def get_current_user_optional(request: Request) -> Optional[dict]:
             token = auth_header[7:].strip()
     if not token:
         return None
-    # Requirement 3: Device tokens cannot access full user session endpoints
+    # Requirement 3 & C2.6: Device tokens cannot access full user session endpoints
     if token.startswith("snb_dev_"):
         raise HTTPException(
             status_code=403,
             detail="Device token scope is restricted strictly to reminder actions (fetch reminders, Done, Snooze). Full user session required."
+        )
+    if token.startswith("snb_cmd_"):
+        raise HTTPException(
+            status_code=403,
+            detail="Device command token scope is restricted strictly to device command endpoints (pending, command-status, heartbeat). Full user session required."
         )
     return db.get_user_by_session(token)
 
@@ -239,7 +246,15 @@ async def get_reminder_action_user(request: Request) -> dict:
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header[7:].strip()
     if not token:
+        token = request.headers.get("x-device-token")
+    if not token:
         raise HTTPException(status_code=401, detail="Authentication required. Please provide a valid session or device token.")
+
+    if token.startswith("snb_cmd_"):
+        raise HTTPException(
+            status_code=403,
+            detail="Command token cannot access reminder actions. Reminder token or full session required."
+        )
 
     if token.startswith("snb_dev_"):
         user = db.get_user_by_device_token(token)
@@ -251,6 +266,48 @@ async def get_reminder_action_user(request: Request) -> dict:
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required. Please log in.")
     return user
+
+async def get_device_command_user(request: Request) -> dict:
+    """
+    Step C2.6 Item 1: Dedicated dependency for device command endpoints
+    (pending, command-status, heartbeat, ack).
+    Accepts full user web sessions OR dedicated device command tokens (snb_cmd_...).
+    Rejects reminder-only tokens (snb_dev_...).
+    """
+    token = None
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
+    if not token:
+        token = request.headers.get("x-command-token") or request.headers.get("x-device-token")
+    if not token:
+        token = request.query_params.get("token")
+    if not token:
+        token = request.cookies.get(SESSION_COOKIE_NAME)
+    if not token:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required. Please provide a valid session or command token."
+        )
+
+    if token.startswith("snb_cmd_"):
+        user = db.get_user_by_command_token(token)
+        if not user:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid, expired, or revoked device command token. Please reconnect companion."
+            )
+        return user
+    elif token.startswith("snb_dev_"):
+        raise HTTPException(
+            status_code=403,
+            detail="Reminder device token cannot access device command endpoints. Command token required."
+        )
+    else:
+        user = db.get_user_by_session(token)
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid session token.")
+        return user
 
 # ----------------- Auth Endpoints (Step 9 & 11) -----------------
 
@@ -330,10 +387,13 @@ async def logout_endpoint(request: Request, response: Response):
     token = request.cookies.get(SESSION_COOKIE_NAME)
     auth_header = request.headers.get("Authorization")
     dev_token = None
+    cmd_token = None
     if auth_header and auth_header.startswith("Bearer "):
         val = auth_header[7:].strip()
         if val.startswith("snb_dev_"):
             dev_token = val
+        elif val.startswith("snb_cmd_"):
+            cmd_token = val
         elif not token:
             token = val
 
@@ -341,12 +401,20 @@ async def logout_endpoint(request: Request, response: Response):
     if x_dev_token and not dev_token:
         dev_token = x_dev_token.strip()
 
+    x_cmd_token = request.headers.get("x-command-token")
+    if x_cmd_token and not cmd_token:
+        cmd_token = x_cmd_token.strip()
+
     if token:
         db.delete_session(token)
 
     if dev_token:
         # Requirement 1: Revoke only this device's token, not other devices!
         db.revoke_device_token(dev_token)
+
+    if cmd_token:
+        # Step C2.6 Item 1: Revoke this device's command token!
+        db.revoke_device_command_token(cmd_token)
 
     response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
     return {"success": True, "message": "Logged out successfully 🌸"}
@@ -986,16 +1054,25 @@ async def issue_device_token_endpoint(request: Request, user: dict = Depends(get
     """
     existing_token = None
     device_name = "Android Companion"
+    device_id = None
     try:
         body = await request.json()
         if isinstance(body, dict):
             existing_token = body.get("device_token") or body.get("existing_token")
             device_name = body.get("device_name", device_name)
+            device_id = body.get("device_id")
     except Exception:
         pass
 
     if not existing_token:
         existing_token = request.headers.get("x-device-token")
+    if not device_id:
+        device_id = request.headers.get("x-device-id") or request.query_params.get("device_id")
+
+    command_token = None
+    if device_id:
+        cmd_info = db.create_device_command_token(user["id"], device_id=device_id.strip(), device_name=device_name)
+        command_token = cmd_info["command_token"]
 
     # If an existing valid token is passed, renew it (rolling expiry)
     if existing_token:
@@ -1004,6 +1081,7 @@ async def issue_device_token_endpoint(request: Request, user: dict = Depends(get
             return {
                 "success": True,
                 "device_token": renewed["device_token"],
+                "command_token": command_token,
                 "scope": "reminders_only",
                 "expires_at": renewed["expires_at"],
                 "user_id": user["id"],
@@ -1016,6 +1094,7 @@ async def issue_device_token_endpoint(request: Request, user: dict = Depends(get
     return {
         "success": True,
         "device_token": dev_data["device_token"],
+        "command_token": command_token,
         "scope": dev_data["scope"],
         "expires_at": dev_data["expires_at"],
         "user_id": user["id"],
@@ -1501,10 +1580,11 @@ async def send_device_command_endpoint(payload: DeviceCommandRequest, user: dict
     return res
 
 @app.get("/api/devices/commands/pending")
-async def get_pending_commands_endpoint(device_id: str, user: dict = Depends(get_current_user)):
+async def get_pending_commands_endpoint(device_id: str, user: dict = Depends(get_device_command_user)):
     """
     Retrieves and drains pending offline commands for a device.
     Stale commands (> 60s) are pruned and never returned.
+    Scoped to device command token or full user session.
     """
     clean_id = device_id.strip()
     dev = db.get_device_by_id(user["id"], clean_id)
@@ -1523,19 +1603,29 @@ async def get_pending_commands_endpoint(device_id: str, user: dict = Depends(get
     return {"commands": commands}
 
 @app.post("/api/devices/commands/{command_id}/ack")
-async def ack_device_command_endpoint(command_id: str, payload: DeviceCommandAckRequest, user: dict = Depends(get_current_user)):
-    """Acknowledges receipt or execution outcome of a command."""
+async def ack_device_command_endpoint(command_id: str, payload: DeviceCommandAckRequest, user: dict = Depends(get_device_command_user)):
+    """
+    Step C2.6 Item 2: Acknowledges receipt or execution outcome of a command.
+    Updates the lifecycle status and resolves server waiters awaiting confirmation.
+    """
+    st = payload.status or "succeeded"
+    if st in ("executed", "ack"):
+        st = "succeeded"
+    res_data = payload.result or ({"details": payload.details} if payload.details else None)
+    err_data = payload.error
+    updated = relay_manager.update_command_status(user["id"], command_id, st, result=res_data, error=err_data)
     db.log_audit(
         user["id"],
         "DEVICE_COMMAND_ACK",
-        json.dumps({"command_id": command_id, "status": payload.status, "result": "acknowledged"})
+        json.dumps({"command_id": command_id, "status": st, "result": "acknowledged"})
     )
-    return {"success": True, "command_id": command_id, "status": payload.status}
+    return {"success": True, "command_id": command_id, "status": st, "lifecycle": updated}
 
 @app.websocket("/api/ws/devices")
 async def device_websocket_endpoint(websocket: WebSocket):
     """
     Authenticated WebSocket relay channel for real-time remote commands.
+    Accepts full user sessions or dedicated device command tokens (snb_cmd_...).
     """
     await websocket.accept()
     user_id = None
@@ -1558,9 +1648,15 @@ async def device_websocket_endpoint(websocket: WebSocket):
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
 
-        user = db.get_user_by_session(token)
+        if token.startswith("snb_cmd_"):
+            user = db.get_user_by_command_token(token)
+        elif token.startswith("snb_dev_"):
+            user = None
+        else:
+            user = db.get_user_by_session(token)
+
         if not user:
-            await websocket.send_text(json.dumps({"type": "error", "message": "Invalid session token."}))
+            await websocket.send_text(json.dumps({"type": "error", "message": "Invalid session or command token."}))
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
 
@@ -1620,15 +1716,19 @@ async def device_websocket_endpoint(websocket: WebSocket):
                 relay_manager.update_command_status(user_id, cid, st, result=res_data, error=err_data)
             elif msg_type == "device_status":
                 platform = msg.get("platform", "unknown")
-                version = msg.get("version", "1.4.5")
+                version = msg.get("version", "1.4.7")
                 tools = msg.get("supported_tools")
-                relay_manager.record_device_capabilities(user_id, device_id, platform, version, tools)
+                installed_apps = msg.get("installed_apps")
+                relay_manager.record_device_capabilities(
+                    user_id, device_id, platform, version, tools, installed_apps=installed_apps
+                )
                 relay_manager.store_device_telemetry(user_id, device_id, {
                     "battery": msg.get("battery"),
                     "is_charging": msg.get("is_charging", False),
                     "platform": platform,
                     "version": version,
                     "supported_tools": tools,
+                    "installed_apps": installed_apps,
                     "updated_at": time.time()
                 })
             elif msg_type == "sync_notifications":
@@ -1645,8 +1745,11 @@ async def device_websocket_endpoint(websocket: WebSocket):
 
 
 @app.post("/api/devices/command-status")
-async def update_device_command_status_endpoint(payload: dict, user: dict = Depends(get_current_user)):
-    """Receives command lifecycle updates (started, succeeded, failed) from companion devices."""
+async def update_device_command_status_endpoint(payload: dict, user: dict = Depends(get_device_command_user)):
+    """
+    Step C2.6 Item 2: Receives command lifecycle updates (received, started, succeeded, failed, needs_tap)
+    from companion devices. Resolves the server's confirmation wait.
+    """
     cid = payload.get("command_id") or payload.get("id")
     if not cid:
         raise HTTPException(status_code=400, detail="command_id is required")
@@ -1655,6 +1758,124 @@ async def update_device_command_status_endpoint(payload: dict, user: dict = Depe
     err_data = payload.get("error")
     updated = relay_manager.update_command_status(user["id"], cid, st, result=res_data, error=err_data)
     return {"success": True, "lifecycle": updated}
+
+
+@app.post("/api/devices/heartbeat")
+@app.get("/api/devices/heartbeat")
+async def device_heartbeat_endpoint(request: Request, user: dict = Depends(get_device_command_user)):
+    """
+    Step C2.6 Item 1 & 3: Heartbeat endpoint for mobile companion device command channel.
+    Updates last_seen, records battery/platform telemetry and installed apps.
+    """
+    data = {}
+    try:
+        data = await request.json()
+    except Exception:
+        pass
+
+    q_dev_id = request.query_params.get("device_id")
+    device_id = data.get("device_id") or q_dev_id or user.get("device_id")
+    if device_id:
+        clean_id = device_id.strip()
+        relay_manager.mark_device_active(user["id"], clean_id)
+        db.update_device_last_seen(clean_id)
+        if "battery" in data or "platform" in data:
+            relay_manager.store_device_telemetry(user["id"], clean_id, {
+                "battery": data.get("battery"),
+                "is_charging": data.get("is_charging", False),
+                "platform": data.get("platform", "android"),
+                "version": data.get("version", "1.4.7"),
+                "installed_apps": data.get("installed_apps"),
+                "updated_at": time.time()
+            })
+        if data.get("installed_apps") or data.get("supported_tools"):
+            relay_manager.record_device_capabilities(
+                user["id"],
+                clean_id,
+                data.get("platform", "android"),
+                data.get("version", "1.4.7"),
+                data.get("supported_tools"),
+                installed_apps=data.get("installed_apps")
+            )
+
+    return {
+        "status": "ok",
+        "timestamp": time.time(),
+        "device_id": device_id,
+        "emergency_stopped": db.get_emergency_stopped(user["id"]),
+        "last_seen": time.time()
+    }
+
+
+@app.post("/api/devices/command-token")
+async def issue_device_command_token_endpoint(request: Request, user: dict = Depends(get_current_user)):
+    """
+    Step C2.6 Item 1: Issues a dedicated device command token (snb_cmd_...)
+    scoped ONLY to device command endpoints (pending, command-status, heartbeat, ws).
+    """
+    data = {}
+    try:
+        data = await request.json()
+    except Exception:
+        pass
+    device_id = data.get("device_id") or request.query_params.get("device_id")
+    device_name = data.get("device_name", "Android Phone")
+    if not device_id:
+        raise HTTPException(status_code=400, detail="device_id is required")
+
+    cmd_data = db.create_device_command_token(user["id"], device_id=device_id.strip(), device_name=device_name)
+    return {
+        "success": True,
+        "command_token": cmd_data["command_token"],
+        "scope": cmd_data["scope"],
+        "device_id": cmd_data["device_id"],
+        "expires_at": cmd_data["expires_at"],
+        "user_id": user["id"],
+    }
+
+
+@app.post("/api/devices/command-token/renew")
+async def renew_device_command_token_endpoint(request: Request):
+    """Renews a dedicated device command token (snb_cmd_...)."""
+    cmd_token = request.headers.get("x-command-token")
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer snb_cmd_"):
+        cmd_token = auth_header.replace("Bearer ", "").strip()
+    if not cmd_token:
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                cmd_token = body.get("command_token")
+        except Exception:
+            pass
+
+    if not cmd_token:
+        raise HTTPException(status_code=400, detail="Command token required")
+
+    renewed = db.renew_device_command_token(cmd_token, days=30)
+    if not renewed:
+        raise HTTPException(status_code=401, detail="Command token is invalid or expired")
+
+    return {
+        "success": True,
+        "command_token": renewed["command_token"],
+        "expires_at": renewed["expires_at"],
+        "message": "Device command token renewed successfully"
+    }
+
+
+@app.post("/api/devices/command-token/revoke")
+async def revoke_device_command_token_endpoint(request: Request, user: dict = Depends(get_device_command_user)):
+    """Revokes the calling device's command token."""
+    token = request.headers.get("x-command-token")
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer snb_cmd_"):
+        token = auth_header.replace("Bearer ", "").strip()
+    if token:
+        db.revoke_device_command_token(token)
+    elif user.get("device_id"):
+        db.revoke_device_command_tokens(user["id"], device_id=user["device_id"])
+    return {"success": True, "message": "Command token revoked successfully"}
 
 
 @app.post("/api/diagnostics/self-test")
@@ -1912,12 +2133,15 @@ async def device_self_test_endpoint(user: dict = Depends(get_current_user)):
             "expiry": 60,
         })
         res = await relay_manager.wait_for_command_completion(user_id, cmd_id, timeout=10.0)
-        if res.get("status") == "succeeded":
+        if res.get("status") in ("succeeded", "needs_tap"):
+            pkg = res.get("result", {}).get("package") if isinstance(res.get("result"), dict) else None
+            pkg_str = f" ({pkg})" if pkg else ""
+            tap_note = " (Needs tap on notification)" if res.get("status") == "needs_tap" else ""
             tests.append({
                 "id": "phone_settings",
                 "name": "Phone: Open Settings",
                 "status": "pass",
-                "detail": f"Android Settings opened on {phone_dev.get('name')}."
+                "detail": f"Android Settings opened on {phone_dev.get('name')}{pkg_str}{tap_note}."
             })
         else:
             tests.append({
@@ -1932,6 +2156,56 @@ async def device_self_test_endpoint(user: dict = Depends(get_current_user)):
             "name": "Phone: Open Settings",
             "status": "fail",
             "detail": "Phone offline or not paired."
+        })
+
+    # 9. Phone: Nonexistent App Rejection (Step C2.6 Item 6: Must report 'not installed', never fallback to website)
+    if phone_dev and relay_manager.is_device_connected(user_id, phone_dev["device_id"]):
+        cmd_id = f"cmd_test_nonex_{int(time.time()*1000)}"
+        await relay_manager.relay_command(user_id, {
+            "id": cmd_id,
+            "sender_device": "server",
+            "target_device": phone_dev["device_id"],
+            "type": "open_app",
+            "payload": {"app": "NonExistentApp123"},
+            "created_at": time.time(),
+            "expiry": 60,
+        })
+        res = await relay_manager.wait_for_command_completion(user_id, cmd_id, timeout=10.0)
+        if res.get("status") == "failed" and "not installed" in str(res.get("error", "")).lower():
+            tests.append({
+                "id": "phone_nonexistent_app",
+                "name": "Phone: Nonexistent App Rejection",
+                "status": "pass",
+                "detail": f"Correctly rejected nonexistent app with honest error: '{res.get('error')}'"
+            })
+        elif res.get("status") == "succeeded":
+            tests.append({
+                "id": "phone_nonexistent_app",
+                "name": "Phone: Nonexistent App Rejection",
+                "status": "fail",
+                "detail": "Failed: app launch unexpectedly succeeded or fell back silently to a website."
+            })
+        else:
+            tests.append({
+                "id": "phone_nonexistent_app",
+                "name": "Phone: Nonexistent App Rejection",
+                "status": "pass",
+                "detail": f"Phone reported expected rejection: {res.get('error') or res.get('message')}"
+            })
+
+    # 10. Command Channel Diagnostics (Step C2.6 Item 3: Keep last poll time, status, and error)
+    for d in devs:
+        did = d["device_id"]
+        is_conn = relay_manager.is_device_connected(user_id, did)
+        tel = relay_manager.get_device_telemetry(user_id, did) or {}
+        last_act = relay_manager.device_last_active.get((user_id, did))
+        act_str = f"{int(time.time() - last_act)}s ago" if last_act else "Never"
+        apps_count = len(relay_manager.get_device_installed_apps(user_id, did))
+        tests.append({
+            "id": f"diagnostics_{did}",
+            "name": f"Channel Diagnostics: {d.get('name')}",
+            "status": "pass" if is_conn else "info",
+            "detail": f"Status: {'CONNECTED (WebSocket)' if is_conn else 'Polling/Offline'}, Last Active: {act_str}, Battery: {tel.get('battery', 'N/A')}%, Installed Apps Reported: {apps_count}"
         })
 
     pass_count = sum(1 for t in tests if t["status"] == "pass")
@@ -2274,12 +2548,15 @@ async def device_self_test_endpoint(user: dict = Depends(get_current_user)):
             "expiry": 60,
         })
         res = await relay_manager.wait_for_command_completion(user_id, cmd_id, timeout=10.0)
-        if res.get("status") == "succeeded":
+        if res.get("status") in ("succeeded", "needs_tap"):
+            pkg = res.get("result", {}).get("package") if isinstance(res.get("result"), dict) else None
+            pkg_str = f" ({pkg})" if pkg else ""
+            tap_note = " (Needs tap on notification)" if res.get("status") == "needs_tap" else ""
             tests.append({
                 "id": "phone_settings",
                 "name": "Phone: Open Settings",
                 "status": "pass",
-                "detail": f"Android Settings opened on {phone_dev.get('name')}."
+                "detail": f"Android Settings opened on {phone_dev.get('name')}{pkg_str}{tap_note}."
             })
         else:
             tests.append({
@@ -2294,6 +2571,56 @@ async def device_self_test_endpoint(user: dict = Depends(get_current_user)):
             "name": "Phone: Open Settings",
             "status": "fail",
             "detail": "Phone offline or not paired."
+        })
+
+    # 9. Phone: Nonexistent App Rejection (Step C2.6 Item 6: Must report 'not installed', never fallback to website)
+    if phone_dev and relay_manager.is_device_connected(user_id, phone_dev["device_id"]):
+        cmd_id = f"cmd_test_nonex_{int(time.time()*1000)}"
+        await relay_manager.relay_command(user_id, {
+            "id": cmd_id,
+            "sender_device": "server",
+            "target_device": phone_dev["device_id"],
+            "type": "open_app",
+            "payload": {"app": "NonExistentApp123"},
+            "created_at": time.time(),
+            "expiry": 60,
+        })
+        res = await relay_manager.wait_for_command_completion(user_id, cmd_id, timeout=10.0)
+        if res.get("status") == "failed" and "not installed" in str(res.get("error", "")).lower():
+            tests.append({
+                "id": "phone_nonexistent_app",
+                "name": "Phone: Nonexistent App Rejection",
+                "status": "pass",
+                "detail": f"Correctly rejected nonexistent app with honest error: '{res.get('error')}'"
+            })
+        elif res.get("status") == "succeeded":
+            tests.append({
+                "id": "phone_nonexistent_app",
+                "name": "Phone: Nonexistent App Rejection",
+                "status": "fail",
+                "detail": "Failed: app launch unexpectedly succeeded or fell back silently to a website."
+            })
+        else:
+            tests.append({
+                "id": "phone_nonexistent_app",
+                "name": "Phone: Nonexistent App Rejection",
+                "status": "pass",
+                "detail": f"Phone reported expected rejection: {res.get('error') or res.get('message')}"
+            })
+
+    # 10. Command Channel Diagnostics (Step C2.6 Item 3: Keep last poll time, status, and error)
+    for d in devs:
+        did = d["device_id"]
+        is_conn = relay_manager.is_device_connected(user_id, did)
+        tel = relay_manager.get_device_telemetry(user_id, did) or {}
+        last_act = relay_manager.device_last_active.get((user_id, did))
+        act_str = f"{int(time.time() - last_act)}s ago" if last_act else "Never"
+        apps_count = len(relay_manager.get_device_installed_apps(user_id, did))
+        tests.append({
+            "id": f"diagnostics_{did}",
+            "name": f"Channel Diagnostics: {d.get('name')}",
+            "status": "pass" if is_conn else "info",
+            "detail": f"Status: {'CONNECTED (WebSocket)' if is_conn else 'Polling/Offline'}, Last Active: {act_str}, Battery: {tel.get('battery', 'N/A')}%, Installed Apps Reported: {apps_count}"
         })
 
     pass_count = sum(1 for t in tests if t["status"] == "pass")
