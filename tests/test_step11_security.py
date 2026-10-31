@@ -272,10 +272,13 @@ class TestStep11SecurityHardening(unittest.TestCase):
 
     @mock.patch("app.main.extract_explicit_facts", new_callable=mock.AsyncMock)
     @mock.patch("app.main.call_sinbha_brain")
-    def test_11_rate_limit_trips_429(self, mock_brain, mock_facts):
+    @mock.patch("app.agent_loop.run_agent_loop", new_callable=mock.AsyncMock)
+    def test_11_rate_limit_trips_429(self, mock_loop, mock_brain, mock_facts):
         """Rapid chat requests trip rate limiting with friendly 429 response."""
         mock_facts.return_value = []
         mock_brain.return_value = {"reply": "Fast mock response 🌸", "status": "ok"}
+        from app.agent_loop import AgentResult
+        mock_loop.return_value = AgentResult(reply="Fast mock response 🌸")
         u = db.create_user("ratelimit_user@example.com", "StrongPassword123!", is_18=True, agreed_terms=True)
         token = db.create_session(u["id"])
         headers = {"Cookie": f"sinbha_session={token}", "X-Requested-With": "XMLHttpRequest"}
