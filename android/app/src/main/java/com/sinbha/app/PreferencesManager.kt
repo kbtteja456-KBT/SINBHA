@@ -190,6 +190,4 @@ class PreferencesManager(private val context: Context) {
             .putBoolean(KEY_AUTH_PAUSED_ALERT_SHOWN, false)
             .apply()
     }
-            .apply()
-    }
 }
