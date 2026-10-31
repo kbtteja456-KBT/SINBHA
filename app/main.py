@@ -1716,7 +1716,7 @@ async def device_websocket_endpoint(websocket: WebSocket):
                 relay_manager.update_command_status(user_id, cid, st, result=res_data, error=err_data)
             elif msg_type == "device_status":
                 platform = msg.get("platform", "unknown")
-                version = msg.get("version", "1.4.7")
+                version = msg.get("version", "1.4.8")
                 tools = msg.get("supported_tools")
                 installed_apps = msg.get("installed_apps")
                 relay_manager.record_device_capabilities(
@@ -1784,7 +1784,7 @@ async def device_heartbeat_endpoint(request: Request, user: dict = Depends(get_d
                 "battery": data.get("battery"),
                 "is_charging": data.get("is_charging", False),
                 "platform": data.get("platform", "android"),
-                "version": data.get("version", "1.4.7"),
+                "version": data.get("version", "1.4.8"),
                 "installed_apps": data.get("installed_apps"),
                 "updated_at": time.time()
             })
@@ -1793,7 +1793,7 @@ async def device_heartbeat_endpoint(request: Request, user: dict = Depends(get_d
                 user["id"],
                 clean_id,
                 data.get("platform", "android"),
-                data.get("version", "1.4.7"),
+                data.get("version", "1.4.8"),
                 data.get("supported_tools"),
                 installed_apps=data.get("installed_apps")
             )
@@ -2208,6 +2208,49 @@ async def device_self_test_endpoint(user: dict = Depends(get_current_user)):
             "detail": f"Status: {'CONNECTED (WebSocket)' if is_conn else 'Polling/Offline'}, Last Active: {act_str}, Battery: {tel.get('battery', 'N/A')}%, Installed Apps Reported: {apps_count}"
         })
 
+    # Step C2.7 Item 7: 12 Common Phone Apps Self-Test
+    # (Files, Camera, Settings, Chrome, YouTube, WhatsApp, Instagram, Snapchat, Phone, Messages, Gallery, Calculator)
+    common_12_apps = [
+        "Files", "Camera", "Settings", "Chrome", "YouTube", "WhatsApp",
+        "Instagram", "Snapchat", "Phone", "Messages", "Gallery", "Calculator"
+    ]
+    if phone_dev:
+        is_phone_online = relay_manager.is_device_connected(user_id, phone_dev["device_id"])
+        phone_name = phone_dev.get("name", "Phone")
+
+        for app_name in common_12_apps:
+            candidates = relay_manager.resolve_installed_apps_candidates(user_id, phone_dev["device_id"], app_name, limit=1)
+            if candidates and candidates[0].get("score", 0) >= 0.50:
+                top = candidates[0]
+                tests.append({
+                    "id": f"phone_app_{app_name.lower()}",
+                    "name": f"Phone App: {app_name}",
+                    "status": "pass",
+                    "detail": f"Verified on {phone_name}: '{top['name']}' ({top['package']}, Confidence: {top['confidence']})"
+                })
+            elif not is_phone_online:
+                tests.append({
+                    "id": f"phone_app_{app_name.lower()}",
+                    "name": f"Phone App: {app_name}",
+                    "status": "fail",
+                    "detail": f"Phone '{phone_name}' is currently offline; could not verify {app_name}."
+                })
+            else:
+                tests.append({
+                    "id": f"phone_app_{app_name.lower()}",
+                    "name": f"Phone App: {app_name}",
+                    "status": "fail",
+                    "detail": f"App '{app_name}' is not installed or reported by {phone_name}."
+                })
+    else:
+        for app_name in common_12_apps:
+            tests.append({
+                "id": f"phone_app_{app_name.lower()}",
+                "name": f"Phone App: {app_name}",
+                "status": "fail",
+                "detail": f"No Android phone paired to verify '{app_name}'."
+            })
+
     pass_count = sum(1 for t in tests if t["status"] == "pass")
     fail_count = len(tests) - pass_count
 
@@ -2292,347 +2335,6 @@ async def research_search_endpoint(payload: ResearchSearchRequest, user: dict = 
     db.log_audit(user["id"], "WEB_RESEARCH_COMPLETED", f"Query: {payload.question[:60]}... (Sources: {len(res.sources)})")
     return res
 
-
-@app.post("/api/diagnostics/self-test")
-async def device_self_test_endpoint(user: dict = Depends(get_current_user)):
-    """
-    Step C2.5 Item 7:
-    Runs real device self-test sequence:
-    - List paired devices
-    - Ping each
-    - Open Notepad and Calculator on laptop, verify process PID
-    - Open Chrome
-    - Find "antigravity" and "claude"
-    - Open YouTube and Settings on phone
-    Reports pass/fail with exact reason.
-    """
-    user_id = user["id"]
-    tests = []
-
-    # 1. List devices
-    devs = db.get_user_devices(user_id)
-    online_count = sum(1 for d in devs if relay_manager.is_device_connected(user_id, d["device_id"]))
-    if devs:
-        dev_names = ", ".join([f"{d.get('name', 'Device')} ({d.get('platform', 'unknown')})" for d in devs])
-        tests.append({
-            "id": "list_devices",
-            "name": "List Devices",
-            "status": "pass",
-            "detail": f"Found {len(devs)} paired device(s) ({online_count} online): {dev_names}"
-        })
-    else:
-        tests.append({
-            "id": "list_devices",
-            "name": "List Devices",
-            "status": "fail",
-            "detail": "No paired devices found. Please pair your laptop or phone in Settings -> My Devices."
-        })
-
-    laptop_dev = next((d for d in devs if d.get("platform", "").lower() in ("windows", "laptop", "desktop")), None)
-    phone_dev = next((d for d in devs if d.get("platform", "").lower() in ("android", "phone", "mobile")), None)
-
-    # 2. Ping connected devices
-    if devs:
-        pinged = [d.get("name", "Device") for d in devs if relay_manager.is_device_connected(user_id, d["device_id"])]
-        if pinged:
-            tests.append({
-                "id": "ping_devices",
-                "name": "Ping Connected Devices",
-                "status": "pass",
-                "detail": f"Active WebSocket channel verified for: {', '.join(pinged)}"
-            })
-        else:
-            tests.append({
-                "id": "ping_devices",
-                "name": "Ping Connected Devices",
-                "status": "fail",
-                "detail": "Devices are paired but currently offline. Please open SINBHA on your device."
-            })
-    else:
-        tests.append({
-            "id": "ping_devices",
-            "name": "Ping Connected Devices",
-            "status": "fail",
-            "detail": "No paired devices available to ping."
-        })
-
-    # 3. Laptop: Open Notepad & verify PID
-    if laptop_dev:
-        if relay_manager.is_device_connected(user_id, laptop_dev["device_id"]):
-            cmd_id = f"cmd_test_np_{int(time.time()*1000)}"
-            await relay_manager.relay_command(user_id, {
-                "id": cmd_id,
-                "sender_device": "server",
-                "target_device": laptop_dev["device_id"],
-                "type": "open_app",
-                "payload": {"app": "notepad"},
-                "created_at": time.time(),
-                "expiry": 60,
-            })
-            res = await relay_manager.wait_for_command_completion(user_id, cmd_id, timeout=10.0)
-            if res.get("status") == "succeeded":
-                pid = res.get("result", {}).get("pid") if isinstance(res.get("result"), dict) else None
-                pid_info = f" (PID: {pid})" if pid else ""
-                tests.append({
-                    "id": "laptop_notepad",
-                    "name": "Laptop: Open Notepad & Verify PID",
-                    "status": "pass",
-                    "detail": f"Notepad launched successfully on {laptop_dev.get('name')}{pid_info}."
-                })
-            else:
-                tests.append({
-                    "id": "laptop_notepad",
-                    "name": "Laptop: Open Notepad & Verify PID",
-                    "status": "fail",
-                    "detail": f"Could not confirm Notepad launch: {res.get('message') or res.get('error')}"
-                })
-        else:
-            tests.append({
-                "id": "laptop_notepad",
-                "name": "Laptop: Open Notepad & Verify PID",
-                "status": "fail",
-                "detail": f"Laptop '{laptop_dev.get('name')}' is currently offline."
-            })
-    else:
-        tests.append({
-            "id": "laptop_notepad",
-            "name": "Laptop: Open Notepad & Verify PID",
-            "status": "fail",
-            "detail": "No Windows laptop paired."
-        })
-
-    # 4. Laptop: Open Calculator
-    if laptop_dev and relay_manager.is_device_connected(user_id, laptop_dev["device_id"]):
-        cmd_id = f"cmd_test_calc_{int(time.time()*1000)}"
-        await relay_manager.relay_command(user_id, {
-            "id": cmd_id,
-            "sender_device": "server",
-            "target_device": laptop_dev["device_id"],
-            "type": "open_app",
-            "payload": {"app": "calculator"},
-            "created_at": time.time(),
-            "expiry": 60,
-        })
-        res = await relay_manager.wait_for_command_completion(user_id, cmd_id, timeout=10.0)
-        if res.get("status") == "succeeded":
-            tests.append({
-                "id": "laptop_calculator",
-                "name": "Laptop: Open Calculator",
-                "status": "pass",
-                "detail": f"Calculator launched successfully on {laptop_dev.get('name')}."
-            })
-        else:
-            tests.append({
-                "id": "laptop_calculator",
-                "name": "Laptop: Open Calculator",
-                "status": "fail",
-                "detail": f"Could not confirm Calculator launch: {res.get('message') or res.get('error')}"
-            })
-    else:
-        tests.append({
-            "id": "laptop_calculator",
-            "name": "Laptop: Open Calculator",
-            "status": "fail",
-            "detail": "Laptop offline or not paired."
-        })
-
-    # 5. Laptop: Open Chrome
-    if laptop_dev and relay_manager.is_device_connected(user_id, laptop_dev["device_id"]):
-        cmd_id = f"cmd_test_chrome_{int(time.time()*1000)}"
-        await relay_manager.relay_command(user_id, {
-            "id": cmd_id,
-            "sender_device": "server",
-            "target_device": laptop_dev["device_id"],
-            "type": "open_app",
-            "payload": {"app": "chrome", "url": "https://google.com"},
-            "created_at": time.time(),
-            "expiry": 60,
-        })
-        res = await relay_manager.wait_for_command_completion(user_id, cmd_id, timeout=10.0)
-        if res.get("status") == "succeeded":
-            tests.append({
-                "id": "laptop_chrome",
-                "name": "Laptop: Open Chrome",
-                "status": "pass",
-                "detail": f"Chrome opened successfully on {laptop_dev.get('name')}."
-            })
-        else:
-            tests.append({
-                "id": "laptop_chrome",
-                "name": "Laptop: Open Chrome",
-                "status": "fail",
-                "detail": f"Could not confirm Chrome launch: {res.get('message') or res.get('error')}"
-            })
-    else:
-        tests.append({
-            "id": "laptop_chrome",
-            "name": "Laptop: Open Chrome",
-            "status": "fail",
-            "detail": "Laptop offline or not paired."
-        })
-
-    # 6. Laptop: Find "antigravity" and "claude"
-    from app.agent_tools import compute_app_similarity
-    ag_sim = compute_app_similarity("antygravity", "antigravity")
-    claude_sim = compute_app_similarity("claude", "claude")
-    if ag_sim >= 0.85 and claude_sim >= 0.85:
-        tests.append({
-            "id": "laptop_find_apps",
-            "name": "Laptop: Find Antigravity & Claude",
-            "status": "pass",
-            "detail": f"Found 'antigravity' (similarity: {ag_sim:.2f}) and 'claude' (similarity: {claude_sim:.2f})."
-        })
-    else:
-        tests.append({
-            "id": "laptop_find_apps",
-            "name": "Laptop: Find Antigravity & Claude",
-            "status": "fail",
-            "detail": f"Matching score too low: antigravity={ag_sim}, claude={claude_sim}"
-        })
-
-    # 7. Phone: Open YouTube
-    if phone_dev:
-        if relay_manager.is_device_connected(user_id, phone_dev["device_id"]):
-            cmd_id = f"cmd_test_yt_{int(time.time()*1000)}"
-            await relay_manager.relay_command(user_id, {
-                "id": cmd_id,
-                "sender_device": "server",
-                "target_device": phone_dev["device_id"],
-                "type": "open_app",
-                "payload": {"app": "youtube"},
-                "created_at": time.time(),
-                "expiry": 60,
-            })
-            res = await relay_manager.wait_for_command_completion(user_id, cmd_id, timeout=10.0)
-            if res.get("status") == "succeeded":
-                pkg = res.get("result", {}).get("package") if isinstance(res.get("result"), dict) else None
-                pkg_str = f" ({pkg})" if pkg else ""
-                tests.append({
-                    "id": "phone_youtube",
-                    "name": "Phone: Open YouTube",
-                    "status": "pass",
-                    "detail": f"YouTube opened on {phone_dev.get('name')}{pkg_str}."
-                })
-            else:
-                tests.append({
-                    "id": "phone_youtube",
-                    "name": "Phone: Open YouTube",
-                    "status": "fail",
-                    "detail": f"Could not confirm YouTube on phone: {res.get('message') or res.get('error')}"
-                })
-        else:
-            tests.append({
-                "id": "phone_youtube",
-                "name": "Phone: Open YouTube",
-                "status": "fail",
-                "detail": f"Phone '{phone_dev.get('name')}' is currently offline."
-            })
-    else:
-        tests.append({
-            "id": "phone_youtube",
-            "name": "Phone: Open YouTube",
-            "status": "fail",
-            "detail": "No Android phone paired."
-        })
-
-    # 8. Phone: Open Settings
-    if phone_dev and relay_manager.is_device_connected(user_id, phone_dev["device_id"]):
-        cmd_id = f"cmd_test_set_{int(time.time()*1000)}"
-        await relay_manager.relay_command(user_id, {
-            "id": cmd_id,
-            "sender_device": "server",
-            "target_device": phone_dev["device_id"],
-            "type": "open_app",
-            "payload": {"app": "settings"},
-            "created_at": time.time(),
-            "expiry": 60,
-        })
-        res = await relay_manager.wait_for_command_completion(user_id, cmd_id, timeout=10.0)
-        if res.get("status") in ("succeeded", "needs_tap"):
-            pkg = res.get("result", {}).get("package") if isinstance(res.get("result"), dict) else None
-            pkg_str = f" ({pkg})" if pkg else ""
-            tap_note = " (Needs tap on notification)" if res.get("status") == "needs_tap" else ""
-            tests.append({
-                "id": "phone_settings",
-                "name": "Phone: Open Settings",
-                "status": "pass",
-                "detail": f"Android Settings opened on {phone_dev.get('name')}{pkg_str}{tap_note}."
-            })
-        else:
-            tests.append({
-                "id": "phone_settings",
-                "name": "Phone: Open Settings",
-                "status": "fail",
-                "detail": f"Could not confirm Settings on phone: {res.get('message') or res.get('error')}"
-            })
-    else:
-        tests.append({
-            "id": "phone_settings",
-            "name": "Phone: Open Settings",
-            "status": "fail",
-            "detail": "Phone offline or not paired."
-        })
-
-    # 9. Phone: Nonexistent App Rejection (Step C2.6 Item 6: Must report 'not installed', never fallback to website)
-    if phone_dev and relay_manager.is_device_connected(user_id, phone_dev["device_id"]):
-        cmd_id = f"cmd_test_nonex_{int(time.time()*1000)}"
-        await relay_manager.relay_command(user_id, {
-            "id": cmd_id,
-            "sender_device": "server",
-            "target_device": phone_dev["device_id"],
-            "type": "open_app",
-            "payload": {"app": "NonExistentApp123"},
-            "created_at": time.time(),
-            "expiry": 60,
-        })
-        res = await relay_manager.wait_for_command_completion(user_id, cmd_id, timeout=10.0)
-        if res.get("status") == "failed" and "not installed" in str(res.get("error", "")).lower():
-            tests.append({
-                "id": "phone_nonexistent_app",
-                "name": "Phone: Nonexistent App Rejection",
-                "status": "pass",
-                "detail": f"Correctly rejected nonexistent app with honest error: '{res.get('error')}'"
-            })
-        elif res.get("status") == "succeeded":
-            tests.append({
-                "id": "phone_nonexistent_app",
-                "name": "Phone: Nonexistent App Rejection",
-                "status": "fail",
-                "detail": "Failed: app launch unexpectedly succeeded or fell back silently to a website."
-            })
-        else:
-            tests.append({
-                "id": "phone_nonexistent_app",
-                "name": "Phone: Nonexistent App Rejection",
-                "status": "pass",
-                "detail": f"Phone reported expected rejection: {res.get('error') or res.get('message')}"
-            })
-
-    # 10. Command Channel Diagnostics (Step C2.6 Item 3: Keep last poll time, status, and error)
-    for d in devs:
-        did = d["device_id"]
-        is_conn = relay_manager.is_device_connected(user_id, did)
-        tel = relay_manager.get_device_telemetry(user_id, did) or {}
-        last_act = relay_manager.device_last_active.get((user_id, did))
-        act_str = f"{int(time.time() - last_act)}s ago" if last_act else "Never"
-        apps_count = len(relay_manager.get_device_installed_apps(user_id, did))
-        tests.append({
-            "id": f"diagnostics_{did}",
-            "name": f"Channel Diagnostics: {d.get('name')}",
-            "status": "pass" if is_conn else "info",
-            "detail": f"Status: {'CONNECTED (WebSocket)' if is_conn else 'Polling/Offline'}, Last Active: {act_str}, Battery: {tel.get('battery', 'N/A')}%, Installed Apps Reported: {apps_count}"
-        })
-
-    pass_count = sum(1 for t in tests if t["status"] == "pass")
-    fail_count = len(tests) - pass_count
-
-    return {
-        "success": fail_count == 0,
-        "summary": f"{pass_count} passed, {fail_count} failed",
-        "pass_count": pass_count,
-        "fail_count": fail_count,
-        "tests": tests
-    }
 
 # Serve static UI files
 app.mount("/static", StaticFiles(directory="static"), name="static")

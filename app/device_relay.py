@@ -17,6 +17,31 @@ from typing import Dict, List, Optional, Tuple, Any
 from fastapi import WebSocket
 
 from app import database as db
+from app.command_schema import (
+    SUPPORTED_COMMAND_TYPES,
+    unwrap_command_packet,
+    validate_command_packet,
+    is_command_supported_by_device,
+)
+
+APP_SYNONYMS: Dict[str, List[str]] = {
+    "file manager": ["files", "my files", "filemanager", "documents", "documentsui"],
+    "files": ["file manager", "my files", "filemanager", "documents", "documentsui"],
+    "gallery": ["photos", "google photos", "gallery3d", "albums"],
+    "photos": ["gallery", "google photos", "gallery3d", "albums"],
+    "camera": ["cam", "google camera", "camera2"],
+    "calculator": ["calc", "calculator"],
+    "calc": ["calculator", "calc"],
+    "dialer": ["phone", "call", "contacts", "telephone"],
+    "phone": ["dialer", "call", "contacts", "telephone"],
+    "messages": ["sms", "texting", "messaging", "mms"],
+    "sms": ["messages", "texting", "messaging", "mms"],
+    "browser": ["chrome", "google chrome", "edge", "internet"],
+    "chrome": ["browser", "google chrome", "internet"],
+    "settings": ["system settings", "preferences", "config"],
+    "youtube": ["yt", "video"],
+    "music": ["spotify", "youtube music", "audio"],
+}
 
 class CommandRelayManager:
     def __init__(self):
@@ -33,6 +58,13 @@ class CommandRelayManager:
         self.offline_queues: Dict[Tuple[int, str], List[dict]] = {}
 
         # User notifications buffer: user_id -> List[dict] (max 25, in-memory only)
+        self.user_notifications: Dict[int, List[dict]] = {}
+
+        # Late confirmation handlers (Step C2.7 Item 2): command_id -> dict
+        self.late_confirmation_handlers: Dict[str, dict] = {}
+
+        # User command updates buffer (e.g. for frontend polling/SSE): user_id -> List[dict]
+        self.command_updates: Dict[int, List[dict]] = {}
         self.user_notifications: Dict[int, List[dict]] = {}
 
         # Device telemetry: (user_id, device_id) -> dict (battery, is_charging, last_seen)
@@ -108,42 +140,104 @@ class CommandRelayManager:
             return caps["installed_apps"]
         return []
 
-    def find_installed_app_match(self, user_id: int, device_id: str, app_query: str) -> Optional[dict]:
+    def resolve_installed_apps_candidates(
+        self, user_id: int, device_id: str, app_query: str, limit: int = 5
+    ) -> List[dict]:
         """
-        Step C2.6 Item 6: Typo-tolerant matching of app_query against phone reported installed apps.
-        Never falls back silently to a website.
+        Step C2.7 Item 4: App resolution returning top candidates (name, package, confidence, score)
+        with synonym expansion (file manager = Files, gallery, camera, calculator, dialer, messages)
+        so the AI chooses.
         """
         import difflib
         apps = self.get_device_installed_apps(user_id, device_id)
         if not apps:
-            return None
+            # Common defaults when device apps have not synced yet
+            apps = [
+                {"name": "Files", "package": "com.google.android.documentsui"},
+                {"name": "Camera", "package": "com.android.camera"},
+                {"name": "Settings", "package": "com.android.settings"},
+                {"name": "Chrome", "package": "com.android.chrome"},
+                {"name": "YouTube", "package": "com.google.android.youtube"},
+                {"name": "WhatsApp", "package": "com.whatsapp"},
+                {"name": "Instagram", "package": "com.instagram.android"},
+                {"name": "Snapchat", "package": "com.snapchat.android"},
+                {"name": "Phone", "package": "com.google.android.dialer"},
+                {"name": "Messages", "package": "com.google.android.apps.messaging"},
+                {"name": "Gallery", "package": "com.google.android.apps.photos"},
+                {"name": "Calculator", "package": "com.google.android.calculator"},
+            ]
 
-        clean_query = app_query.strip().lower().replace(" ", "").replace("_", "").replace("-", "")
-        # 1. Exact match on package or name
+        clean_query = app_query.strip().lower()
+        query_norm = clean_query.replace(" ", "").replace("_", "").replace("-", "")
+
+        expanded_terms = {clean_query, query_norm}
+        for syn_key, syn_list in APP_SYNONYMS.items():
+            if syn_key in clean_query or clean_query in syn_key:
+                expanded_terms.update([s.lower() for s in syn_list])
+
+        scored_candidates = []
+        seen_packages = set()
+
         for a in apps:
-            name = (a.get("name") or "").lower()
-            pkg = (a.get("package") or "").lower()
-            clean_name = name.replace(" ", "").replace("_", "").replace("-", "")
-            if clean_query == clean_name or clean_query == pkg or pkg.endswith("." + clean_query):
-                return a
+            name = (a.get("name") or "").strip()
+            pkg = (a.get("package") or "").strip()
+            if not name and not pkg:
+                continue
+            if pkg and pkg in seen_packages:
+                continue
 
-        # 2. Substring match
-        for a in apps:
-            name = (a.get("name") or "").lower()
-            pkg = (a.get("package") or "").lower()
-            clean_name = name.replace(" ", "").replace("_", "").replace("-", "")
-            if clean_query in clean_name or clean_name in clean_query or clean_query in pkg:
-                return a
+            name_lower = name.lower()
+            name_norm = name_lower.replace(" ", "").replace("_", "").replace("-", "")
+            pkg_lower = pkg.lower()
 
-        # 3. Fuzzy Levenshtein / SequenceMatcher match (cutoff 0.6)
-        names = [(a.get("name") or "").lower() for a in apps]
-        matches = difflib.get_close_matches(app_query.lower(), names, n=1, cutoff=0.6)
-        if matches:
-            best_name = matches[0]
-            for a in apps:
-                if (a.get("name") or "").lower() == best_name:
-                    return a
+            score = 0.0
 
+            # 1. Exact match
+            if name_lower == clean_query or query_norm == name_norm or clean_query == pkg_lower or pkg_lower.endswith("." + query_norm):
+                score = 1.0
+            # 2. Synonym match
+            elif any(syn == name_lower or syn == name_norm for syn in expanded_terms):
+                score = 0.95
+            # 3. Substring match
+            elif clean_query in name_lower or name_lower in clean_query or query_norm in name_norm:
+                score = 0.85
+            elif query_norm in pkg_lower:
+                score = 0.80
+            else:
+                # 4. Fuzzy SequenceMatcher
+                ratio1 = difflib.SequenceMatcher(None, clean_query, name_lower).ratio()
+                ratio2 = difflib.SequenceMatcher(None, query_norm, name_norm).ratio()
+                best_ratio = max(ratio1, ratio2)
+                if best_ratio >= 0.50:
+                    score = round(best_ratio, 2)
+
+            if score > 0.40:
+                confidence = "high" if score >= 0.85 else ("medium" if score >= 0.60 else "low")
+                scored_candidates.append({
+                    "name": name,
+                    "package": pkg,
+                    "confidence": confidence,
+                    "score": score
+                })
+                if pkg:
+                    seen_packages.add(pkg)
+
+        scored_candidates.sort(key=lambda x: x["score"], reverse=True)
+        return scored_candidates[:limit]
+
+    def find_installed_app_match(self, user_id: int, device_id: str, app_query: str) -> Optional[dict]:
+        """
+        Step C2.6 & C2.7 Item 4: Typo-tolerant matching of app_query against phone reported installed apps.
+        Never falls back silently to a website.
+        """
+        candidates = self.resolve_installed_apps_candidates(user_id, device_id, app_query, limit=1)
+        if candidates and candidates[0]["score"] >= 0.55:
+            return {
+                "name": candidates[0]["name"],
+                "package": candidates[0]["package"],
+                "confidence": candidates[0]["confidence"],
+                "score": candidates[0]["score"]
+            }
         return None
 
     def get_device_supported_tools(self, user_id: int, device_id: str, platform: Optional[str] = None) -> List[str]:
@@ -175,6 +269,24 @@ class CommandRelayManager:
             "updated_at": now,
             "result": None,
             "error": None,
+        }
+
+    def register_late_confirmation_listener(
+        self,
+        cmd_id: str,
+        user_id: int,
+        message_id: Optional[int] = None,
+        app_name: str = "",
+    ):
+        """
+        Step C2.7 Item 2: Registers listener for delayed command confirmations.
+        If confirmation arrives after the 10-second wait window, updates earlier chat message.
+        """
+        self.late_confirmation_handlers[cmd_id] = {
+            "user_id": user_id,
+            "message_id": message_id,
+            "app_name": app_name,
+            "registered_at": time.time(),
         }
 
     def update_command_status(
@@ -222,6 +334,45 @@ class CommandRelayManager:
             })
         )
 
+        # Step C2.7 Item 2: Late Confirmations
+        # If result arrives after 10-second wait, update earlier chat message ("Update: it did open")
+        if status in ("succeeded", "executed"):
+            is_late = (entry.get("status") == "timed_out") or entry.get("timed_out") or (cmd_id in self.late_confirmation_handlers)
+            if is_late:
+                late_info = self.late_confirmation_handlers.pop(cmd_id, None)
+                app_disp = (late_info.get("app_name") if late_info else None) or (entry.get("result", {}).get("app") if isinstance(entry.get("result"), dict) else "app")
+                update_msg = f"Update: {app_disp} did open 🌸" if (app_disp and app_disp != "app") else "Update: it did open 🌸"
+
+                try:
+                    if late_info and late_info.get("message_id"):
+                        db.update_message(user_id, late_info["message_id"], update_msg)
+                    else:
+                        db.update_latest_assistant_message(user_id, update_msg)
+                except Exception:
+                    pass
+
+                if user_id not in self.command_updates:
+                    self.command_updates[user_id] = []
+                self.command_updates[user_id].append({
+                    "command_id": cmd_id,
+                    "status": "succeeded",
+                    "update_text": update_msg,
+                    "timestamp": now,
+                })
+                entry["late_confirmed"] = True
+                entry["update_text"] = update_msg
+
+                db.log_audit(
+                    user_id,
+                    "LATE_COMMAND_CONFIRMED",
+                    json.dumps({
+                        "command_id": cmd_id,
+                        "status": status,
+                        "app": app_disp,
+                        "update_text": update_msg
+                    })
+                )
+
         # If waiting future exists and status is final (succeeded, failed, executed, needs_tap), resolve it
         terminal_statuses = ("succeeded", "failed", "executed", "needs_tap")
         waiter = self._lifecycle_waiters.get(cmd_id)
@@ -263,6 +414,7 @@ class CommandRelayManager:
         except asyncio.TimeoutError:
             if cmd_id in self.command_lifecycles:
                 self.command_lifecycles[cmd_id]["status"] = "timed_out"
+                self.command_lifecycles[cmd_id]["timed_out"] = True
                 self.command_lifecycles[cmd_id]["updated_at"] = time.time()
             return {
                 "command_id": cmd_id,
@@ -437,18 +589,28 @@ class CommandRelayManager:
         now = time.time()
         self._cleanup_old_records(now)
 
-        cmd_id = str(cmd_data.get("id", "")).strip()
-        sender_id = str(cmd_data.get("sender_device", "")).strip()
-        target_id = str(cmd_data.get("target_device", "")).strip()
-        cmd_type = str(cmd_data.get("type", "")).strip()
-        payload = cmd_data.get("payload") or {}
-        created_at = float(cmd_data.get("created_at") or now)
+        norm_cmd = unwrap_command_packet(cmd_data)
+        cmd_id = str(norm_cmd.get("id", "")).strip()
+        sender_id = str(norm_cmd.get("sender_device", "")).strip()
+        target_id = str(norm_cmd.get("target_device", "")).strip()
+        cmd_type = str(norm_cmd.get("type", "")).strip()
+        payload = norm_cmd.get("payload") or {}
+        created_at = float(norm_cmd.get("created_at") or now)
 
         if not cmd_id or not sender_id or not target_id or not cmd_type:
             return {
                 "success": False,
                 "error": "INVALID_FORMAT",
                 "message": "Missing required fields: id, sender_device, target_device, type."
+            }
+
+        # Validate against shared schema
+        is_valid, err_msg, _ = validate_command_packet(norm_cmd)
+        if not is_valid:
+            return {
+                "success": False,
+                "error": "INVALID_SCHEMA",
+                "message": err_msg or f"Invalid command packet for '{cmd_type}'"
             }
 
         # 1. Global STOP check (Rule 6)
@@ -590,6 +752,26 @@ class CommandRelayManager:
             }
 
         # 7. Target Capabilities & Permission Level gating (Rule 4)
+        # Step C2.7 Item 3: Check if target client supports this command type
+        supported_tools = self.get_device_supported_tools(user_id, target_id, target_dev.get("platform"))
+        if not is_command_supported_by_device(cmd_type, target_dev.get("platform"), supported_tools):
+            db.log_audit(
+                user_id,
+                "DEVICE_COMMAND_RELAY",
+                json.dumps({
+                    "command_id": cmd_id,
+                    "type": cmd_type,
+                    "sender_device": sender_id,
+                    "target_device": target_id,
+                    "result": "unsupported_command_type"
+                })
+            )
+            return {
+                "success": False,
+                "error": "UNSUPPORTED_TYPE",
+                "message": f"Target device does not support command type '{cmd_type}'."
+            }
+
         cap_map = {
             "send_note": "note",
             "open_link": "open_link",
@@ -643,14 +825,14 @@ class CommandRelayManager:
         else:
             requires_confirmation = (perm_level >= 2) or (cmd_type == "open_link")
 
-        # Packet delivered to target
+        # Packet delivered to target (Step C2.7 Item 3: explicit command type, never 'remote_command')
         packet = {
-            "type": "remote_command",
+            "type": cmd_type,
+            "command_type": cmd_type,
             "id": cmd_id,
             "sender_device": sender_id,
             "sender_name": sender_dev.get("name", "Trusted Device"),
             "target_device": target_id,
-            "command_type": cmd_type,
             "payload": payload,
             "created_at": created_at,
             "expiry": cmd_expiry,

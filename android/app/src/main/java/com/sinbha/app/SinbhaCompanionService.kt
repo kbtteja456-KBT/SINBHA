@@ -11,6 +11,7 @@ import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
@@ -51,6 +52,7 @@ class SinbhaCompanionService : Service() {
     private var webSocket: WebSocket? = null
     private var isWsConnecting = false
     private var reconnectAttempts = 0
+    private val processedCommandIds = java.util.Collections.synchronizedSet(LinkedHashSet<String>())
 
     companion object {
         const val PERSISTENT_CHANNEL_ID = "sinbha_companion_persistent_channel"
@@ -213,11 +215,13 @@ class SinbhaCompanionService : Service() {
                             put("send_note")
                             put("ring_phone")
                             put("sync_tasks")
+                            put("emergency_stop")
+                            put("get_device_status")
                         }
                         val handshake = JSONObject().apply {
                             put("type", "device_status")
                             put("platform", "android")
-                            put("version", "1.4.7")
+                            put("version", "1.4.8")
                             put("supported_tools", toolsArr)
                             put("installed_apps", appsArr)
                         }
@@ -231,8 +235,9 @@ class SinbhaCompanionService : Service() {
             override fun onMessage(ws: WebSocket, text: String) {
                 try {
                     val msg = JSONObject(text)
-                    val type = msg.optString("type")
-                    if (type in listOf("open_app", "ring_phone", "send_note", "emergency_stop")) {
+                    val rawType = msg.optString("type")
+                    val type = if (rawType == "remote_command") msg.optString("command_type", rawType) else rawType
+                    if (type in listOf("open_app", "open_url", "ring_phone", "send_note", "emergency_stop", "get_device_status")) {
                         serviceScope.launch {
                             executeAndReportCommand(msg)
                         }
@@ -327,83 +332,131 @@ class SinbhaCompanionService : Service() {
     }
 
     /**
-     * Step C2.6 Item 2: Reports full lifecycle of every command to /api/devices/command-status
+     * Step C2.6 & C2.7 Item 1: Reports full lifecycle of every command to /api/devices/command-status
      * (received, started, succeeded, failed, needs_tap) with real results and exact reasons.
+     * Uses WakeLock, retries, and idempotent command tracking so reports survive backgrounding.
      */
     private suspend fun executeAndReportCommand(cmd: JSONObject) {
         val cmdId = cmd.optString("command_id").takeIf { it.isNotBlank() }
             ?: cmd.optString("id").takeIf { it.isNotBlank() } ?: return
-        val type = cmd.optString("type")
+
+        // Step C2.7 Item 1: Idempotent command processing
+        if (processedCommandIds.contains(cmdId)) {
+            return
+        }
+        processedCommandIds.add(cmdId)
+        if (processedCommandIds.size > 200) {
+            val it = processedCommandIds.iterator()
+            if (it.hasNext()) {
+                it.next()
+                it.remove()
+            }
+        }
+
+        // Step C2.7 Item 3: Unwrap legacy 'remote_command' envelopes
+        val rawType = cmd.optString("type")
+        val type = if (rawType == "remote_command") cmd.optString("command_type", rawType) else rawType
         val payload = cmd.optJSONObject("payload") ?: JSONObject()
         val sender = cmd.optString("sender_name", "Paired Companion")
 
-        // 1. Report "received"
-        apiClient.reportCommandStatus(cmdId, "received")
-        sendWsStatus(cmdId, "received")
+        // Step C2.7 Item 1: Short WakeLock so execution survives when another app takes the screen
+        val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "sinbha:command_execution")
+        wakeLock?.acquire(15_000L) // 15 seconds max
 
-        // 2. Report "started"
-        apiClient.reportCommandStatus(cmdId, "started")
-        sendWsStatus(cmdId, "started")
+        try {
+            // 1. Report "received"
+            apiClient.reportCommandStatus(cmdId, "received")
+            sendWsStatus(cmdId, "received")
 
-        // 3. Execute command and report result
-        when (type) {
-            "open_app" -> {
-                val launchResult = SinbhaAppLauncher.launchFromPayload(applicationContext, payload)
-                if (launchResult.success) {
-                    val resObj = JSONObject().apply {
-                        put("app", launchResult.app)
-                        put("package", launchResult.packageName ?: "")
-                        put("method", launchResult.method ?: "overlay_exemption")
+            // 2. Report "started" BEFORE launching
+            apiClient.reportCommandStatus(cmdId, "started")
+            sendWsStatus(cmdId, "started")
+
+            // 3. Execute command and report result
+            when (type) {
+                "open_app" -> {
+                    val launchResult = SinbhaAppLauncher.launchFromPayload(applicationContext, payload)
+                    if (launchResult.success) {
+                        val resObj = JSONObject().apply {
+                            put("app", launchResult.app)
+                            put("package", launchResult.packageName ?: "")
+                            put("method", launchResult.method ?: "overlay_exemption")
+                        }
+                        apiClient.reportCommandStatus(cmdId, "succeeded", result = resObj)
+                        sendWsStatus(cmdId, "succeeded", result = resObj)
+                    } else if (launchResult.needsTap) {
+                        val resObj = JSONObject().apply {
+                            put("app", launchResult.app)
+                            put("package", launchResult.packageName ?: "")
+                            put("needs_tap", true)
+                            put("reason", "background launch blocked")
+                        }
+                        val err = launchResult.error ?: "needs a tap"
+                        apiClient.reportCommandStatus(cmdId, "needs_tap", result = resObj, error = err)
+                        sendWsStatus(cmdId, "needs_tap", result = resObj, error = err)
+                    } else {
+                        val err = launchResult.error ?: "App '${launchResult.app}' is not installed on this Android device."
+                        apiClient.reportCommandStatus(cmdId, "failed", error = err)
+                        sendWsStatus(cmdId, "failed", error = err)
                     }
+                }
+                "open_url" -> {
+                    val urlStr = payload.optString("url")
+                    val launchResult = SinbhaAppLauncher.launchFromPayload(applicationContext, JSONObject().apply {
+                        put("url", urlStr)
+                    })
+                    if (launchResult.success) {
+                        val resObj = JSONObject().apply {
+                            put("url", urlStr)
+                            put("method", launchResult.method ?: "browser_launch")
+                        }
+                        apiClient.reportCommandStatus(cmdId, "succeeded", result = resObj)
+                        sendWsStatus(cmdId, "succeeded", result = resObj)
+                    } else {
+                        val err = launchResult.error ?: "Failed to open URL"
+                        apiClient.reportCommandStatus(cmdId, "failed", error = err)
+                        sendWsStatus(cmdId, "failed", error = err)
+                    }
+                }
+                "ring_phone" -> {
+                    val ok = SinbhaPlugin.startAlarmRing(applicationContext, sender)
+                    if (ok) {
+                        val resObj = JSONObject().put("status", "ringing")
+                        apiClient.reportCommandStatus(cmdId, "succeeded", result = resObj)
+                        sendWsStatus(cmdId, "succeeded", result = resObj)
+                    } else {
+                        val err = "Failed to start phone ring"
+                        apiClient.reportCommandStatus(cmdId, "failed", error = err)
+                        sendWsStatus(cmdId, "failed", error = err)
+                    }
+                }
+                "send_note" -> {
+                    showNoteHeadsUp(
+                        payload.optString("title", "Note from Paired Device"),
+                        payload.optString("text", "")
+                    )
+                    val resObj = JSONObject().put("delivered", true)
                     apiClient.reportCommandStatus(cmdId, "succeeded", result = resObj)
                     sendWsStatus(cmdId, "succeeded", result = resObj)
-                } else if (launchResult.needsTap) {
-                    val resObj = JSONObject().apply {
-                        put("app", launchResult.app)
-                        put("package", launchResult.packageName ?: "")
-                        put("needs_tap", true)
-                        put("reason", "background launch blocked")
-                    }
-                    val err = launchResult.error ?: "needs a tap"
-                    apiClient.reportCommandStatus(cmdId, "needs_tap", result = resObj, error = err)
-                    sendWsStatus(cmdId, "needs_tap", result = resObj, error = err)
-                } else {
-                    val err = launchResult.error ?: "App '${launchResult.app}' is not installed on this Android device."
+                }
+                "emergency_stop" -> {
+                    prefs.isEmergencyStopped = true
+                    val resObj = JSONObject().put("emergency_stopped", true)
+                    apiClient.reportCommandStatus(cmdId, "succeeded", result = resObj)
+                    sendWsStatus(cmdId, "succeeded", result = resObj)
+                }
+                else -> {
+                    val err = "Unsupported command type: $type"
                     apiClient.reportCommandStatus(cmdId, "failed", error = err)
                     sendWsStatus(cmdId, "failed", error = err)
                 }
             }
-            "ring_phone" -> {
-                val ok = SinbhaPlugin.startAlarmRing(applicationContext, sender)
-                if (ok) {
-                    val resObj = JSONObject().put("status", "ringing")
-                    apiClient.reportCommandStatus(cmdId, "succeeded", result = resObj)
-                    sendWsStatus(cmdId, "succeeded", result = resObj)
-                } else {
-                    val err = "Failed to start phone ring"
-                    apiClient.reportCommandStatus(cmdId, "failed", error = err)
-                    sendWsStatus(cmdId, "failed", error = err)
-                }
-            }
-            "send_note" -> {
-                showNoteHeadsUp(
-                    payload.optString("title", "Note from Paired Device"),
-                    payload.optString("text", "")
-                )
-                val resObj = JSONObject().put("delivered", true)
-                apiClient.reportCommandStatus(cmdId, "succeeded", result = resObj)
-                sendWsStatus(cmdId, "succeeded", result = resObj)
-            }
-            "emergency_stop" -> {
-                prefs.isEmergencyStopped = true
-                val resObj = JSONObject().put("emergency_stopped", true)
-                apiClient.reportCommandStatus(cmdId, "succeeded", result = resObj)
-                sendWsStatus(cmdId, "succeeded", result = resObj)
-            }
-            else -> {
-                val err = "Unsupported command type: $type"
-                apiClient.reportCommandStatus(cmdId, "failed", error = err)
-                sendWsStatus(cmdId, "failed", error = err)
+        } finally {
+            if (wakeLock != null && wakeLock.isHeld) {
+                try {
+                    wakeLock.release()
+                } catch (ignored: Exception) {}
             }
         }
     }

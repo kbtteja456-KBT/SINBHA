@@ -893,63 +893,174 @@ def compute_app_similarity(query: str, target: str) -> float:
 
 
 async def handle_find_installed_app(user_id: int, args: dict, ctx: dict) -> dict:
-    """Finds installed applications on the user's laptop using typo-tolerant indexed search."""
+    """
+    Step C2.7 Item 4: Finds installed applications on user's phone or laptop.
+    Returns the top candidates (name, package, confidence, score) and the AI chooses.
+    Uses synonyms (file manager = Files, gallery, camera, calculator, dialer, messages).
+    """
     query = sanitize_text_arg(args.get("query", ""), 80).lower()
-    db = ctx["db"]
-    relay = ctx["relay_manager"]
+    target_hint = args.get("target_device", "phone")
+    db = ctx.get("db")
+    relay = ctx.get("relay_manager")
 
     devs = db.get_user_devices(user_id) if db else []
     trusted = [d for d in devs if d.get("status") == "trusted"]
-    target_res = _resolve_target_device(trusted, args.get("target_device", "laptop"), relay, user_id)
+    target_res = _resolve_target_device(trusted, target_hint, relay, user_id)
 
     if target_res["status"] == "ambiguous":
         return {"success": False, "message": target_res["message"], "ambiguous": True}
 
-    known_apps = [
-        "antigravity", "calculator", "calc", "notepad", "chrome", "google chrome",
-        "whatsapp", "spotify", "claude", "chatgpt", "explorer", "vscode", "code", "terminal", "edge"
-    ]
+    target_dev = target_res.get("device")
+    target_dev_id = target_dev.get("device_id") if target_dev else None
 
-    scored = []
-    for app in known_apps:
-        score = compute_app_similarity(query, app)
-        if score >= 0.40:
-            scored.append({"name": app, "score": round(score, 2)})
+    candidates = []
+    if relay and hasattr(relay, "resolve_installed_apps_candidates") and target_dev_id:
+        candidates = relay.resolve_installed_apps_candidates(user_id, target_dev_id, query, limit=5)
 
-    scored.sort(key=lambda x: x["score"], reverse=True)
-    top3 = scored[:3]
-    best_score = top3[0]["score"] if top3 else 0.0
+    if not candidates:
+        known_apps = [
+            {"name": "Files", "package": "com.google.android.documentsui"},
+            {"name": "Camera", "package": "com.android.camera"},
+            {"name": "Settings", "package": "com.android.settings"},
+            {"name": "Chrome", "package": "com.android.chrome"},
+            {"name": "YouTube", "package": "com.google.android.youtube"},
+            {"name": "WhatsApp", "package": "com.whatsapp"},
+            {"name": "Instagram", "package": "com.instagram.android"},
+            {"name": "Snapchat", "package": "com.snapchat.android"},
+            {"name": "Phone", "package": "com.google.android.dialer"},
+            {"name": "Messages", "package": "com.google.android.apps.messaging"},
+            {"name": "Gallery", "package": "com.google.android.apps.photos"},
+            {"name": "Calculator", "package": "com.google.android.calculator"},
+            {"name": "Notepad", "package": "notepad.exe"},
+            {"name": "Antigravity", "package": "antigravity.exe"},
+            {"name": "Spotify", "package": "spotify.exe"},
+            {"name": "Claude", "package": "claude.exe"},
+        ]
+        scored = []
+        for app in known_apps:
+            score = compute_app_similarity(query, app["name"])
+            if score >= 0.40:
+                conf = "high" if score >= 0.80 else ("medium" if score >= 0.55 else "low")
+                scored.append({"name": app["name"], "package": app["package"], "confidence": conf, "score": round(score, 2)})
+        scored.sort(key=lambda x: x["score"], reverse=True)
+        candidates = scored[:5]
 
-    if best_score >= 0.80:
-        confidence = "high"
-    elif best_score >= 0.55:
-        confidence = "medium"
-    else:
-        confidence = "low"
+    top_candidate = candidates[0] if candidates else None
+    overall_confidence = top_candidate["confidence"] if top_candidate else "none"
 
     return {
         "success": True,
         "query": query,
-        "confidence": confidence,
-        "top_candidate": top3[0]["name"] if top3 else None,
-        "candidates": top3,
-        "matches": [c["name"] for c in top3],
-        "target_device": target_res.get("device", {}).get("name", "laptop"),
-        "message": f"Found installed apps matching '{query}' (Confidence: {confidence}, Top: {top3[0]['name'] if top3 else 'none'}).",
+        "confidence": overall_confidence,
+        "top_candidate": top_candidate["name"] if top_candidate else None,
+        "package": top_candidate["package"] if top_candidate else None,
+        "candidates": candidates,
+        "matches": [c["name"] for c in candidates],
+        "target_device": target_dev.get("name", target_hint) if target_dev else target_hint,
+        "message": f"Found installed apps matching '{query}' (Confidence: {overall_confidence}, Top: {top_candidate['name'] if top_candidate else 'none'}).",
+    }
+
+
+async def handle_get_device_status(user_id: int, args: dict, ctx: dict) -> dict:
+    """
+    Step C2.7 Item 6: Fetches live device status using real telemetry:
+    last heartbeat age, WebSocket status, last error, permissions, battery.
+    """
+    target_hint = sanitize_text_arg(args.get("target_device", "phone"), 50)
+    db = ctx.get("db")
+    relay = ctx.get("relay_manager")
+
+    devs = db.get_user_devices(user_id) if db else []
+    trusted = [d for d in devs if d.get("status") == "trusted"]
+    target_res = _resolve_target_device(trusted, target_hint, relay, user_id)
+
+    if target_res["status"] == "ambiguous":
+        return {"success": False, "message": target_res["message"], "ambiguous": True}
+
+    target_dev = target_res.get("device")
+    if not target_dev:
+        return {"success": False, "error": target_res.get("message") or f"No trusted device found for '{target_hint}'."}
+
+    dev_id = target_dev["device_id"]
+    dev_name = target_dev.get("name", "Device")
+    platform = (target_dev.get("platform") or "android").lower()
+
+    # Calculate real heartbeat age
+    last_seen_at = target_dev.get("last_seen_at")
+    heartbeat_age_s = None
+    if last_seen_at:
+        try:
+            from datetime import datetime, timezone
+            dt_str = str(last_seen_at)
+            if dt_str.endswith("Z"):
+                dt_str = dt_str[:-1] + "+00:00"
+            dt = datetime.fromisoformat(dt_str)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            heartbeat_age_s = int((datetime.now(timezone.utc) - dt).total_seconds())
+        except Exception:
+            pass
+
+    ws_connected = bool(relay and (user_id, dev_id) in getattr(relay, "active_websockets", {}))
+    is_online = bool(relay and relay.is_device_connected(user_id, dev_id))
+
+    telem = getattr(relay, "device_telemetry", {}).get((user_id, dev_id), {}) if relay else {}
+    battery_level = telem.get("battery_level") or target_dev.get("battery_level")
+    is_charging = telem.get("is_charging")
+    last_poll_age = telem.get("last_poll_age")
+    last_http_status = telem.get("last_http_status")
+    last_error = telem.get("last_error")
+    permissions = telem.get("permissions") or {}
+
+    diag_parts = [
+        f"Device: {dev_name} ({platform})",
+        f"WebSocket: {'Connected' if ws_connected else 'Disconnected'}",
+        f"Online: {'Yes' if is_online else 'No'}",
+    ]
+    if heartbeat_age_s is not None:
+        diag_parts.append(f"Heartbeat: {heartbeat_age_s}s ago")
+    if battery_level is not None:
+        charging_str = " (charging)" if is_charging else ""
+        diag_parts.append(f"Battery: {battery_level}%{charging_str}")
+    if last_http_status:
+        diag_parts.append(f"Last HTTP: {last_http_status}")
+    if last_error:
+        diag_parts.append(f"Last Error: {last_error}")
+
+    return {
+        "success": True,
+        "device_id": dev_id,
+        "device_name": dev_name,
+        "platform": platform,
+        "is_online": is_online,
+        "websocket_connected": ws_connected,
+        "heartbeat_age_seconds": heartbeat_age_s,
+        "battery_level": battery_level,
+        "is_charging": is_charging,
+        "last_poll_age": last_poll_age,
+        "last_http_status": last_http_status,
+        "last_error": last_error,
+        "permissions": permissions,
+        "summary": " | ".join(diag_parts),
+        "message": f"{dev_name} status: {'online' if is_online else 'offline'}, WebSocket {'connected' if ws_connected else 'disconnected'}, last heartbeat {heartbeat_age_s if heartbeat_age_s is not None else '?'}s ago.",
     }
 
 
 async def handle_open_app(user_id: int, args: dict, ctx: dict) -> dict:
     """
-    Rule for 'open <app>': if the desktop app is installed, open it;
-    otherwise open the website in the preferred browser.
+    Step C2.7 Item 1, 2, 4, 6:
+    Launches an application by name or package on user's device.
+    Uses candidate resolution to pick exact package.
+    Never silently falls back to a website if app is requested or not installed on phone.
+    On failure or timeout, provides real failure diagnostic data (heartbeat, WS status, error).
+    Registers late confirmation listener so late opens update the chat.
     """
     app_name = sanitize_text_arg(args.get("name", ""), 80)
     explicit_browser = args.get("browser")
     target_hint = args.get("target_device", "laptop")
 
-    db = ctx["db"]
-    relay = ctx["relay_manager"]
+    db = ctx.get("db")
+    relay = ctx.get("relay_manager")
 
     pref_browser = db.get_setting(user_id, "preferred_browser", "chrome") if db else "chrome"
     browser = explicit_browser or pref_browser
@@ -964,6 +1075,17 @@ async def handle_open_app(user_id: int, args: dict, ctx: dict) -> dict:
     target_dev = target_res.get("device")
     if not target_dev:
         return {"success": False, "error": target_res.get("message") or "No companion device available."}
+
+    dev_platform = (target_dev.get("platform") or "android").lower()
+    is_phone = dev_platform in ("android", "phone", "mobile")
+
+    # Step C2.7 Item 4: Resolve exact app and package if targeting phone
+    target_package = None
+    if is_phone and relay and hasattr(relay, "resolve_installed_apps_candidates"):
+        candidates = relay.resolve_installed_apps_candidates(user_id, target_dev["device_id"], app_name, limit=1)
+        if candidates and candidates[0].get("score", 0) >= 0.50:
+            target_package = candidates[0].get("package")
+            app_name = candidates[0].get("name") or app_name
 
     # Capability Handshake (Item 2)
     supported = None
@@ -984,12 +1106,16 @@ async def handle_open_app(user_id: int, args: dict, ctx: dict) -> dict:
         }
 
     cmd_id = f"cmd_app_{int(time.time() * 1000)}"
+    payload = {"app": app_name, "browser": browser, "preferred_browser": pref_browser}
+    if target_package:
+        payload["package"] = target_package
+
     cmd_data = {
         "id": cmd_id,
         "sender_device": trusted[0]["device_id"] if trusted else "server",
         "target_device": target_dev["device_id"],
         "type": "open_app",
-        "payload": {"app": app_name, "browser": browser, "preferred_browser": pref_browser},
+        "payload": payload,
         "created_at": time.time(),
         "expiry": 86400,
     }
@@ -1009,7 +1135,7 @@ async def handle_open_app(user_id: int, args: dict, ctx: dict) -> dict:
     if relay:
         await relay.relay_command(user_id, cmd_data)
 
-    # Command Lifecycle Waiter (Item 1)
+    # Command Lifecycle Waiter (Item 1 & 2)
     if relay and hasattr(relay, "wait_for_command_completion"):
         completion = await relay.wait_for_command_completion(user_id, cmd_id, timeout=10.0)
         if isinstance(completion, dict):
@@ -1028,22 +1154,55 @@ async def handle_open_app(user_id: int, args: dict, ctx: dict) -> dict:
                     "message": f"Opened {app_name} on {target_dev.get('name')}{pid_info}{pkg_info}.",
                 }
             elif status == "timed_out":
+                # Step C2.7 Item 2: Register late confirmation listener
+                if hasattr(relay, "register_late_confirmation_listener"):
+                    relay.register_late_confirmation_listener(cmd_id, user_id, message_id=None, app_name=app_name)
+
+                # Step C2.7 Item 6: Failure explanation using real data
+                dev_status = await handle_get_device_status(user_id, {"target_device": target_dev.get("name")}, ctx)
+                hb_age = dev_status.get("heartbeat_age_seconds")
+                ws_stat = "connected" if dev_status.get("websocket_connected") else "disconnected"
+                last_err = dev_status.get("last_error")
+                detail_bits = []
+                if hb_age is not None:
+                    detail_bits.append(f"Heartbeat: {hb_age}s ago")
+                detail_bits.append(f"WebSocket: {ws_stat}")
+                if last_err:
+                    detail_bits.append(f"Last error: {last_err}")
+                diag_str = f" ({', '.join(detail_bits)})" if detail_bits else ""
+
                 return {
                     "success": False,
                     "status": "unconfirmed",
                     "app": app_name,
                     "target_device": target_dev.get("name"),
-                    "message": f"I sent it to your {target_dev.get('name')}, but could not confirm (timed out after 10s).",
+                    "device_status": dev_status,
+                    "message": f"I sent it to your {target_dev.get('name')}, but could not confirm (timed out after 10s){diag_str}.",
                 }
             else:
                 err = completion.get("error") or (result_data.get("error") if isinstance(result_data, dict) else "Failed to open app")
+                # Step C2.7 Item 4: Honest reporting, never silent fallback to website
+                err_str = str(err).lower()
+                if "not installed" in err_str or err == "APP_NOT_INSTALLED":
+                    return {
+                        "success": False,
+                        "status": "not_installed",
+                        "app": app_name,
+                        "target_device": target_dev.get("name"),
+                        "error": err,
+                        "message": f"App '{app_name}' is not installed on {target_dev.get('name')}.",
+                    }
+
+                # Real diagnostic data on failure
+                dev_status = await handle_get_device_status(user_id, {"target_device": target_dev.get("name")}, ctx)
                 return {
                     "success": False,
                     "status": "failed",
                     "app": app_name,
                     "target_device": target_dev.get("name"),
                     "error": err,
-                    "message": f"Failed to open {app_name} on {target_dev.get('name')}: {err}",
+                    "device_status": dev_status,
+                    "message": f"Failed to open {app_name} on {target_dev.get('name')}: {err}.",
                 }
 
     return {
@@ -1265,6 +1424,14 @@ async def handle_press_keys(user_id: int, args: dict, ctx: dict) -> dict:
         "needs_user_confirmation": True,
         "message": f"Pressed key '{keys}' on {target_dev.get('name')}.",
     }
+
+_SCHEMA_GET_DEVICE_STATUS = {
+    "type": "object",
+    "properties": {
+        "target_device": {"type": "string", "description": "Target companion device name or hint (e.g. 'phone', 'laptop')", "maxLength": 50, "default": "phone"},
+    },
+    "additionalProperties": False,
+}
 
 _SCHEMA_FIND_INSTALLED_APP = {
     "type": "object",
@@ -1513,6 +1680,14 @@ def build_default_registry() -> ToolRegistry:
         confirmation_template="Open {url} on {target_device}?",
     ))
 
+
+    registry.register(Tool(
+        name="get_device_status",
+        description="Check connection health, heartbeat age, WebSocket status, battery level, and permissions for user's phone or laptop.",
+        parameters=_SCHEMA_GET_DEVICE_STATUS,
+        risk_level=0,
+        handler=handle_get_device_status,
+    ))
 
     registry.register(Tool(
         name="find_installed_app",

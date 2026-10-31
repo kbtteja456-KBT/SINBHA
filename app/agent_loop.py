@@ -408,6 +408,34 @@ class AgentResult:
 
 # --------------- Main Agent Loop ---------------
 
+def _get_fallback_credentials(creds: dict) -> Optional[dict]:
+    """
+    Step C2.7 Item 5: Automatic fallback to a secondary model or provider.
+    Tries secondary model or alternate provider if configured.
+    """
+    provider = creds.get("provider", "").lower()
+    model = creds.get("model", "")
+
+    # Try alternate provider first if available and different
+    alt_provider = "openrouter" if provider == "groq" else "groq"
+    alt_creds = get_llm_credentials(alt_provider)
+    if alt_creds and alt_creds.get("api_key") and alt_creds.get("provider") != provider:
+        return alt_creds
+
+    # Otherwise fallback to secondary model on same provider
+    fallback = dict(creds)
+    if provider == "groq":
+        fallback_model = "openai/gpt-oss-20b" if model != "openai/gpt-oss-20b" else "qwen/qwen3.8-27b"
+        fallback["model"] = fallback_model
+        fallback["reasoning_effort"] = None
+        return fallback
+    elif provider == "openrouter":
+        fallback_model = "meta-llama/llama-3.3-70b-instruct" if "flash" in model.lower() else "google/gemini-2.5-flash"
+        fallback["model"] = fallback_model
+        return fallback
+    return None
+
+
 async def run_agent_loop(
     user_id: int,
     user_message: str,
@@ -437,14 +465,14 @@ async def run_agent_loop(
     active_provider = db_module.get_active_ai_provider(user_id) if hasattr(db_module, "get_active_ai_provider") else "auto"
     if active_provider == "disabled":
         return AgentResult(
-            reply="External AI model processing is currently disabled in your Settings. You can re-enable Groq or OpenRouter in Settings at any time! 🌸",
+            reply="External AI model processing is currently disabled in your Settings. You can re-enable it in Settings at any time! 🌸",
             error="ai_disabled",
         )
 
     creds = get_llm_credentials(active_provider)
     if not creds:
         return AgentResult(
-            reply="I'm not quite connected to my brain yet! 🌸 Please paste your Groq or OpenRouter API key into your .env file.",
+            reply="I'm not quite connected to my brain yet! 🌸 Please check your AI API key in your settings or .env file.",
             error="missing_api_key",
         )
 
@@ -541,35 +569,35 @@ async def run_agent_loop(
         # Call LLM
         llm_result = await _call_llm_with_tools(messages, tools_list, creds)
 
-        # Automatic fallback for Groq rate limit: try secondary model with separate rate limit bucket
-        if not llm_result["success"] and llm_result.get("error") == "rate_limit" and creds.get("provider") == "groq":
-            fallback_model = "openai/gpt-oss-20b" if creds.get("model") != "openai/gpt-oss-20b" else "qwen/qwen3.8-27b"
-            fallback_creds = dict(creds)
-            fallback_creds["model"] = fallback_model
-            fallback_creds["reasoning_effort"] = None
-            logger.info(f"Groq primary model {creds.get('model')} rate-limited; trying fallback model {fallback_model}")
-            llm_result = await _call_llm_with_tools(messages, tools_list, fallback_creds)
+        # Step C2.7 Item 5: If LLM returns an empty or failed answer, retry automatically with second model/provider
+        if not llm_result["success"]:
+            fallback_creds = _get_fallback_credentials(creds)
+            if fallback_creds:
+                logger.info(f"LLM call failed with {llm_result.get('error')}; retrying with fallback model/provider")
+                fallback_result = await _call_llm_with_tools(messages, tools_list, fallback_creds)
+                if fallback_result["success"]:
+                    llm_result = fallback_result
+                    creds = fallback_creds
 
         if not llm_result["success"]:
             error_msg = llm_result.get("error", "unknown")
-            provider_name = (creds.get("provider") or "AI").capitalize()
-            # Explicit, truthful error messages naming the problem type (never vague "trouble connecting")
+            # Step C2.7 Item 5: Truthful failure classification, never show provider names to users
             if error_msg == "rate_limit":
-                reply = f"The {provider_name} AI service returned a rate limit error (429: Too Many Requests). Please wait a moment and try again."
+                reply = "The AI service returned a rate limit error (429: Too Many Requests). Please wait a moment and try again."
             elif error_msg == "timeout":
-                reply = f"The AI request timed out waiting for a response from {provider_name}. Please try again."
+                reply = "The AI request timed out waiting for a response. Please try again."
             elif error_msg == "empty_answer":
-                reply = f"The AI service ({provider_name}) returned an empty response with no content or action. Please try sending your request again."
+                reply = "The AI service returned an empty response with no content or action. Please try sending your request again."
             elif error_msg == "malformed_tool_call":
-                reply = f"The AI service ({provider_name}) generated an invalid tool call structure. Please try your request again."
+                reply = "The AI service generated an invalid response structure. Please try your request again."
             elif error_msg == "invalid_api_key":
-                reply = f"Invalid API key for {provider_name}. Please check your credentials in the settings or .env file."
+                reply = "Invalid AI service credentials. Please check your credentials in the settings or .env file."
             elif error_msg == "insufficient_credits":
-                reply = f"Your {provider_name} account has run out of credits or quota. Please top it up or switch providers."
+                reply = "The AI service account has run out of credits or quota. Please top it up or switch configurations."
             elif error_msg == "server_error":
-                reply = f"The AI provider ({provider_name}) encountered a server error (HTTP {llm_result.get('status', '5xx')}). Please try again shortly."
+                reply = f"The AI service encountered a temporary server error (HTTP {llm_result.get('status', '5xx')}). Please try again shortly."
             elif error_msg == "unapproved_provider":
-                reply = f"Provider '{creds.get('provider')}' is not approved. Only Groq and OpenRouter are approved AI providers."
+                reply = "The configured AI service is not supported."
             else:
                 reply = f"AI request failed ({error_msg}). Please try again."
 

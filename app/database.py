@@ -787,7 +787,7 @@ def get_global_today_message_count() -> int:
 
 # ----------------- Chat Messages Operations (Per-User, Encrypted at Rest) -----------------
 
-def save_message(user_id: int, role: str, content: str):
+def save_message(user_id: int, role: str, content: str) -> dict:
     """
     Saves a conversation message for the user.
     Requirement 8: Sensitive message content is encrypted at rest using Fernet.
@@ -796,6 +796,37 @@ def save_message(user_id: int, role: str, content: str):
     with get_db_session() as session:
         msg = Message(user_id=user_id, role=role, content=encrypted_content, timestamp=utc_now())
         session.add(msg)
+        session.flush()
+        return {"id": msg.id, "user_id": user_id, "role": role, "content": content}
+
+def update_message(user_id: int, message_id: int, new_content: str) -> bool:
+    """Updates the encrypted content of an existing message."""
+    encrypted = encrypt_text(new_content)
+    with get_db_session() as session:
+        msg = session.scalar(select(Message).where(Message.id == message_id, Message.user_id == user_id))
+        if msg:
+            msg.content = encrypted
+            return True
+        return False
+
+def update_latest_assistant_message(user_id: int, append_text: str) -> Optional[dict]:
+    """Appends update text to the most recent assistant message (Step C2.7 Item 2: Late Confirmations)."""
+    with get_db_session() as session:
+        msg = session.scalar(
+            select(Message)
+            .where(Message.user_id == user_id, Message.role == "assistant")
+            .order_by(desc(Message.timestamp), desc(Message.id))
+            .limit(1)
+        )
+        if msg:
+            current_decrypted = decrypt_text(msg.content)
+            # Avoid duplicate update text if already appended
+            if append_text not in current_decrypted:
+                updated_text = f"{current_decrypted}\n\n{append_text}".strip()
+                msg.content = encrypt_text(updated_text)
+                return {"id": msg.id, "role": "assistant", "content": updated_text}
+            return {"id": msg.id, "role": "assistant", "content": current_decrypted}
+        return None
 
 def get_recent_messages(user_id: int, limit: int = 20):
     """Retrieves recent conversation messages with decrypted content."""

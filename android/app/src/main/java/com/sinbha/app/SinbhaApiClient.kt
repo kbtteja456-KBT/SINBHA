@@ -315,35 +315,44 @@ class SinbhaApiClient(private val context: Context) {
         error: String? = null
     ): Boolean = withContext(Dispatchers.IO) {
         val token = prefs.commandToken ?: prefs.sessionToken ?: return@withContext false
-        try {
-            val url = URL("${prefs.backendUrl}/api/devices/command-status")
-            val conn = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("Authorization", "Bearer $token")
-                setRequestProperty("X-Command-Token", token)
-                setRequestProperty("Cookie", "sinbha_session=$token")
-                setRequestProperty("X-Requested-With", "XMLHttpRequest")
-                connectTimeout = 8000
-                readTimeout = 8000
-                doOutput = true
+        val body = JSONObject().apply {
+            put("command_id", commandId)
+            put("status", status)
+            if (result != null) put("result", result)
+            if (!error.isNullOrBlank()) put("error", error)
+        }.toString()
+
+        for (attempt in 1..3) {
+            try {
+                val url = URL("${prefs.backendUrl}/api/devices/command-status")
+                val conn = (url.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    setRequestProperty("Content-Type", "application/json")
+                    setRequestProperty("Authorization", "Bearer $token")
+                    setRequestProperty("X-Command-Token", token)
+                    setRequestProperty("Cookie", "sinbha_session=$token")
+                    setRequestProperty("X-Requested-With", "XMLHttpRequest")
+                    connectTimeout = 8000
+                    readTimeout = 8000
+                    doOutput = true
+                }
+
+                OutputStreamWriter(conn.outputStream).use { it.write(body) }
+                val code = conn.responseCode
+                conn.disconnect()
+                if (code in 200..299) {
+                    return@withContext true
+                }
+            } catch (e: Exception) {
+                if (attempt == 3) {
+                    e.printStackTrace()
+                }
             }
-
-            val body = JSONObject().apply {
-                put("command_id", commandId)
-                put("status", status)
-                if (result != null) put("result", result)
-                if (!error.isNullOrBlank()) put("error", error)
-            }.toString()
-
-            OutputStreamWriter(conn.outputStream).use { it.write(body) }
-            val code = conn.responseCode
-            conn.disconnect()
-            code in 200..299
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
+            if (attempt < 3) {
+                kotlinx.coroutines.delay(500L * attempt)
+            }
         }
+        false
     }
 
     suspend fun sendHeartbeat(
@@ -370,7 +379,7 @@ class SinbhaApiClient(private val context: Context) {
             val body = JSONObject().apply {
                 put("device_id", deviceId)
                 put("platform", "android")
-                put("version", "1.4.7")
+                put("version", "1.4.8")
                 if (battery != null) put("battery", battery)
                 put("is_charging", isCharging)
                 if (installedApps != null && installedApps.length() > 0) {
