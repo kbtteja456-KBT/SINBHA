@@ -73,8 +73,11 @@ jobs:
           cd android
           set -o pipefail
           ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee ../build_android.log || {
-            ERR=$(tail -n 25 ../build_android.log | tr '\r\n' ' ' | sed 's/[^a-zA-Z0-9 .:()\/_-]/ /g')
-            echo "::error title=Gradle Build Failure::$ERR"
+            ERR=$(grep -A 8 -E "(What went wrong|e: )" ../build_android.log | head -n 25 | tr '\r\n' ' ' | sed 's/[^a-zA-Z0-9 .:()\/_-]/ /g')
+            if [ -z "$ERR" ]; then
+              ERR=$(grep -C 3 "FAILURE" ../build_android.log | head -n 25 | tr '\r\n' ' ' | sed 's/[^a-zA-Z0-9 .:()\/_-]/ /g')
+            fi
+            echo "::error title=Gradle Error::$ERR"
             exit 1
           }
 
