@@ -73,12 +73,17 @@ jobs:
           cd android
           set -o pipefail
           ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee ../build_android.log || {
-            echo "### ❌ Android assembleRelease Failed" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            tail -n 120 ../build_android.log >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
+            ERR=$(tail -n 25 ../build_android.log | tr '\r\n' ' ' | sed 's/[^a-zA-Z0-9 .:()\/_-]/ /g')
+            echo "::error title=Gradle Build Failure::$ERR"
             exit 1
           }
+
+      - name: Upload Build Log on Failure
+        if: failure()
+        uses: actions/upload-artifact@v4.6.0
+        with:
+          name: build-failure-log
+          path: build_android.log
 
       - name: Shred and Remove Keystore File
         if: always()
