@@ -95,7 +95,7 @@ object SinbhaAppLauncher {
         val list = mutableListOf<Map<String, String>>()
         try {
             val resolveInfos: List<ResolveInfo> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                pm.queryIntentActivities(intent, PackageManager.ResolveInfoFlags.of(0))
+                pm.queryIntentActivities(intent, PackageManager.ResolveInfoFlags.of(0L))
             } else {
                 @Suppress("DEPRECATION")
                 pm.queryIntentActivities(intent, 0)
@@ -251,7 +251,7 @@ object SinbhaAppLauncher {
                 addCategory(Intent.CATEGORY_LAUNCHER)
             }
             val resolveInfos: List<ResolveInfo> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                pm.queryIntentActivities(launcherIntent, PackageManager.ResolveInfoFlags.of(0))
+                pm.queryIntentActivities(launcherIntent, PackageManager.ResolveInfoFlags.of(0L))
             } else {
                 @Suppress("DEPRECATION")
                 pm.queryIntentActivities(launcherIntent, 0)
@@ -261,10 +261,10 @@ object SinbhaAppLauncher {
             var bestDistance = Int.MAX_VALUE
 
             for (ri in resolveInfos) {
-                val rawLabel = ri.loadLabel(pm).toString()
+                val pkg = ri.activityInfo.packageName.lowercase()
+                val rawLabel = ri.loadLabel(pm)?.toString() ?: pkg
                 val label = rawLabel.lowercase().trim()
                 val normLabel = label.replace(Regex("[^a-z0-9]"), "")
-                val pkg = ri.activityInfo.packageName.lowercase()
 
                 // Exact match
                 if (label == cleanName || normLabel == normalizedQuery || pkg == cleanName) {

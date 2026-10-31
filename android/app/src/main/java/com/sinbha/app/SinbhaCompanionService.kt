@@ -207,11 +207,18 @@ class SinbhaCompanionService : Service() {
                                 put("package", app["package"])
                             })
                         }
+                        val toolsArr = JSONArray().apply {
+                            put("open_app")
+                            put("open_url")
+                            put("send_note")
+                            put("ring_phone")
+                            put("sync_tasks")
+                        }
                         val handshake = JSONObject().apply {
                             put("type", "device_status")
                             put("platform", "android")
                             put("version", "1.4.7")
-                            put("supported_tools", JSONArray(listOf("open_app", "open_url", "send_note", "ring_phone", "sync_tasks")))
+                            put("supported_tools", toolsArr)
                             put("installed_apps", appsArr)
                         }
                         ws.send(handshake.toString())
@@ -236,7 +243,7 @@ class SinbhaCompanionService : Service() {
             }
 
             override fun onClosing(ws: WebSocket, code: Int, reason: String) {
-                ws.close(1000, null)
+                ws.close(1000, "Normal closure")
             }
 
             override fun onClosed(ws: WebSocket, code: Int, reason: String) {

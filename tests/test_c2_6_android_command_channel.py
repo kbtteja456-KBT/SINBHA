@@ -430,3 +430,4 @@ async def test_fake_phone_command_channel_full_flow():
     entry_fake = relay_manager.get_command_lifecycle(cmd_fake_id)
     assert entry_fake["status"] == "failed"
     assert "not installed" in entry_fake["error"]
+
