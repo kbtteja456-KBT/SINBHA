@@ -1526,10 +1526,12 @@ async def handle_browser_task(user_id: int, args: dict, ctx: dict) -> dict:
     start_url = args.get("start_url")
     dry_run = bool(args.get("dry_run", False))
 
-    if not start_url and any(k in goal.lower() for k in ("local store", "test store", "sinbha store", "our store")):
-        from pathlib import Path
-        test_fixture = (Path(__file__).parent.parent / "tests" / "fixtures" / "test_page.html").resolve().as_uri()
-        start_url = test_fixture
+    # Step 1C Item 5: Removed keyword mapping for "local store", "our store", "test store".
+    # Local file test fixtures are only reachable through explicit URL in tests or DEV_MODE.
+    if start_url and start_url.startswith("file://"):
+        from app.security import is_dev_or_test_env
+        if not is_dev_or_test_env():
+            return {"success": False, "error": "Local file URLs are restricted to tests or DEV_MODE with explicit URL."}
 
     from app.browser_agent import run_browser_task, BrowserTaskConfig
     cfg = BrowserTaskConfig(dry_run=dry_run)
@@ -1888,7 +1890,7 @@ def build_default_registry() -> ToolRegistry:
 
     registry.register(Tool(
         name="browser_task",
-        description="Automate tasks in a visible Chrome window using isolated SINBHA profile. Use when user asks to check a website, read a page, test store, check prices on a store, or automate actions on web. Tools include navigate, click, type, screenshot. Never enters passwords.",
+        description="Automate tasks in a visible Chrome window using isolated SINBHA profile. Use when user asks to check a website, read a page, check prices on an online store, or automate actions on web. Tools include navigate, click, type, screenshot. Never enters passwords.",
         parameters=_SCHEMA_BROWSER_TASK,
         risk_level=2,
         handler=handle_browser_task,

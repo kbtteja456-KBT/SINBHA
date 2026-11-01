@@ -28,6 +28,14 @@ def is_dev_mode_allowed() -> bool:
         return False
     return os.getenv("DEV_MODE", "false").strip().lower() == "true"
 
+def is_dev_or_test_env() -> bool:
+    """Checks whether the environment is currently a test or DEV_MODE."""
+    if is_dev_mode_allowed():
+        return True
+    if "pytest" in sys.modules or bool(os.getenv("PYTEST_CURRENT_TEST")):
+        return True
+    return False
+
 def is_production_database_url(url: str = "") -> bool:
     """
     Step 1C Item 1: Detects if a database URL points to the production database.
