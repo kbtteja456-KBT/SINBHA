@@ -547,7 +547,15 @@ async def handle_send_note(user_id: int, args: dict, ctx: dict) -> dict:
             "message": f"I queued the note for {target_dev.get('name')}, but the device is currently offline.",
         }
 
-    await relay.relay_command(user_id, cmd_data)
+    relay_res = await relay.relay_command(user_id, cmd_data)
+    if isinstance(relay_res, dict) and not relay_res.get("success"):
+        return {
+            "success": False,
+            "status": "failed",
+            "error": relay_res.get("error", "RELAY_FAILED"),
+            "message": relay_res.get("message") or f"Could not relay note to {target_dev.get('name')}.",
+            "unverified": relay_res.get("unverified", False),
+        }
 
     # Command Lifecycle Waiter (Item 1)
     if relay and hasattr(relay, "wait_for_command_completion"):
@@ -635,7 +643,15 @@ async def handle_ring_phone(user_id: int, args: dict, ctx: dict) -> dict:
             "message": f"I queued the ring alert for {target_dev.get('name')}, but the device is currently offline.",
         }
 
-    await relay.relay_command(user_id, cmd_data)
+    relay_res = await relay.relay_command(user_id, cmd_data)
+    if isinstance(relay_res, dict) and not relay_res.get("success"):
+        return {
+            "success": False,
+            "status": "failed",
+            "error": relay_res.get("error", "RELAY_FAILED"),
+            "message": relay_res.get("message") or f"Could not relay ring to {target_dev.get('name')}.",
+            "unverified": relay_res.get("unverified", False),
+        }
 
     # Command Lifecycle Waiter (Item 1)
     if relay and hasattr(relay, "wait_for_command_completion"):
@@ -728,7 +744,15 @@ async def handle_open_url(user_id: int, args: dict, ctx: dict) -> dict:
             "message": f"I queued the URL for {target_dev.get('name')}, but the device is currently offline.",
         }
 
-    await relay.relay_command(user_id, cmd_data)
+    relay_res = await relay.relay_command(user_id, cmd_data)
+    if isinstance(relay_res, dict) and not relay_res.get("success"):
+        return {
+            "success": False,
+            "status": "failed",
+            "error": relay_res.get("error", "RELAY_FAILED"),
+            "message": relay_res.get("message") or f"Could not relay URL to {target_dev.get('name')}.",
+            "unverified": relay_res.get("unverified", False),
+        }
 
     # Command Lifecycle Waiter (Item 1)
     if relay and hasattr(relay, "wait_for_command_completion"):
@@ -1135,7 +1159,15 @@ async def handle_open_app(user_id: int, args: dict, ctx: dict) -> dict:
         }
 
     if relay:
-        await relay.relay_command(user_id, cmd_data)
+        relay_res = await relay.relay_command(user_id, cmd_data)
+        if isinstance(relay_res, dict) and not relay_res.get("success"):
+            return {
+                "success": False,
+                "status": "failed",
+                "error": relay_res.get("error", "RELAY_FAILED"),
+                "message": relay_res.get("message") or f"Could not relay open_app to {target_dev.get('name')}.",
+                "unverified": relay_res.get("unverified", False),
+            }
 
     # Command Lifecycle Waiter (Item 1 & 2)
     if relay and hasattr(relay, "wait_for_command_completion"):
@@ -1281,7 +1313,15 @@ async def handle_type_text(user_id: int, args: dict, ctx: dict) -> dict:
         }
 
     if relay:
-        await relay.relay_command(user_id, cmd_data)
+        relay_res = await relay.relay_command(user_id, cmd_data)
+        if isinstance(relay_res, dict) and not relay_res.get("success"):
+            return {
+                "success": False,
+                "status": "failed",
+                "error": relay_res.get("error", "RELAY_FAILED"),
+                "message": relay_res.get("message") or f"Could not relay typing command to {target_dev.get('name')}.",
+                "unverified": relay_res.get("unverified", False),
+            }
 
     # Command Lifecycle Waiter (Item 1)
     if relay and hasattr(relay, "wait_for_command_completion"):
@@ -1387,7 +1427,15 @@ async def handle_press_keys(user_id: int, args: dict, ctx: dict) -> dict:
         }
 
     if relay:
-        await relay.relay_command(user_id, cmd_data)
+        relay_res = await relay.relay_command(user_id, cmd_data)
+        if isinstance(relay_res, dict) and not relay_res.get("success"):
+            return {
+                "success": False,
+                "status": "failed",
+                "error": relay_res.get("error", "RELAY_FAILED"),
+                "message": relay_res.get("message") or f"Could not relay key press to {target_dev.get('name')}.",
+                "unverified": relay_res.get("unverified", False),
+            }
 
     # Command Lifecycle Waiter (Item 1)
     if relay and hasattr(relay, "wait_for_command_completion"):
