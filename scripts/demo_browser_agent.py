@@ -8,6 +8,13 @@ import sys
 import asyncio
 from pathlib import Path
 
+# Ensure UTF-8 output encoding for Windows consoles
+if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 # Add project root to sys.path
 ROOT_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT_DIR))
