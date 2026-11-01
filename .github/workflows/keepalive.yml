@@ -1,0 +1,23 @@
+name: Keep Render Backend Alive 24/7
+
+on:
+  schedule:
+    # Run every 10 minutes to prevent Render free tier from sleeping
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping-backend:
+    name: Ping Health Endpoint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Render Backend
+        run: |
+          echo "Pinging https://sinbha-backend.onrender.com/api/health..."
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://sinbha-backend.onrender.com/api/health)
+          echo "Response HTTP Status: $STATUS"
+          if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 400 ]; then
+            echo "✅ Backend is healthy and awake!"
+          else
+            echo "⚠️ Warning: Backend returned status $STATUS (may be waking up)"
+          fi
