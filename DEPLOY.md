@@ -79,6 +79,12 @@ Under the **Environment** section, add the following variables:
 | `SESSION_SECRET` | *(your generated session secret)* | Cookie session signing |
 | `DAILY_USER_AI_LIMIT` | `100` | Per-user message cap |
 | `DAILY_GLOBAL_AI_LIMIT`| `2000` | Global platform safety cap |
+| `SMTP_HOST` | `smtp.gmail.com` | Outgoing email server |
+| `SMTP_PORT` | `587` | STARTTLS port |
+| `SMTP_USER` | *(your gmail address)* | Sender Gmail address |
+| `SMTP_PASS` | *(your 16-char App Password)* | Generated in Google Account Security |
+| `SMTP_FROM_NAME` | `SINBHA Companion` | Email display name |
+| `APP_URL` | `https://sinbha-backend.onrender.com` | Base URL for verification and reset links |
 
 Click **Deploy Web Service**! Render will pull your repo, run `build.sh`, run `alembic upgrade head`, and start the server.
 
