@@ -193,8 +193,8 @@ def validate_safe_typing(text: str) -> Tuple[bool, str]:
         return False, "Typing text cannot be empty."
 
     lower = text.lower()
-    if re.search(r"(?:password|passwd|passcode|secret)\s*[:=]\s*\S+", text, re.IGNORECASE) or \
-       re.search(r"\b(?:my password is|my secret is)\b", lower):
+    if re.search(r"(?:password|passwd|passcode|secret)\s*[:=]?\s*\S+", text, re.IGNORECASE) or \
+       re.search(r"\b(?:my password is|my secret is|password\w*|passwd\w*)\b", lower):
         return False, "Typing passwords or secrets is strictly blocked for security."
 
     if re.search(r"\b(?:otp|verification code|one-time password|auth code|pin)\b", lower) or \

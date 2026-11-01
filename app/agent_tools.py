@@ -848,8 +848,8 @@ def validate_safe_typing_text(text: str) -> tuple[bool, str]:
 
     lower = text.lower()
     # Password detection
-    if re.search(r"(?:password|passwd|passcode|secret)\s*[:=]\s*\S+", text, re.IGNORECASE) or \
-       re.search(r"\b(?:my password is|my secret is)\b", lower):
+    if re.search(r"(?:password|passwd|passcode|secret)\s*[:=]?\s*\S+", text, re.IGNORECASE) or \
+       re.search(r"\b(?:my password is|my secret is|password\w*|passwd\w*)\b", lower):
         return False, "Typing passwords or secrets is strictly blocked for security."
 
     # OTP detection (4-8 digits accompanied by otp/code/verification/pin)
