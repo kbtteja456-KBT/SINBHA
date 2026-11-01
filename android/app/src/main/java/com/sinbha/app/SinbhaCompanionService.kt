@@ -221,7 +221,7 @@ class SinbhaCompanionService : Service() {
                         val handshake = JSONObject().apply {
                             put("type", "device_status")
                             put("platform", "android")
-                            put("version", "1.4.8")
+                            put("version", "1.4.11")
                             put("supported_tools", toolsArr)
                             put("installed_apps", appsArr)
                         }

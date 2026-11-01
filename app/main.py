@@ -1721,7 +1721,7 @@ async def device_websocket_endpoint(websocket: WebSocket):
                 relay_manager.update_command_status(user_id, cid, st, result=res_data, error=err_data)
             elif msg_type == "device_status":
                 platform = msg.get("platform", "unknown")
-                version = msg.get("version", "1.4.8")
+                version = msg.get("version", "1.4.11")
                 tools = msg.get("supported_tools")
                 installed_apps = msg.get("installed_apps")
                 relay_manager.record_device_capabilities(
@@ -1789,7 +1789,7 @@ async def device_heartbeat_endpoint(request: Request, user: dict = Depends(get_d
                 "battery": data.get("battery"),
                 "is_charging": data.get("is_charging", False),
                 "platform": data.get("platform", "android"),
-                "version": data.get("version", "1.4.8"),
+                "version": data.get("version", "1.4.11"),
                 "installed_apps": data.get("installed_apps"),
                 "updated_at": time.time()
             })
@@ -1798,7 +1798,7 @@ async def device_heartbeat_endpoint(request: Request, user: dict = Depends(get_d
                 user["id"],
                 clean_id,
                 data.get("platform", "android"),
-                data.get("version", "1.4.8"),
+                data.get("version", "1.4.11"),
                 data.get("supported_tools"),
                 installed_apps=data.get("installed_apps")
             )

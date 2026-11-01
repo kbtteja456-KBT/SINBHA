@@ -31,10 +31,27 @@ You are responsible for safeguarding your login credentials. Use a strong, uniqu
 - **Task and Schedule Data**: Titles, due dates, reminder times, and task completion statuses.
 - **Conversations & Memory**: Messages you send in chat and personal facts you share with SINBHA (e.g. your preferences or daily routines).
 
-### 2.2 How Your Data is Processed (AI Processing)
-- **AI Processing**: When you send messages to SINBHA, your text is processed through our chosen AI provider (such as OpenRouter / Google Gemini) to generate conversational replies and parse natural language deadlines.
+### 2.2 How Your Data is Processed & External AI / Search Providers
+SINBHA connects to approved external AI and search providers to provide companion capabilities, tool orchestration, and screen visual guidance. We maintain strict transparency regarding which providers receive data:
+
+1. **Groq Inc.** (`api.groq.com`):
+   - **What it receives**: User chat messages, tool definitions, and tool execution status when Groq is the active provider or used as primary/fallback LLM.
+   - **Purpose**: Ultra-fast conversational text generation and tool routing.
+2. **OpenRouter / Google** (`openrouter.ai` / Google Gemini):
+   - **What it receives**: User chat messages, tool parameters, and desktop screenshot frames during autonomous screen tasks (`screen_task`).
+   - **Purpose**: Multi-step reasoning and computer vision screen navigation (Google Gemini 2.5 Flash).
+3. **Tavily Technologies** (`api.tavily.com`):
+   - **What it receives**: Search queries formulated when real-time web search is explicitly needed.
+   - **Purpose**: Real-time web search and current news grounding. Tavily never receives your passwords, account profile, or chat history.
+
+### 2.2.1 Windows Screen Agent & Visual Privacy (Step C3a)
+- **Ephemeral In-Memory Processing**: Screen capture frames taken by the Windows Screen Agent are held strictly in temporary RAM for vision model coordinate analysis. **Screenshots are NEVER stored on the server, NEVER written to disk, and NEVER logged in any database or file.**
+- **Never-Capture List**: Windows belonging to password managers (such as 1Password, Bitwarden, KeePass, LastPass, Dashlane, RoboForm, Windows Security, Authenticator) and banking/financial services (Chase, Wells Fargo, Bank of America, Citi, PayPal, Binance, Coinbase, etc.) are strictly prohibited from capture. Screen capture is instantly blocked if a sensitive window is in focus.
+- **Action Gating & Safety Invariants**: The agent gates ACTIONS, not apps: before sensitive operations (send, post, submit, buy, pay, delete, install, share), an explicit confirmation card is shown with the exact text and a cropped preview. The agent **never types passwords, OTP codes, PINs, or credit card numbers**, and pauses for human completion on CAPTCHAs and login screens.
+
+### 2.2.2 Data Encryption & Protection
 - **Field-Level Encryption at Rest**: Sensitive chat contents and memory facts are stored in our PostgreSQL database using Fernet symmetric encryption (AES-128-CBC + HMAC-SHA256).
-- **No Plaintext Logging**: We do not store plaintext passwords, session cookies, or raw message text in our audit or system logs.
+- **No Plaintext Logging**: We do not store plaintext passwords, session cookies, prompt text, or raw message text in our audit or system logs. Failures are classified with zero external provider names leaked to users.
 
 ### 2.3 Strict Data Isolation
 Every piece of data is isolated to your individual account ID. No other user can access or view your chat history, tasks, or memory facts. Even administrators cannot view other users' private chat contents or memories through the application.

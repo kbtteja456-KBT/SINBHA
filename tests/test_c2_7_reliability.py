@@ -206,7 +206,7 @@ async def test_find_installed_app_tool_handler(test_user):
     dev_id = "phone_c27_tool"
 
     # Register trusted phone
-    db.create_or_register_device(user_id, dev_id, "My OnePlus", "android", is_signup=True)
+    db.create_or_register_device(user_id, dev_id, "My OnePlus", "android", password="hashed_pw")
     relay.record_device_capabilities(
         user_id=user_id,
         device_id=dev_id,
@@ -241,7 +241,7 @@ async def test_get_device_status_tool(test_user):
     relay = CommandRelayManager()
     dev_id = "phone_diag_1"
 
-    db.create_or_register_device(user_id, dev_id, "My Test Phone", "android", is_signup=True)
+    db.create_or_register_device(user_id, dev_id, "My Test Phone", "android", password="hashed_pw")
     relay.store_device_telemetry(user_id, dev_id, {
         "battery_level": 82,
         "is_charging": True,
@@ -270,7 +270,7 @@ async def test_open_app_timeout_uses_real_diagnostics(test_user):
     relay = CommandRelayManager()
     dev_id = "phone_timeout_1"
 
-    db.create_or_register_device(user_id, dev_id, "OnePlus Phone", "android", is_signup=True)
+    db.create_or_register_device(user_id, dev_id, "OnePlus Phone", "android", password="hashed_pw")
     relay.mark_device_active(user_id, dev_id)
 
     # Mock wait_for_command_completion to simulate timeout
