@@ -1378,6 +1378,40 @@ async def messages_privacy_note_endpoint():
     from app.messages_assistant import get_messages_privacy_note
     return get_messages_privacy_note()
 
+@app.get("/api/integrations/google/auth-url")
+async def google_auth_url_endpoint(user: dict = Depends(get_current_user)):
+    """Generates official Google Sign-In URL with smallest scopes (read & draft only)."""
+    from app.official_data_tools import generate_google_oauth_url
+    return generate_google_oauth_url(user["id"])
+
+@app.get("/api/integrations/google/testing-guide")
+async def google_testing_guide_endpoint():
+    """Returns official Google Cloud verification rules and testing limits."""
+    from app.official_data_tools import get_google_testing_guide
+    return get_google_testing_guide()
+
+@app.get("/api/integrations/privacy")
+async def official_data_privacy_endpoint():
+    """Returns official privacy note covering YouTube and Gmail tools."""
+    from app.official_data_tools import get_official_data_privacy_note
+    return get_official_data_privacy_note()
+
+@app.get("/api/integrations/youtube/channel")
+async def youtube_channel_endpoint(query: str, user: dict = Depends(get_current_user)):
+    """Fetches YouTube channel statistics and latest videos."""
+    from app.official_data_tools import fetch_youtube_channel_stats
+    return await fetch_youtube_channel_stats(query)
+
+@app.post("/api/integrations/google/send-email")
+async def send_approved_email_endpoint(payload: dict, user: dict = Depends(get_current_user)):
+    """Sends email ONLY after user confirmation."""
+    from app.official_data_tools import send_approved_email
+    to = payload.get("to")
+    subject = payload.get("subject")
+    body = payload.get("body")
+    draft_id = payload.get("draft_id")
+    return await send_approved_email(user["id"], to=to, subject=subject, body=body, draft_id=draft_id)
+
 
 @app.get("/api/settings")
 async def get_settings_endpoint(user: dict = Depends(get_current_user)):

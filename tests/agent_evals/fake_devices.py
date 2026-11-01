@@ -347,3 +347,4 @@ class FakeRelayManager:
         if dev:
             return dev.supported_tools
         return []
+

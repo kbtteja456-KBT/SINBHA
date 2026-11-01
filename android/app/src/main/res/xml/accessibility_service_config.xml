@@ -9,3 +9,4 @@
     android:canPerformGestures="true"
     android:canTakeScreenshot="true"
     android:settingsActivity=".MainActivity" />
+

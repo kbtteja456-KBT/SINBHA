@@ -795,3 +795,4 @@ class SinbhaAccessibilityService : AccessibilityService() {
         return Pair(true, "")
     }
 }
+

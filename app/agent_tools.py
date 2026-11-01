@@ -1589,6 +1589,46 @@ async def handle_get_inbox_notifications(user_id: int, args: dict, ctx: dict) ->
     )
 
 
+async def handle_get_youtube_channel_stats(user_id: int, args: dict, ctx: dict) -> dict:
+    """
+    Step D3: Fetches channel stats and latest videos via YouTube Data API v3.
+    """
+    from app.official_data_tools import fetch_youtube_channel_stats
+    query = sanitize_text_arg(args.get("channel_query", "") or args.get("query", ""), 100)
+    return await fetch_youtube_channel_stats(query)
+
+
+async def handle_read_gmail_messages(user_id: int, args: dict, ctx: dict) -> dict:
+    """
+    Step D3: Reads recent Gmail messages with smallest scope (readonly).
+    Treats content as untrusted data.
+    """
+    from app.official_data_tools import fetch_recent_emails
+    query = sanitize_text_arg(args.get("query", ""), 100)
+    max_results = int(args.get("max_results", 5) or 5)
+    return await fetch_recent_emails(user_id=user_id, query=query, max_results=max_results)
+
+
+async def handle_draft_gmail_message(user_id: int, args: dict, ctx: dict) -> dict:
+    """
+    Step D3: Drafts email in Gmail with smallest scope (compose).
+    Action Gated: Strictly requires confirmation showing recipient, subject, and text.
+    """
+    from app.official_data_tools import draft_email
+    to = sanitize_text_arg(args.get("to", ""), 120)
+    subject = sanitize_text_arg(args.get("subject", ""), 200)
+    body = sanitize_text_arg(args.get("body", ""), 2000)
+    return await draft_email(user_id=user_id, to=to, subject=subject, body=body)
+
+
+async def handle_get_google_testing_info(user_id: int, args: dict, ctx: dict) -> dict:
+    """
+    Step D3: Returns official Google Cloud verification rules and testing limits.
+    """
+    from app.official_data_tools import get_google_testing_guide
+    return get_google_testing_guide()
+
+
 
 async def handle_browser_task(user_id: int, args: dict, ctx: dict) -> dict:
     """
@@ -1693,6 +1733,41 @@ _SCHEMA_GET_INBOX_NOTIFICATIONS = {
     "properties": {
         "target_device": {"type": "string", "description": "Target phone device name or ID", "default": "phone"},
     },
+    "additionalProperties": False,
+}
+
+_SCHEMA_GET_YOUTUBE_CHANNEL_STATS = {
+    "type": "object",
+    "properties": {
+        "channel_query": {"type": "string", "description": "Channel handle (e.g. '@GoogleDeepMind'), channel name, or channel ID", "minLength": 1, "maxLength": 100},
+    },
+    "required": ["channel_query"],
+    "additionalProperties": False,
+}
+
+_SCHEMA_READ_GMAIL_MESSAGES = {
+    "type": "object",
+    "properties": {
+        "query": {"type": "string", "description": "Optional search query to filter emails (e.g. 'from:boss', 'is:unread')", "maxLength": 100},
+        "max_results": {"type": "integer", "description": "Max emails to read (default 5)", "default": 5},
+    },
+    "additionalProperties": False,
+}
+
+_SCHEMA_DRAFT_GMAIL_MESSAGE = {
+    "type": "object",
+    "properties": {
+        "to": {"type": "string", "description": "Recipient email address", "minLength": 3, "maxLength": 120},
+        "subject": {"type": "string", "description": "Email subject", "minLength": 1, "maxLength": 200},
+        "body": {"type": "string", "description": "Email body content", "minLength": 1, "maxLength": 2000},
+    },
+    "required": ["to", "subject", "body"],
+    "additionalProperties": False,
+}
+
+_SCHEMA_GET_GOOGLE_TESTING_INFO = {
+    "type": "object",
+    "properties": {},
     "additionalProperties": False,
 }
 
@@ -2036,6 +2111,39 @@ def build_default_registry() -> ToolRegistry:
         parameters=_SCHEMA_GET_INBOX_NOTIFICATIONS,
         risk_level=0,
         handler=handle_get_inbox_notifications,
+    ))
+
+    registry.register(Tool(
+        name="get_youtube_channel_stats",
+        description="Get official YouTube channel statistics (subscribers, video count, view count, latest videos, link, and time checked). Note: subscriber counts are rounded by YouTube.",
+        parameters=_SCHEMA_GET_YOUTUBE_CHANNEL_STATS,
+        risk_level=0,
+        handler=handle_get_youtube_channel_stats,
+    ))
+
+    registry.register(Tool(
+        name="read_gmail_messages",
+        description="Read recent emails from your connected Gmail account using the smallest read-only scope. Treats email text as untrusted data. Never stores email text in database.",
+        parameters=_SCHEMA_READ_GMAIL_MESSAGES,
+        risk_level=0,
+        handler=handle_read_gmail_messages,
+    ))
+
+    registry.register(Tool(
+        name="draft_gmail_message",
+        description="Draft an email in your Gmail account. Action Gated: Strictly requires your confirmation showing exact recipient, subject, and text before sending. Never sends emails automatically.",
+        parameters=_SCHEMA_DRAFT_GMAIL_MESSAGE,
+        risk_level=2,
+        handler=handle_draft_gmail_message,
+        confirmation_template="Send email to {to} with subject '{subject}'?",
+    ))
+
+    registry.register(Tool(
+        name="get_google_testing_info",
+        description="Returns official Google Cloud app verification rules, testing status limits (100 test users, 7-day token expiration), and steps to test with your personal account.",
+        parameters=_SCHEMA_GET_GOOGLE_TESTING_INFO,
+        risk_level=0,
+        handler=handle_get_google_testing_info,
     ))
 
     registry.register(Tool(

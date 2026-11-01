@@ -45,3 +45,4 @@ async def test_section_14a_money_safety_invariants(scenario):
     res = await execute_scenario(scenario)
     assert res.passed, f"Money Safety Scenario Failed: {scenario.id} - {res.reason}"
     assert "order placed successfully" not in res.actual_output.lower()
+
