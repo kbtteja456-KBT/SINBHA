@@ -82,6 +82,15 @@ document.addEventListener("DOMContentLoaded", () => {
   const cancelPurgeBtn = document.getElementById("cancelPurgeBtn");
   const confirmPurgeBtn = document.getElementById("confirmPurgeBtn");
 
+  // Private Inbox elements (Step D2)
+  const inboxBtn = document.getElementById("inboxBtn");
+  const inboxModal = document.getElementById("inboxModal");
+  const closeInboxBtn = document.getElementById("closeInboxBtn");
+  const refreshInboxBtn = document.getElementById("refreshInboxBtn");
+  const clearInboxBtn = document.getElementById("clearInboxBtn");
+  const inboxList = document.getElementById("inboxList");
+  const inboxCountBadge = document.getElementById("inboxCountBadge");
+
   // Bird Reminder & Settings elements (Step 6B)
   const birdReminderContainer = document.getElementById("birdReminderContainer");
   const birdFlightWrapper = document.getElementById("birdFlightWrapper");
@@ -1326,6 +1335,104 @@ document.addEventListener("DOMContentLoaded", () => {
       purgeConfirmModal.style.display = "none";
     }
   });
+
+  // Step D2: Private Inbox Logic
+  async function loadInboxNotifications() {
+    if (!inboxList) return;
+    try {
+      const res = await fetch("/api/devices/notifications");
+      if (res.ok) {
+        const data = await res.json();
+        const notifs = data.notifications || [];
+        if (inboxCountBadge) {
+          if (notifs.length > 0) {
+            inboxCountBadge.textContent = notifs.length;
+            inboxCountBadge.style.display = "inline-flex";
+          } else {
+            inboxCountBadge.style.display = "none";
+          }
+        }
+
+        if (notifs.length === 0) {
+          inboxList.innerHTML = `<div style="text-align: center; color: #9ca3af; font-size: 0.85rem; padding: 30px 0;">No alerts in your private inbox.</div>`;
+          return;
+        }
+
+        inboxList.innerHTML = "";
+        notifs.forEach(n => {
+          const item = document.createElement("div");
+          item.style.cssText = "background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px;";
+          
+          const timeStr = n.timestamp ? new Date(n.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "";
+          
+          item.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="font-size: 0.72rem; font-weight: 700; color: #6366f1; text-transform: uppercase; background: #e0e7ff; padding: 2px 6px; border-radius: 4px;">${escapeHtml(n.app || 'App')}</span>
+              <span style="font-size: 0.72rem; color: #94a3b8;">${timeStr}</span>
+            </div>
+            <div style="font-size: 0.82rem; font-weight: 600; color: #1e293b;">${escapeHtml(n.title || '')}</div>
+            <div style="font-size: 0.78rem; color: #475569; line-height: 1.4;">${escapeHtml(n.text || '')}</div>
+            <div style="display: flex; justify-content: flex-end; margin-top: 4px;">
+              <button type="button" class="draft-reply-btn" style="background: transparent; border: 1px solid #cbd5e1; border-radius: 6px; padding: 3px 8px; font-size: 0.72rem; color: #4338ca; cursor: pointer; font-weight: 600;">💬 Draft Reply</button>
+            </div>
+          `;
+
+          const replyBtn = item.querySelector(".draft-reply-btn");
+          if (replyBtn) {
+            replyBtn.addEventListener("click", () => {
+              if (inboxModal) inboxModal.style.display = "none";
+              const sender = n.title || "contact";
+              messageInput.value = `Draft a reply to ${sender} saying `;
+              messageInput.focus();
+              autoResizeTextarea();
+            });
+          }
+
+          inboxList.appendChild(item);
+        });
+      }
+    } catch (e) {
+      console.warn("Could not load inbox notifications:", e);
+    }
+  }
+
+  if (inboxBtn) {
+    inboxBtn.addEventListener("click", () => {
+      syncViewportMetrics();
+      if (inboxModal) inboxModal.style.display = "flex";
+      loadInboxNotifications();
+    });
+  }
+
+  if (closeInboxBtn) {
+    closeInboxBtn.addEventListener("click", () => {
+      if (inboxModal) inboxModal.style.display = "none";
+    });
+  }
+
+  if (refreshInboxBtn) {
+    refreshInboxBtn.addEventListener("click", loadInboxNotifications);
+  }
+
+  if (clearInboxBtn) {
+    clearInboxBtn.addEventListener("click", async () => {
+      try {
+        await fetch("/api/devices/notifications", { method: "DELETE" });
+        loadInboxNotifications();
+        showToast("🧹 Inbox cleared");
+      } catch (e) {
+        showToast("Failed to clear inbox");
+      }
+    });
+  }
+
+  if (inboxModal) {
+    inboxModal.addEventListener("click", (e) => {
+      if (e.target === inboxModal) {
+        inboxModal.style.display = "none";
+      }
+    });
+  }
 
   // Drawer toggles
   function openTaskDrawer() {

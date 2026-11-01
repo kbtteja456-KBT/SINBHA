@@ -1539,6 +1539,56 @@ async def handle_android_screen_task(user_id: int, args: dict, ctx: dict) -> dic
     return res
 
 
+async def handle_read_whatsapp_messages(user_id: int, args: dict, ctx: dict) -> dict:
+    """
+    Step D2: Reads recent WhatsApp messages from a specified contact on user's request.
+    Strictly read-only; never touches banking apps.
+    """
+    from app.messages_assistant import read_whatsapp_messages
+    contact_name = sanitize_text_arg(args.get("contact_name", ""), 100)
+    max_msgs = int(args.get("max_messages", 5) or 5)
+    relay = ctx.get("relay_manager")
+    target_device = args.get("target_device")
+    return await read_whatsapp_messages(
+        user_id=user_id,
+        contact_name=contact_name,
+        max_messages=max_msgs,
+        relay_manager=relay,
+        target_device=target_device
+    )
+
+
+async def handle_draft_whatsapp_reply(user_id: int, args: dict, ctx: dict) -> dict:
+    """
+    Step D2: Writes a draft reply in user's style.
+    Action Gated: Requires explicit user approval before dispatch.
+    """
+    from app.messages_assistant import draft_whatsapp_reply
+    contact_name = sanitize_text_arg(args.get("contact_name", ""), 100)
+    instruction = sanitize_text_arg(args.get("instruction", ""), 500)
+    incoming_context = sanitize_text_arg(args.get("incoming_context", ""), 500)
+    return await draft_whatsapp_reply(
+        user_id=user_id,
+        contact_name=contact_name,
+        instruction=instruction,
+        incoming_context=incoming_context
+    )
+
+
+async def handle_get_inbox_notifications(user_id: int, args: dict, ctx: dict) -> dict:
+    """
+    Step D2: Retrieves volatile notification inbox from phone.
+    """
+    from app.messages_assistant import fetch_inbox_notifications
+    relay = ctx.get("relay_manager")
+    target_device = args.get("target_device")
+    return await fetch_inbox_notifications(
+        user_id=user_id,
+        relay_manager=relay,
+        target_device=target_device
+    )
+
+
 
 async def handle_browser_task(user_id: int, args: dict, ctx: dict) -> dict:
     """
@@ -1613,6 +1663,36 @@ _SCHEMA_ANDROID_SCREEN_TASK = {
         "target_device": {"type": "string", "description": "Target Android phone name or hint (e.g. 'phone', 'Galaxy S21')", "maxLength": 50, "default": "phone"},
     },
     "required": ["goal"],
+    "additionalProperties": False,
+}
+
+_SCHEMA_READ_WHATSAPP_MESSAGES = {
+    "type": "object",
+    "properties": {
+        "contact_name": {"type": "string", "description": "WhatsApp contact name (e.g. 'Mom', 'Alex', 'Sarah')", "minLength": 1, "maxLength": 100},
+        "max_messages": {"type": "integer", "description": "Max messages to read (default 5)", "default": 5},
+        "target_device": {"type": "string", "description": "Target phone device name or ID", "default": "phone"},
+    },
+    "required": ["contact_name"],
+    "additionalProperties": False,
+}
+
+_SCHEMA_DRAFT_WHATSAPP_REPLY = {
+    "type": "object",
+    "properties": {
+        "contact_name": {"type": "string", "description": "WhatsApp contact name to reply to", "minLength": 1, "maxLength": 100},
+        "instruction": {"type": "string", "description": "What you want to convey in the reply", "maxLength": 500},
+        "incoming_context": {"type": "string", "description": "Context of the incoming message", "maxLength": 500},
+    },
+    "required": ["contact_name"],
+    "additionalProperties": False,
+}
+
+_SCHEMA_GET_INBOX_NOTIFICATIONS = {
+    "type": "object",
+    "properties": {
+        "target_device": {"type": "string", "description": "Target phone device name or ID", "default": "phone"},
+    },
     "additionalProperties": False,
 }
 
@@ -1931,6 +2011,31 @@ def build_default_registry() -> ToolRegistry:
         risk_level=3,
         handler=handle_android_screen_task,
         confirmation_template="Allow SINBHA Screen Agent to perform '{goal}' on your phone?",
+    ))
+
+    registry.register(Tool(
+        name="read_whatsapp_messages",
+        description="Read recent WhatsApp messages from a contact on your phone. Only executed upon your explicit request. Scans for suspicious instructions and alerts you. Never touches banking apps.",
+        parameters=_SCHEMA_READ_WHATSAPP_MESSAGES,
+        risk_level=1,
+        handler=handle_read_whatsapp_messages,
+    ))
+
+    registry.register(Tool(
+        name="draft_whatsapp_reply",
+        description="Draft a WhatsApp reply to a contact in your own style. Shows the draft and sends ONLY after you approve. Never sends automatic replies.",
+        parameters=_SCHEMA_DRAFT_WHATSAPP_REPLY,
+        risk_level=2,
+        handler=handle_draft_whatsapp_reply,
+        confirmation_template="Send WhatsApp reply to {contact_name}: '{draft_text}'?",
+    ))
+
+    registry.register(Tool(
+        name="get_inbox_notifications",
+        description="Check your private notification inbox from your phone in volatile memory. Never stored in server database.",
+        parameters=_SCHEMA_GET_INBOX_NOTIFICATIONS,
+        risk_level=0,
+        handler=handle_get_inbox_notifications,
     ))
 
     registry.register(Tool(

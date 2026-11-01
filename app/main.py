@@ -1361,6 +1361,23 @@ async def get_device_notifications(request: Request):
     notifs = relay_manager.get_user_notifications(user["id"])
     return {"notifications": notifs}
 
+@app.delete("/api/devices/notifications")
+async def clear_device_notifications(request: Request):
+    """Clears the volatile notification inbox buffer for the logged-in user."""
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    user = db.get_user_by_session(token) if token else None
+    if not user:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    if hasattr(relay_manager, "user_notifications") and user["id"] in relay_manager.user_notifications:
+        relay_manager.user_notifications[user["id"]] = []
+    return {"success": True, "message": "Inbox cleared."}
+
+@app.get("/api/messages/privacy-note")
+async def messages_privacy_note_endpoint():
+    """Returns official privacy note regarding message drafting and AI providers (Step D2)."""
+    from app.messages_assistant import get_messages_privacy_note
+    return get_messages_privacy_note()
+
 
 @app.get("/api/settings")
 async def get_settings_endpoint(user: dict = Depends(get_current_user)):

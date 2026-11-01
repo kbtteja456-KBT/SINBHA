@@ -484,6 +484,25 @@ class SinbhaCompanionService : Service() {
                     apiClient.reportCommandStatus(cmdId, "succeeded", result = resObj)
                     sendWsStatus(cmdId, "succeeded", result = resObj)
                 }
+                "get_notifications", "get_inbox" -> {
+                    val recent = SinbhaNotificationListener.getRecent()
+                    val arr = org.json.JSONArray()
+                    for (item in recent) {
+                        val obj = JSONObject().apply {
+                            put("app", item.app)
+                            put("title", item.title)
+                            put("text", item.text)
+                            put("timestamp", item.timestamp)
+                        }
+                        arr.put(obj)
+                    }
+                    val resObj = JSONObject().apply {
+                        put("notifications", arr)
+                        put("count", arr.length())
+                    }
+                    apiClient.reportCommandStatus(cmdId, "succeeded", result = resObj)
+                    sendWsStatus(cmdId, "succeeded", result = resObj)
+                }
                 "accessibility_action", "android_screen_task" -> {
                     val s = SinbhaAccessibilityService.instance
                     if (s == null) {

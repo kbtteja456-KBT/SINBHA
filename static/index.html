@@ -129,6 +129,13 @@
           <span id="taskCountBadge" class="badge">0</span>
         </button>
 
+        <!-- Private Inbox Button (Step D2) -->
+        <button id="inboxBtn" class="header-btn" title="Private Notification Inbox">
+          <span class="btn-icon">📬</span>
+          <span class="btn-text">Inbox</span>
+          <span id="inboxCountBadge" class="badge" style="display: none;">0</span>
+        </button>
+
         <!-- Emergency STOP Button -->
         <button id="stopBtn" class="header-btn stop-btn" title="Immediate Emergency Stop">
           <span class="btn-icon">🛑</span>
@@ -242,6 +249,36 @@
       </div>
     </div>
   </aside>
+
+  <!-- PRIVATE INBOX MODAL (Step D2) -->
+  <div class="settings-modal-overlay" id="inboxModal" style="display: none;">
+    <div class="settings-modal-card" style="max-width: 520px;">
+      <div class="settings-modal-header">
+        <div class="modal-title-group">
+          <span class="modal-icon">📬</span>
+          <h2>Private Notification Inbox</h2>
+        </div>
+        <button class="modal-close-btn" id="closeInboxBtn" title="Close modal">&times;</button>
+      </div>
+      <div class="settings-modal-body" style="padding: 18px 24px;">
+        <div style="background: #eff6ff; border: 1.5px solid #bfdbfe; border-radius: 10px; padding: 12px; margin-bottom: 14px; font-size: 0.8rem; color: #1e40af; line-height: 1.45;">
+          <strong>🔒 Zero-Storage Guarantee:</strong> Notifications from your phone are buffered purely in volatile memory. Messages from other people are personal data: they are <em>never stored in the database</em> and <em>never logged</em>. Banking and payment alerts are strictly excluded.
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <span style="font-size: 0.85rem; font-weight: 700; color: #374151;">Recent Alerts</span>
+          <div style="display: flex; gap: 8px;">
+            <button type="button" id="refreshInboxBtn" class="confirm-btn-secondary" style="font-size: 0.78rem; padding: 5px 12px;">🔄 Refresh</button>
+            <button type="button" id="clearInboxBtn" class="confirm-btn-secondary" style="font-size: 0.78rem; padding: 5px 12px; color: #dc2626;">🗑️ Clear</button>
+          </div>
+        </div>
+
+        <div id="inboxList" style="display: flex; flex-direction: column; gap: 10px; min-height: 120px; max-height: 360px; overflow-y: auto;">
+          <div style="text-align: center; color: #9ca3af; font-size: 0.85rem; padding: 30px 0;">No alerts in your private inbox.</div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- SETTINGS MODAL -->
   <div class="settings-modal-overlay" id="settingsModal" style="display: none;">

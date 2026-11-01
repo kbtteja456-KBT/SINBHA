@@ -41,9 +41,30 @@ class SinbhaNotificationListener : NotificationListenerService() {
             return
         }
 
+        val lowerPkg = pkg.lowercase()
+        // D2 Security Barrier: Strictly never read or capture notifications from banking, UPI, or password managers
+        if (lowerPkg.contains("paisa") || lowerPkg.contains("phonepe") ||
+            lowerPkg.contains("paytm") || lowerPkg.contains("upi") || lowerPkg.contains("bank") ||
+            lowerPkg.contains("yono") || lowerPkg.contains("cred") || lowerPkg.contains("bitwarden") ||
+            lowerPkg.contains("1password") || lowerPkg.contains("lastpass") || lowerPkg.contains("authenticator") ||
+            lowerPkg.contains("wallet") || lowerPkg.contains("finance")
+        ) {
+            return
+        }
+
         val extras = s.notification?.extras ?: return
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim() ?: ""
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim() ?: ""
+
+        // D2 Security Barrier: Never capture OTPs, banking debits/credits, or financial credentials
+        val lowerContent = (title + " " + text).lowercase()
+        if (lowerContent.contains("otp") || lowerContent.contains("verification code") ||
+            lowerContent.contains("debited") || lowerContent.contains("credited") ||
+            lowerContent.contains("card pin") || lowerContent.contains("cvv") ||
+            lowerContent.contains("secret code") || lowerContent.contains("one-time password")
+        ) {
+            return
+        }
 
         if (title.isNotEmpty() || text.isNotEmpty()) {
             val appLabel = when {

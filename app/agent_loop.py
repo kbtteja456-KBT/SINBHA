@@ -530,7 +530,8 @@ async def run_agent_loop(
     base_tools = {
         "create_task", "complete_task", "delete_task",
         "remember_fact", "forget_fact", "search_web",
-        "fetch_page", "list_devices"
+        "fetch_page", "list_devices",
+        "read_whatsapp_messages", "draft_whatsapp_reply", "get_inbox_notifications"
     }
     supported_device_tools = set()
     if user_devices and relay_manager and hasattr(relay_manager, "get_device_supported_tools"):

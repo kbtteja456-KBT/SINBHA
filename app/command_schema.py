@@ -21,6 +21,8 @@ SUPPORTED_COMMAND_TYPES = [
     "get_device_status",
     "android_screen_task",
     "accessibility_action",
+    "get_notifications",
+    "get_inbox",
 ]
 
 DEFAULT_PLATFORM_SUPPORTED_TOOLS = {
@@ -34,6 +36,8 @@ DEFAULT_PLATFORM_SUPPORTED_TOOLS = {
         "get_device_status",
         "android_screen_task",
         "accessibility_action",
+        "get_notifications",
+        "get_inbox",
     ],
     "phone": [
         "open_app",
@@ -45,6 +49,8 @@ DEFAULT_PLATFORM_SUPPORTED_TOOLS = {
         "get_device_status",
         "android_screen_task",
         "accessibility_action",
+        "get_notifications",
+        "get_inbox",
     ],
     "windows": [
         "open_app",
