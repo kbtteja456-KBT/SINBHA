@@ -648,15 +648,6 @@ class CommandRelayManager:
         now = time.time()
         self._cleanup_old_records(now)
 
-        # Step 17 Requirement 2: Unverified accounts cannot send remote commands
-        if not db.is_user_verified(user_id):
-            return {
-                "success": False,
-                "error": "UNVERIFIED_ACCOUNT",
-                "message": "Email verification is required to send remote commands. Please verify your email address.",
-                "unverified": True
-            }
-
         norm_cmd = unwrap_command_packet(cmd_data)
         cmd_id = str(norm_cmd.get("id", "")).strip()
         sender_id = str(norm_cmd.get("sender_device", "")).strip()
@@ -664,6 +655,27 @@ class CommandRelayManager:
         cmd_type = str(norm_cmd.get("type", "")).strip()
         payload = norm_cmd.get("payload") or {}
         created_at = float(norm_cmd.get("created_at") or now)
+
+        # Step 17 Requirement 2 & Step 1C Item 7: Unverified accounts rejection explanation & audit log
+        if not db.is_user_verified(user_id):
+            db.log_audit(
+                user_id,
+                "DEVICE_COMMAND_RELAY",
+                json.dumps({
+                    "command_id": cmd_id,
+                    "type": cmd_type,
+                    "sender_device": sender_id,
+                    "target_device": target_id,
+                    "result": "unverified",
+                    "error": "UNVERIFIED_ACCOUNT"
+                })
+            )
+            return {
+                "success": False,
+                "error": "UNVERIFIED_ACCOUNT",
+                "message": "Email verification is required to send remote commands. Please verify your email address.",
+                "unverified": True
+            }
 
         if not cmd_id or not sender_id or not target_id or not cmd_type:
             return {
