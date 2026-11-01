@@ -6,7 +6,7 @@ import re
 import datetime
 from fastapi import FastAPI, HTTPException, Depends, Request, Response, status, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from pydantic import BaseModel
 from typing import Optional, Any, Union
 from dotenv import load_dotenv
@@ -23,6 +23,7 @@ from app.ai_brain import (
     get_llm_credentials,
 )
 from app import database as db
+from app import email_service
 from app.web_intelligence import (
     agent_instance,
     ResearchSearchRequest,
@@ -41,6 +42,7 @@ from app.security import (
     get_daily_global_ai_limit,
     get_allowed_origins,
     SecurityHeadersAndCSRFMiddleware,
+    limiter,
 )
 
 app = FastAPI(title="SINBHA - Personal AI Companion")
@@ -99,6 +101,16 @@ class SignupRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+class VerifyEmailRequest(BaseModel):
+    token: str
 
 class ChatRequest(BaseModel):
     message: str
@@ -313,14 +325,15 @@ async def get_device_command_user(request: Request) -> dict:
             raise HTTPException(status_code=401, detail="Invalid session token.")
         return user
 
-# ----------------- Auth Endpoints (Step 9 & 11) -----------------
+# ----------------- Auth Endpoints (Step 9, 11 & 17) -----------------
 
+@app.post("/api/auth/register")
 @app.post("/api/auth/signup")
 async def signup_endpoint(payload: SignupRequest, request: Request, response: Response):
     """
     Requirement 1 & 7: User registration with email + password (min 8 chars, argon2 hash),
     checkboxes for 18+ and Terms/Privacy agreement.
-    Requirement 4: Rate limited.
+    Step 17 Item 2: Sends a verification link that expires in 24 hours.
     """
     check_endpoint_rate_limits(request)
     try:
@@ -329,7 +342,8 @@ async def signup_endpoint(payload: SignupRequest, request: Request, response: Re
             password=payload.password,
             is_18=payload.get_is_18(),
             agreed_terms=payload.get_agreed_terms(),
-            timezone_name=payload.timezone or "UTC"
+            timezone_name=payload.timezone or "UTC",
+            is_verified=False,
         )
         token = db.create_session(user["id"])
         response.set_cookie(
@@ -341,10 +355,14 @@ async def signup_endpoint(payload: SignupRequest, request: Request, response: Re
             max_age=14 * 86400,
             path="/"
         )
+        # Send verification email with expiring link
+        if user.get("verification_token"):
+            email_service.send_verification_email(user["email"], user["verification_token"])
+
         return {
             "success": True,
             "user": user,
-            "message": "Account created successfully! 🌸 Welcome to SINBHA."
+            "message": "Account created successfully! 🌸 A verification link has been sent to your email."
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -356,6 +374,7 @@ async def login_endpoint(payload: LoginRequest, request: Request, response: Resp
     """
     Requirement 1 & 2: User login with argon2 password verification,
     secure sessions (httpOnly, SameSite, Secure in production), and rate limiting.
+    Step 17 Item 5: Email alert for new login from a new device.
     """
     check_endpoint_rate_limits(request)
     client_ip = get_client_ip(request)
@@ -371,6 +390,17 @@ async def login_endpoint(payload: LoginRequest, request: Request, response: Resp
             max_age=14 * 86400,
             path="/"
         )
+
+        # Step 17 Item 5: Security alert for login from a new device
+        dev_id = request.headers.get("x-device-id")
+        if dev_id:
+            user_devs = db.get_user_devices(user["id"])
+            known_dev_ids = {d.get("device_id") for d in user_devs}
+            if dev_id not in known_dev_ids:
+                dev_name = request.headers.get("x-device-name", "New Device")
+                dev_platform = request.headers.get("x-device-platform", "Unknown Platform")
+                email_service.send_security_alert_new_login(user["email"], dev_name, dev_platform, client_ip)
+
         return {
             "success": True,
             "user": user,
@@ -381,6 +411,92 @@ async def login_endpoint(payload: LoginRequest, request: Request, response: Resp
         if "Too many failed" in msg or "lockout" in msg.lower() or "try again after" in msg.lower():
             raise HTTPException(status_code=429, detail=msg)
         raise HTTPException(status_code=401, detail=msg)
+
+@app.get("/api/auth/verify-email")
+@app.post("/api/auth/verify-email")
+async def verify_email_endpoint(token: Optional[str] = None, payload: Optional[VerifyEmailRequest] = None):
+    """
+    Step 17 Item 2: Verifies email token.
+    Accepts token via query parameter (for direct email link clicks) or JSON body.
+    """
+    tok = (payload.token if payload else None) or token
+    if not tok:
+        raise HTTPException(status_code=400, detail="Verification token is required.")
+    success, msg, user_id = db.verify_email_with_token(tok)
+    if not success:
+        raise HTTPException(status_code=400, detail=msg)
+    return {
+        "success": True,
+        "message": "Email verified successfully! You can now pair devices and use remote companion commands."
+    }
+
+@app.post("/api/auth/resend-verification")
+async def resend_verification_endpoint(request: Request, user: dict = Depends(get_current_user)):
+    """
+    Step 17: Resends verification email to logged in user.
+    Rate limited by IP and user ID.
+    """
+    check_endpoint_rate_limits(request)
+    allowed, retry_after = limiter.check(f"resend_verify_uid_{user['id']}", max_requests=3, window_seconds=900)
+    if not allowed:
+        raise HTTPException(status_code=429, detail=f"Please wait {retry_after} seconds before requesting another email.")
+    tok = db.create_email_verification_token(user["id"])
+    email_service.send_verification_email(user["email"], tok)
+    return {
+        "success": True,
+        "message": "Verification link sent! Please check your inbox."
+    }
+
+@app.post("/api/auth/forgot-password")
+async def forgot_password_endpoint(payload: ForgotPasswordRequest, request: Request):
+    """
+    Step 17 Item 3:
+    Sends a one-time reset link expiring in 30 minutes.
+    Does NOT reveal whether an email exists.
+    Rate limited by IP and by email.
+    """
+    check_endpoint_rate_limits(request)
+    email = payload.email.strip().lower()
+
+    # Rate limit by email: max 3 requests per 15 minutes
+    allowed, retry_after = limiter.check(f"forgot_pw_email_{email}", max_requests=3, window_seconds=900)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many password reset requests for this email. Please wait {retry_after} seconds."
+        )
+
+    token_data = db.create_password_reset_token(email)
+    if token_data:
+        token, user_id = token_data
+        email_service.send_password_reset_email(email, token)
+
+    # In ALL cases, return the exact same message to not reveal whether email exists!
+    return {
+        "success": True,
+        "message": "If an account with that email exists, a password reset link has been sent."
+    }
+
+@app.post("/api/auth/reset-password")
+async def reset_password_endpoint(payload: ResetPasswordRequest, request: Request):
+    """
+    Step 17 Item 4:
+    Validates reset token, updates password, invalidates all sessions and device tokens,
+    and sends a 'password was changed' security email with a way to report it.
+    """
+    check_endpoint_rate_limits(request)
+    client_ip = get_client_ip(request)
+    success, msg, user_id, user_email = db.reset_password_with_token(payload.token, payload.new_password)
+    if not success:
+        raise HTTPException(status_code=400, detail=msg)
+
+    # Send security notification email with report link
+    email_service.send_password_changed_notification(user_email, client_ip=client_ip)
+
+    return {
+        "success": True,
+        "message": "Password reset successfully. All sessions have been logged out. Please log in with your new password."
+    }
 
 @app.post("/api/auth/logout")
 async def logout_endpoint(request: Request, response: Response):
@@ -1454,11 +1570,16 @@ async def get_audit_endpoint(user: dict = Depends(get_current_user)):
 async def register_device_endpoint(payload: DeviceRegisterRequest, user: dict = Depends(get_current_user)):
     """
     Registers or handshakes a device for the logged-in user.
-    - New accounts may trust their first device at signup.
-    - For existing accounts, first device must not become trusted automatically; requires password verification.
-    - Subsequent new devices start in 'pending' status with a 5-minute one-time pairing code.
+    - Step 17 Item 2: Unverified accounts cannot pair new devices.
+    - For accounts with no trusted device: trusting first device needs password AND email confirmation link.
+    - Subsequent new devices start in 'pending' status with a 5-minute one-time pairing code and security email.
     - Broadcasts pairing_requested event to connected trusted devices if pending.
     """
+    if not user.get("is_verified"):
+        raise HTTPException(
+            status_code=403,
+            detail="Email verification required to pair devices. Please check your inbox or request a new verification link."
+        )
     try:
         device = db.create_or_register_device(
             user_id=user["id"],
@@ -1467,6 +1588,7 @@ async def register_device_endpoint(payload: DeviceRegisterRequest, user: dict = 
             platform=payload.platform or "web",
             password=payload.password,
             is_signup=payload.is_signup or False,
+            require_email_confirm=True,
         )
         if device.get("status") == "pending":
             await relay_manager.notify_pairing_requested(user["id"], device)
@@ -1475,6 +1597,23 @@ async def register_device_endpoint(payload: DeviceRegisterRequest, user: dict = 
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to register device: {e}")
+
+@app.get("/api/devices/confirm-first-device")
+@app.post("/api/devices/confirm-first-device")
+async def confirm_first_device_endpoint(token: Optional[str] = None):
+    """
+    Step 17 Item 6: Confirms first trusted device via email link.
+    """
+    if not token or not token.strip():
+        raise HTTPException(status_code=400, detail="Confirmation token is required.")
+    success, msg, dev_dict = db.confirm_first_device_token(token.strip())
+    if not success:
+        raise HTTPException(status_code=400, detail=msg)
+    return {
+        "success": True,
+        "message": "First device successfully verified and trusted! You can now use your companion.",
+        "device": dev_dict
+    }
 
 @app.get("/api/devices")
 async def list_devices_endpoint(user: dict = Depends(get_current_user)):
@@ -1553,13 +1692,16 @@ async def revoke_device_endpoint(device_id: str, user: dict = Depends(get_curren
         raise HTTPException(status_code=404, detail=str(e))
 
 @app.post("/api/devices/disconnect-all")
-async def disconnect_all_devices_endpoint(user: dict = Depends(get_current_user)):
+async def disconnect_all_devices_endpoint(request: Request, user: dict = Depends(get_current_user)):
     """
     Halts and disconnects all devices immediately without asking the AI.
     Revokes access, clears command queues, and closes channels.
+    Step 17 Item 5: Sends security alert email.
     """
+    client_ip = get_client_ip(request)
     count = db.disconnect_all_devices(user["id"])
     relay_manager.on_disconnect_all(user["id"])
+    email_service.send_security_alert_disconnect_all(user["email"], count, client_ip)
     return {
         "success": True,
         "revoked_count": count,
@@ -1571,8 +1713,14 @@ async def send_device_command_endpoint(payload: DeviceCommandRequest, user: dict
     """
     Sends a secure command to another device.
     Enforces replay protection, 60s expiry, per-user rate limits, STOP check, and permission gates.
+    Step 17 Item 2: Unverified accounts cannot send remote commands.
     Audit log records metadata only, never the payload content.
     """
+    if not user.get("is_verified"):
+        raise HTTPException(
+            status_code=403,
+            detail="Email verification required to send remote commands. Please verify your email address."
+        )
     res = await relay_manager.relay_command(
         user_id=user["id"],
         cmd_data=payload.model_dump()
@@ -2400,6 +2548,113 @@ async def root():
             "Expires": "0"
         }
     )
+
+@app.get("/verify-email", response_class=HTMLResponse)
+async def verify_email_page(token: Optional[str] = None):
+    if not token:
+        return HTMLResponse("<div style='font-family: sans-serif; text-align: center; padding: 40px;'><h2>⚠️ Missing Token</h2><p>Verification token was not provided.</p></div>", status_code=400)
+    success, msg, user_id = db.verify_email_with_token(token)
+    if success:
+        return HTMLResponse("""
+        <!DOCTYPE html>
+        <html>
+        <head><title>SINBHA - Email Verified</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #fffaf5;">
+            <div style="max-width: 440px; margin: 20px; padding: 32px; background: white; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); text-align: center; border: 1px solid #fed7aa;">
+                <h1 style="color: #ea580c; margin-top: 0; font-size: 28px;">🌸 Email Verified!</h1>
+                <p style="color: #431407; font-size: 16px; line-height: 1.5;">Your email has been successfully confirmed. You can now pair your phone and laptop and send remote companion commands.</p>
+                <div style="margin-top: 24px;">
+                    <a href="/" style="display: inline-block; background: #f97316; color: white; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 600;">Open SINBHA</a>
+                </div>
+            </div>
+        </body>
+        </html>
+        """)
+    else:
+        return HTMLResponse(f"""
+        <!DOCTYPE html>
+        <html>
+        <head><title>SINBHA - Verification Failed</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #fef2f2;">
+            <div style="max-width: 440px; margin: 20px; padding: 32px; background: white; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); text-align: center; border: 1px solid #fecaca;">
+                <h1 style="color: #dc2626; margin-top: 0; font-size: 26px;">⚠️ Verification Failed</h1>
+                <p style="color: #7f1d1d; font-size: 15px; line-height: 1.5;">{msg}</p>
+                <div style="margin-top: 24px;">
+                    <a href="/" style="display: inline-block; background: #ef4444; color: white; text-decoration: none; padding: 10px 24px; border-radius: 8px; font-weight: 600;">Back to App</a>
+                </div>
+            </div>
+        </body>
+        </html>
+        """, status_code=400)
+
+@app.get("/reset-password", response_class=HTMLResponse)
+async def reset_password_page(token: Optional[str] = None):
+    tok = token or ""
+    return HTMLResponse(f"""
+    <!DOCTYPE html>
+    <html>
+    <head><title>SINBHA - Reset Password</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f8fafc;">
+        <div style="max-width: 420px; width: 100%; margin: 20px; padding: 32px; background: white; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); border: 1px solid #e2e8f0;">
+            <h2 style="color: #0f172a; margin-top: 0;">🔒 Set New Password</h2>
+            <p style="color: #64748b; font-size: 14px;">Enter your new password below (min 8 characters):</p>
+            <form id="resetForm" onsubmit="submitReset(event)">
+                <input type="hidden" id="token" value="{tok}">
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; font-size: 13px; font-weight: 600; color: #334155; margin-bottom: 6px;">New Password</label>
+                    <input type="password" id="new_pw" required minlength="8" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 15px;">
+                </div>
+                <button type="submit" style="width: 100%; background: #2563eb; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: 600; font-size: 15px; cursor: pointer;">Reset Password</button>
+            </form>
+            <div id="status" style="margin-top: 16px; font-size: 14px; text-align: center;"></div>
+        </div>
+        <script>
+            async function submitReset(e) {{
+                e.preventDefault();
+                const tok = document.getElementById('token').value;
+                const pw = document.getElementById('new_pw').value;
+                const st = document.getElementById('status');
+                st.innerText = 'Updating password...';
+                try {{
+                    const res = await fetch('/api/auth/reset-password', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{ token: tok, new_password: pw }})
+                    }});
+                    const data = await res.json();
+                    if (res.ok) {{
+                        st.innerHTML = '<span style="color: #16a34a; font-weight: 600;">' + data.message + '</span><br><a href="/" style="display:inline-block; margin-top:10px; color:#2563eb; font-weight: 600;">Log in now</a>';
+                        document.getElementById('resetForm').style.display = 'none';
+                    }} else {{
+                        st.innerHTML = '<span style="color: #dc2626;">' + (data.detail || data.message || 'Error resetting password.') + '</span>';
+                    }}
+                }} catch (err) {{
+                    st.innerHTML = '<span style="color: #dc2626;">Network error. Please try again.</span>';
+                }}
+            }}
+        </script>
+    </body>
+    </html>
+    """)
+
+@app.get("/security/report", response_class=HTMLResponse)
+async def security_report_page():
+    return HTMLResponse("""
+    <!DOCTYPE html>
+    <html>
+    <head><title>SINBHA - Security Report</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #fffafb;">
+        <div style="max-width: 480px; margin: 20px; padding: 32px; background: white; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); border: 1px solid #fecaca; text-align: center;">
+            <h2 style="color: #dc2626; margin-top: 0;">🛡️ Security Incident Report</h2>
+            <p style="color: #374151; font-size: 15px; line-height: 1.5;">If you noticed unauthorized access or password changes, your active sessions and device tokens have been revoked.</p>
+            <p style="color: #4b5563; font-size: 14px;">To secure your account, please perform a password reset or reach out directly to security support at: <br/><strong style="color:#b91c1c;">security@sinbha.local</strong></p>
+            <div style="margin-top: 24px;">
+                <a href="/" style="display: inline-block; background: #dc2626; color: white; text-decoration: none; padding: 10px 24px; border-radius: 8px; font-weight: 600;">Back to SINBHA</a>
+            </div>
+        </div>
+    </body>
+    </html>
+    """)
 
 if __name__ == "__main__":
     import uvicorn

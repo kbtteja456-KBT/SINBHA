@@ -145,7 +145,22 @@ def init_db():
                     conn.exec_driver_sql("ALTER TABLE device_tokens ADD COLUMN device_id VARCHAR(64)")
                     conn.commit()
 
-                # Check devices table columns (Step C2.8)
+                # Check users table columns (Step 17)
+                res_user = conn.exec_driver_sql("PRAGMA table_info(users)").fetchall()
+                user_cols = [r[1] for r in res_user]
+                new_user_cols = [
+                    ("is_verified", "BOOLEAN DEFAULT 0"),
+                    ("verification_token", "VARCHAR(128)"),
+                    ("verification_token_expires_at", "DATETIME"),
+                    ("reset_token", "VARCHAR(128)"),
+                    ("reset_token_expires_at", "DATETIME"),
+                ]
+                for c_name, c_type in new_user_cols:
+                    if c_name not in user_cols:
+                        conn.exec_driver_sql(f"ALTER TABLE users ADD COLUMN {c_name} {c_type}")
+                        conn.commit()
+
+                # Check devices table columns (Step C2.8 and Step 17)
                 res_dev = conn.exec_driver_sql("PRAGMA table_info(devices)").fetchall()
                 dev_cols = [r[1] for r in res_dev]
                 new_dev_cols = [
@@ -158,6 +173,8 @@ def init_db():
                     ("installed_apps_json", "TEXT"),
                     ("last_error", "TEXT"),
                     ("last_http_status", "INTEGER"),
+                    ("first_device_token", "VARCHAR(128)"),
+                    ("first_device_token_expires_at", "DATETIME"),
                 ]
                 for c_name, c_type in new_dev_cols:
                     if c_name not in dev_cols:
@@ -166,6 +183,12 @@ def init_db():
 
             elif engine.dialect.name == "postgresql":
                 conn.exec_driver_sql("ALTER TABLE device_tokens ADD COLUMN IF NOT EXISTS device_id VARCHAR(64)")
+                conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE")
+                conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token VARCHAR(128)")
+                conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token_expires_at TIMESTAMP WITH TIME ZONE")
+                conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token VARCHAR(128)")
+                conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires_at TIMESTAMP WITH TIME ZONE")
+
                 conn.exec_driver_sql("ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_ping_at TIMESTAMP WITH TIME ZONE")
                 conn.exec_driver_sql("ALTER TABLE devices ADD COLUMN IF NOT EXISTS websocket_connected BOOLEAN DEFAULT FALSE")
                 conn.exec_driver_sql("ALTER TABLE devices ADD COLUMN IF NOT EXISTS battery_level INTEGER")
@@ -175,6 +198,8 @@ def init_db():
                 conn.exec_driver_sql("ALTER TABLE devices ADD COLUMN IF NOT EXISTS installed_apps_json TEXT")
                 conn.exec_driver_sql("ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_error TEXT")
                 conn.exec_driver_sql("ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_http_status INTEGER")
+                conn.exec_driver_sql("ALTER TABLE devices ADD COLUMN IF NOT EXISTS first_device_token VARCHAR(128)")
+                conn.exec_driver_sql("ALTER TABLE devices ADD COLUMN IF NOT EXISTS first_device_token_expires_at TIMESTAMP WITH TIME ZONE")
                 conn.commit()
     except Exception:
         pass
@@ -239,12 +264,14 @@ def create_user(
     password: str,
     is_18: bool = True,
     agreed_terms: bool = True,
-    timezone_name: str = "UTC"
+    timezone_name: str = "UTC",
+    is_verified: bool = True,
 ) -> dict:
     """
     Creates a new user account with argon2 password hash.
     Step 9: Moves any pre-existing data (user_id IS NULL) to the first account created.
     Step 10: Supports per-user timezone (Requirement 6).
+    Step 17: Email verification token generation (Requirement 2).
     """
     clean_email = email.strip().lower()
     if not clean_email or "@" not in clean_email or "." not in clean_email:
@@ -268,12 +295,18 @@ def create_user(
         is_first_user = (total_users == 0)
         is_admin = 1 if is_first_user else 0
 
+        verify_token = secrets.token_urlsafe(32)
+        verify_expires = utc_now() + timedelta(hours=24)
+
         user = User(
             email=clean_email,
             password_hash=hashed,
             is_admin=is_admin,
             emergency_stopped=0,
             timezone=timezone_name or "UTC",
+            is_verified=is_verified,
+            verification_token=verify_token if not is_verified else None,
+            verification_token_expires_at=verify_expires if not is_verified else None,
         )
         session.add(user)
         session.flush() # get user.id
@@ -321,7 +354,9 @@ def create_user(
             "email": clean_email,
             "is_admin": bool(is_admin),
             "emergency_stopped": False,
-            "timezone": timezone_name or "UTC"
+            "timezone": timezone_name or "UTC",
+            "is_verified": bool(user.is_verified),
+            "verification_token": user.verification_token,
         }
 
 def authenticate_user(email: str, password: str, client_ip: str = "") -> dict:
@@ -364,7 +399,8 @@ def authenticate_user(email: str, password: str, client_ip: str = "") -> dict:
             "email": user.email,
             "is_admin": bool(user.is_admin),
             "emergency_stopped": bool(user.emergency_stopped),
-            "timezone": user.timezone or "UTC"
+            "timezone": user.timezone or "UTC",
+            "is_verified": bool(user.is_verified),
         }
 
 def create_session(user_id: int) -> str:
@@ -401,7 +437,8 @@ def get_user_by_session(token: str) -> Optional[dict]:
             "email": user.email,
             "is_admin": bool(user.is_admin),
             "emergency_stopped": bool(user.emergency_stopped),
-            "timezone": user.timezone or "UTC"
+            "timezone": user.timezone or "UTC",
+            "is_verified": bool(user.is_verified),
         }
 
 def delete_session(token: str):
@@ -415,6 +452,156 @@ def delete_all_user_sessions(user_id: int):
     """Invalidates all sessions for this user (used on password change)."""
     with get_db_session() as session:
         session.execute(delete(UserSession).where(UserSession.user_id == user_id))
+
+# ----------------- Step 17: Email Verification & Password Reset Operations -----------------
+
+def is_user_verified(user_id: int) -> bool:
+    """Checks whether a user's email address is verified."""
+    with get_db_session() as session:
+        user = session.scalar(select(User).where(User.id == user_id))
+        if not user:
+            return False
+        return bool(user.is_verified)
+
+def create_email_verification_token(user_id: int) -> str:
+    """Generates a fresh email verification token expiring in 24 hours."""
+    token = secrets.token_urlsafe(32)
+    now = utc_now()
+    expires_at = now + timedelta(hours=24)
+    with get_db_session() as session:
+        user = session.scalar(select(User).where(User.id == user_id))
+        if not user:
+            raise ValueError("User not found.")
+        user.verification_token = token
+        user.verification_token_expires_at = expires_at
+    return token
+
+def verify_email_with_token(token: str) -> Tuple[bool, str, Optional[int]]:
+    """Verifies a user's email with a valid verification token."""
+    if not token or not token.strip():
+        return False, "Verification token is required.", None
+    clean_token = token.strip()
+    with get_db_session() as session:
+        user = session.scalar(select(User).where(User.verification_token == clean_token))
+        if not user:
+            return False, "Invalid or expired verification link.", None
+
+        now = utc_now()
+        first_token = None
+        first_exp = None
+        exp = user.verification_token_expires_at
+        if exp:
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            if now > exp:
+                return False, "Verification link has expired. Please request a new one.", None
+
+        user.is_verified = True
+        user.verification_token = None
+        user.verification_token_expires_at = None
+        log_audit(user.id, "EMAIL_VERIFIED", f"Email '{user.email}' verified successfully.", session=session)
+        return True, "Email verified successfully!", user.id
+
+def create_password_reset_token(email: str) -> Optional[Tuple[str, int]]:
+    """
+    Creates a one-time password reset token expiring in 30 minutes.
+    Requirement 3: One-time reset link expiring in 30 minutes.
+    Returns (token, user_id) or None if user not found.
+    """
+    clean_email = email.strip().lower()
+    with get_db_session() as session:
+        user = session.scalar(select(User).where(User.email == clean_email))
+        if not user:
+            return None
+        token = secrets.token_urlsafe(32)
+        user.reset_token = token
+        user.reset_token_expires_at = utc_now() + timedelta(minutes=30)
+        return token, user.id
+
+def reset_password_with_token(token: str, new_password: str) -> Tuple[bool, str, Optional[int], Optional[str]]:
+    """
+    Resets user password with a valid reset token.
+    Requirement 3: One-time use, expires in 30 minutes.
+    Requirement 4: Invalidate all sessions and device tokens.
+    Returns (success, message, user_id, user_email).
+    """
+    if not token or not token.strip():
+        return False, "Reset token is required.", None, None
+    if len(new_password) < 8:
+        return False, "Password must be at least 8 characters long.", None, None
+
+    clean_token = token.strip()
+    with get_db_session() as session:
+        user = session.scalar(select(User).where(User.reset_token == clean_token))
+        if not user:
+            return False, "Invalid or expired password reset link.", None, None
+
+        now = utc_now()
+        first_token = None
+        first_exp = None
+        exp = user.reset_token_expires_at
+        if exp:
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            if now > exp:
+                return False, "Password reset link has expired. Please request a new one.", None, None
+
+        user.password_hash = hash_password(new_password)
+        user.reset_token = None
+        user.reset_token_expires_at = None
+        u_id = user.id
+        u_email = user.email
+        log_audit(u_id, "PASSWORD_RESET_SUCCESS", f"Password for '{u_email}' was reset via email token.", session=session)
+
+    # Requirement 4: Invalidate all sessions and device tokens
+    delete_all_user_sessions(u_id)
+    revoke_user_device_tokens(u_id)
+    revoke_device_command_tokens(u_id)
+
+    return True, "Password reset successfully.", u_id, u_email
+
+def create_first_device_token(user_id: int, device_id: str) -> str:
+    """Generates an email confirmation token for the first device trust (expires in 15 min)."""
+    token = secrets.token_urlsafe(32)
+    now = utc_now()
+    exp = now + timedelta(minutes=15)
+    with get_db_session() as session:
+        dev = session.scalar(select(Device).where(and_(Device.user_id == user_id, Device.device_id == device_id)))
+        if not dev:
+            raise ValueError("Device not found.")
+        dev.first_device_token = token
+        dev.first_device_token_expires_at = exp
+    return token
+
+def confirm_first_device_token(token: str) -> Tuple[bool, str, Optional[dict]]:
+    """Confirms the first device trust via email link."""
+    if not token or not token.strip():
+        return False, "Confirmation token is required.", None
+    clean_token = token.strip()
+    with get_db_session() as session:
+        dev = session.scalar(select(Device).where(Device.first_device_token == clean_token))
+        if not dev:
+            return False, "Invalid or expired first-device confirmation link.", None
+
+        now = utc_now()
+        first_token = None
+        first_exp = None
+        exp = dev.first_device_token_expires_at
+        if exp:
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            if now > exp:
+                return False, "First-device confirmation link has expired.", None
+
+        dev.status = "trusted"
+        dev.first_device_token = None
+        dev.first_device_token_expires_at = None
+        dev.pairing_code = None
+        dev.pairing_expires_at = None
+        dev.pairing_attempts = 0
+        log_audit(dev.user_id, "FIRST_DEVICE_EMAIL_CONFIRMED", f"First device '{dev.name}' ({dev.device_id}) confirmed via email.", session=session)
+        session.flush()
+        return True, "First device confirmed and trusted successfully!", _device_to_dict(dev)
 
 # ----------------- Device Tokens (Mobile Companion) -----------------
 
@@ -457,6 +644,8 @@ def get_user_by_device_token(token: str) -> Optional[dict]:
             return None
 
         now = utc_now()
+        first_token = None
+        first_exp = None
 
         # Absolute maximum lifetime from creation (Requirement 2)
         created = dt.created_at
@@ -507,6 +696,8 @@ def renew_device_token(token: str, days: int = 30) -> Optional[dict]:
             return None
 
         now = utc_now()
+        first_token = None
+        first_exp = None
 
         # Absolute maximum lifetime from creation (Requirement 2)
         created = dt.created_at
@@ -601,6 +792,8 @@ def get_user_by_command_token(token: str) -> Optional[dict]:
             return None
 
         now = utc_now()
+        first_token = None
+        first_exp = None
         created = dt.created_at
         if created:
             if created.tzinfo is None:
@@ -661,6 +854,8 @@ def renew_device_command_token(token: str, days: int = 30) -> Optional[dict]:
             return None
 
         now = utc_now()
+        first_token = None
+        first_exp = None
         created = dt.created_at
         if created:
             if created.tzinfo is None:
@@ -1634,6 +1829,8 @@ def _device_to_dict(dev: Device) -> dict:
     expires_in_seconds = 0
     if dev.pairing_expires_at:
         now = utc_now()
+        first_token = None
+        first_exp = None
         exp = dev.pairing_expires_at
         if exp.tzinfo is None:
             exp = exp.replace(tzinfo=timezone.utc)
@@ -1680,6 +1877,8 @@ def _device_to_dict(dev: Device) -> dict:
         "installed_apps": installed_apps,
         "last_error": getattr(dev, "last_error", None),
         "last_http_status": getattr(dev, "last_http_status", None),
+        "first_device_token": getattr(dev, "first_device_token", None),
+        "requires_email_confirmation": bool(getattr(dev, "first_device_token", None)),
     }
 
 def verify_user_password(user_id: int, password: str) -> bool:
@@ -1697,6 +1896,7 @@ def create_or_register_device(
     platform: str = "web",
     is_signup: bool = False,
     password: Optional[str] = None,
+    require_email_confirm: bool = False,
 ) -> dict:
     """
     Registers a device for the user.
@@ -1712,6 +1912,10 @@ def create_or_register_device(
         user = session.scalar(select(User).where(User.id == user_id))
         if not user:
             raise ValueError("User not found.")
+
+        # Step 17 Requirement 2: Unverified accounts cannot pair new devices
+        if require_email_confirm and not user.is_verified:
+            raise ValueError("Email verification required to pair devices. Please verify your email first.")
 
         dev = session.scalar(select(Device).where(Device.device_id == device_id))
         if dev:
@@ -1738,7 +1942,7 @@ def create_or_register_device(
             strict_pairing = os.getenv("STRICT_DEVICE_PAIRING", "false").lower() == "true"
             auto_connect = not strict_pairing and os.getenv("AUTO_CONNECT_DEVICES", "true").lower() == "true"
 
-            if auto_connect:
+            if auto_connect and trusted_count > 0:
                 dev.status = "trusted"
                 dev.pairing_code = None
                 dev.pairing_expires_at = None
@@ -1746,16 +1950,31 @@ def create_or_register_device(
             # If pending and user provides password for account verification
             elif dev.status == "pending" and password:
                 if verify_password(user.password_hash, password):
-                    dev.status = "trusted"
-                    dev.pairing_code = None
-                    dev.pairing_expires_at = None
-                    dev.pairing_attempts = 0
-                    log_audit(
-                        user_id,
-                        "DEVICE_REGISTERED_TRUSTED",
-                        f"Device '{dev.name}' ({device_id}) verified with password and trusted.",
-                        session=session
-                    )
+                    # Step 17 Item 6: If account has 0 trusted devices, trusting the first device needs password AND email confirmation link
+                    if require_email_confirm and trusted_count == 0:
+                        first_token = secrets.token_urlsafe(32)
+                        dev.first_device_token = first_token
+                        dev.first_device_token_expires_at = utc_now() + timedelta(minutes=15)
+                        dev.status = "pending"
+                        from app import email_service
+                        email_service.send_first_device_confirmation_email(user.email, dev.name, dev.platform, first_token)
+                        log_audit(
+                            user_id,
+                            "FIRST_DEVICE_EMAIL_SENT",
+                            f"First device '{dev.name}' ({device_id}) verified with password; email confirmation link sent.",
+                            session=session
+                        )
+                    else:
+                        dev.status = "trusted"
+                        dev.pairing_code = None
+                        dev.pairing_expires_at = None
+                        dev.pairing_attempts = 0
+                        log_audit(
+                            user_id,
+                            "DEVICE_REGISTERED_TRUSTED",
+                            f"Device '{dev.name}' ({device_id}) verified with password and trusted.",
+                            session=session
+                        )
                 else:
                     raise ValueError("Incorrect password. Re-entering your password is required to trust this device.")
 
@@ -1781,12 +2000,14 @@ def create_or_register_device(
         ) or 0
 
         now = utc_now()
+        first_token = None
+        first_exp = None
 
         # Check if Seamless Auto-Connect is enabled (default enabled for seamless multi-device agent)
         strict_pairing = os.getenv("STRICT_DEVICE_PAIRING", "false").lower() == "true"
         auto_connect = not strict_pairing and os.getenv("AUTO_CONNECT_DEVICES", "true").lower() == "true"
 
-        if auto_connect:
+        if auto_connect and trusted_count > 0:
             status = "trusted"
             pairing_code = None
             pairing_expires_at = None
@@ -1806,9 +2027,30 @@ def create_or_register_device(
                 f"Device '{name}' ({device_id}) automatically trusted and connected to companion network.",
                 session=session
             )
+            from app import email_service
+            email_service.send_security_alert_pairing_request(user.email, name, platform, pairing_code=None)
         elif trusted_count == 0:
+            first_token = None
+            first_exp = None
             if password:
-                if verify_password(user.password_hash, password):
+                if not verify_password(user.password_hash, password):
+                    raise ValueError("Incorrect password. Re-entering your password is required to trust this device.")
+                if require_email_confirm:
+                    # Step 17 Item 6: First device needs password AND email confirmation link
+                    status = "pending"
+                    pairing_code = None
+                    pairing_expires_at = None
+                    first_token = secrets.token_urlsafe(32)
+                    first_exp = now + timedelta(minutes=15)
+                    from app import email_service
+                    email_service.send_first_device_confirmation_email(user.email, name, platform, first_token)
+                    log_audit(
+                        user_id,
+                        "FIRST_DEVICE_EMAIL_SENT",
+                        f"First device '{name}' ({device_id}) password verified; email confirmation link sent.",
+                        session=session
+                    )
+                else:
                     status = "trusted"
                     pairing_code = None
                     pairing_expires_at = None
@@ -1818,8 +2060,10 @@ def create_or_register_device(
                         f"First device '{name}' ({device_id}) verified with password and trusted.",
                         session=session
                     )
-                else:
-                    raise ValueError("Incorrect password. Re-entering your password is required to trust this device.")
+            elif (is_signup or auto_connect) and not require_email_confirm:
+                status = "trusted"
+                pairing_code = None
+                pairing_expires_at = None
             else:
                 status = "pending"
                 pairing_code = f"{secrets.randbelow(900000) + 100000}"
@@ -1831,9 +2075,13 @@ def create_or_register_device(
                     session=session
                 )
         else:
+            first_token = None
+            first_exp = None
             status = "pending"
             pairing_code = f"{secrets.randbelow(900000) + 100000}"
             pairing_expires_at = now + timedelta(minutes=5)
+            from app import email_service
+            email_service.send_security_alert_pairing_request(user.email, name, platform, pairing_code=pairing_code)
             log_audit(
                 user_id,
                 "DEVICE_REGISTERED_PENDING",
@@ -1852,6 +2100,8 @@ def create_or_register_device(
             pairing_code=pairing_code,
             pairing_expires_at=pairing_expires_at,
             pairing_attempts=0,
+            first_device_token=first_token,
+            first_device_token_expires_at=first_exp,
             created_at=now,
             last_seen_at=now,
         )

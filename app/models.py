@@ -41,6 +41,13 @@ class User(Base):
     timezone = Column(String(64), default="UTC", nullable=False)
     created_at = Column(DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False)
 
+    # Step 17: Email verification and password reset fields
+    is_verified = Column(Boolean, default=False, nullable=False)
+    verification_token = Column(String(128), nullable=True, index=True)
+    verification_token_expires_at = Column(DateTime(timezone=True), nullable=True)
+    reset_token = Column(String(128), nullable=True, index=True)
+    reset_token_expires_at = Column(DateTime(timezone=True), nullable=True)
+
     # Relationships
     sessions = relationship("Session", back_populates="user", cascade="all, delete-orphan")
     settings = relationship("UserSetting", back_populates="user", cascade="all, delete-orphan")
@@ -215,6 +222,10 @@ class Device(Base):
     installed_apps_json = Column(Text, nullable=True)
     last_error = Column(Text, nullable=True)
     last_http_status = Column(Integer, nullable=True)
+
+    # Step 17 Item 6: First trusted device email confirmation
+    first_device_token = Column(String(128), nullable=True, index=True)
+    first_device_token_expires_at = Column(DateTime(timezone=True), nullable=True)
 
     user = relationship("User", back_populates="devices")
 

@@ -118,12 +118,30 @@ def check_endpoint_rate_limits(request: Request, user_id: int = None):
             )
 
     # Signup rate limit: 5 requests / 15 minutes per IP
-    elif path == "/api/auth/signup" and request.method == "POST":
+    elif (path in ("/api/auth/signup", "/api/auth/register")) and request.method == "POST":
         allowed, retry_after = limiter.check(f"signup_ip_{ip}", max_requests=5, window_seconds=900)
         if not allowed:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail=f"Too many accounts registered from this connection. Please try again after {retry_after} seconds."
+            )
+
+    # Forgot password rate limit: 5 requests / 15 minutes per IP
+    elif path == "/api/auth/forgot-password" and request.method == "POST":
+        allowed, retry_after = limiter.check(f"forgot_pw_ip_{ip}", max_requests=5, window_seconds=900)
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Too many password reset requests from this connection. Please wait {retry_after} seconds."
+            )
+
+    # Resend verification rate limit: 5 requests / 15 minutes per IP
+    elif path == "/api/auth/resend-verification" and request.method == "POST":
+        allowed, retry_after = limiter.check(f"resend_verify_ip_{ip}", max_requests=5, window_seconds=900)
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Too many verification requests. Please wait {retry_after} seconds."
             )
 
     # Chat rate limit: 25 requests / minute per user or IP

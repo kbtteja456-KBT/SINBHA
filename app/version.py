@@ -32,3 +32,4 @@ def get_app_version() -> str:
 
     _CACHED_VERSION = "1.4.12"
     return _CACHED_VERSION
+

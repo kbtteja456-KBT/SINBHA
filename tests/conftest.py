@@ -26,3 +26,4 @@ db.init_db()
 def setup_test_db():
     db.init_db()
     yield
+

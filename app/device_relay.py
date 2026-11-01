@@ -619,6 +619,15 @@ class CommandRelayManager:
         now = time.time()
         self._cleanup_old_records(now)
 
+        # Step 17 Requirement 2: Unverified accounts cannot send remote commands
+        if not db.is_user_verified(user_id):
+            return {
+                "success": False,
+                "error": "UNVERIFIED_ACCOUNT",
+                "message": "Email verification is required to send remote commands. Please verify your email address.",
+                "unverified": True
+            }
+
         norm_cmd = unwrap_command_packet(cmd_data)
         cmd_id = str(norm_cmd.get("id", "")).strip()
         sender_id = str(norm_cmd.get("sender_device", "")).strip()
