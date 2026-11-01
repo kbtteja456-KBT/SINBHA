@@ -28,10 +28,38 @@ def is_dev_mode_allowed() -> bool:
         return False
     return os.getenv("DEV_MODE", "false").strip().lower() == "true"
 
+def is_production_database_url(url: str = "") -> bool:
+    """
+    Step 1C Item 1: Detects if a database URL points to the production database.
+    Production indicators:
+    - NEON_BRANCH environment variable is 'production' or 'main'
+    - Host contains 'ep-royal-rain' (production Neon project endpoint)
+    - URL contains 'production' or 'sinbha-prod'
+    - ENV is 'production' and URL is PostgreSQL
+    """
+    db_url = (url or os.getenv("DATABASE_URL", "")).strip().lower()
+    neon_branch = os.getenv("NEON_BRANCH", "").strip().lower()
+
+    if neon_branch in ("production", "prod", "main"):
+        if "neon.tech" in db_url or "aws.neon" in db_url:
+            return True
+
+    if "ep-royal-rain" in db_url:
+        return True
+
+    if "production" in db_url or "sinbha-prod" in db_url:
+        return True
+
+    if is_production() and db_url.startswith("postgres"):
+        return True
+
+    return False
+
 def validate_production_config():
     """
     Requirement 1: The app must refuse to start in production if required secrets are missing.
     Requirement 11: Database connections must require SSL.
+    Step 1C Item 6: APP_URL must be configured and cannot point to localhost in production.
     """
     if not is_production():
         return
@@ -59,6 +87,13 @@ def validate_production_config():
     enc_key = os.getenv("DATA_ENCRYPTION_KEY", "").strip()
     if not enc_key or "your_base64_fernet_key" in enc_key:
         errors.append("DATA_ENCRYPTION_KEY is missing. Sensitive data cannot be encrypted at rest without it.")
+
+    # 4. Step 1C Item 6: APP_URL production check (must not point to localhost)
+    app_url = os.getenv("APP_URL", "").strip().lower()
+    if not app_url:
+        errors.append("APP_URL is missing in production. Configure APP_URL (e.g. https://sinbha-backend.onrender.com).")
+    elif "localhost" in app_url or "127.0.0.1" in app_url:
+        errors.append("APP_URL cannot point to localhost or 127.0.0.1 in production. Must be your live public domain.")
 
     if errors:
         error_msg = "CRITICAL PRODUCTION CONFIGURATION ERROR(S):\n" + "\n".join(f"- {e}" for e in errors)

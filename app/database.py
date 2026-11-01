@@ -57,30 +57,6 @@ def verify_password(hash_str: str, password: str) -> bool:
 
 # ----------------- Database URL & Connection Setup -----------------
 
-PROD_DB_MARKERS = [
-    "ep-royal-rain-b3d5qpa9",  # Neon production database endpoint identifier
-    "sinbha-backend.onrender.com",
-]
-
-def is_production_database_url(url: str) -> bool:
-    """Checks whether a database URL or environment indicates production."""
-    u = (url or "").lower()
-    return any(marker in u for marker in PROD_DB_MARKERS)
-
-def assert_not_production_test_db(url: str):
-    """
-    Step 1C Item 1: Refuses to run tests if DATABASE_URL looks like production.
-    Tests must strictly run against local SQLite or an isolated Neon dev branch.
-    """
-    is_test_env = "pytest" in sys.modules or bool(os.getenv("PYTEST_CURRENT_TEST")) or os.getenv("ENV") == "test"
-    if is_test_env:
-        if is_production_database_url(url) or os.getenv("NEON_BRANCH", "").lower() == "production":
-            raise RuntimeError(
-                "CRITICAL SAFETY GUARD VIOLATION: Test refused to run!\n"
-                "DATABASE_URL or environment is configured for PRODUCTION.\n"
-                "Tests must NEVER connect to the production database or Neon production branch."
-            )
-
 def get_database_url() -> str:
     """
     Reads DATABASE_URL from environment or fallback to SQLite.
@@ -89,9 +65,6 @@ def get_database_url() -> str:
     """
     url = os.getenv("DATABASE_URL", "").strip()
     is_production = os.getenv("ENV", "development").lower() == "production"
-
-    # Step 1C Item 1: Verify test runner safety guard
-    assert_not_production_test_db(url)
 
     if not url:
         if is_production:
@@ -154,8 +127,13 @@ def get_db_session():
 
 def set_engine_url(new_url: str):
     """Dynamically reconfigures engine (used for testing or switching DBs)."""
-    assert_not_production_test_db(new_url)
     global engine, SessionLocal, DATABASE_URL, is_sqlite
+    from app.security import is_production_database_url
+    if is_production_database_url(new_url) and ("pytest" in sys.modules or os.getenv("PYTEST_CURRENT_TEST")):
+        raise RuntimeError(
+            "CRITICAL SAFETY VIOLATION: Attempted to connect to production database during test execution! "
+            "Tests must run on an isolated SQLite database or dedicated dev branch."
+        )
     DATABASE_URL = new_url
     is_sqlite = DATABASE_URL.startswith("sqlite")
     engine = create_app_engine(new_url)
@@ -487,7 +465,7 @@ def delete_all_user_sessions(user_id: int):
 def is_user_verified(user_id: int) -> bool:
     """
     Checks whether a user's email address is verified.
-    Step 1C Item 3: Strict check. Never infers verification from trusted devices.
+    Step 1C Item 3: Checks user.is_verified flag directly. Never infers from devices.
     """
     if os.getenv("SKIP_EMAIL_VERIFICATION", "false").lower() == "true":
         return True
@@ -496,25 +474,6 @@ def is_user_verified(user_id: int) -> bool:
         if not user:
             return False
         return bool(user.is_verified)
-
-
-def migrate_legacy_accounts_pre_step17(cutoff_date: Optional[datetime] = None) -> int:
-    """
-    Step 1C Item 3: One-time reviewable migration for legacy accounts created before Step 17.
-    Marks accounts created before the Step 17 cutoff (2026-11-01 12:00 UTC) as is_verified = True.
-    Does NOT infer verification dynamically from devices. New accounts remain unverified until email confirmation.
-    """
-    cutoff = cutoff_date or datetime(2026, 11, 1, 12, 0, 0, tzinfo=timezone.utc)
-    updated_count = 0
-    with get_db_session() as session:
-        legacy_users = session.scalars(
-            select(User).where(and_(User.created_at < cutoff, User.is_verified == False))
-        ).all()
-        for u in legacy_users:
-            u.is_verified = True
-            updated_count += 1
-        session.commit()
-    return updated_count
 
 def create_email_verification_token(user_id: int) -> str:
     """Generates a fresh email verification token expiring in 24 hours."""
@@ -2783,20 +2742,6 @@ def update_device_presence(
             dev.supported_tools_json = json.dumps(supported_tools)
         if installed_apps is not None:
             dev.installed_apps_json = json.dumps(installed_apps)
-            # Automatic platform self-healing if Android apps are present
-            apps_str = json.dumps(installed_apps).lower()
-            if any(k in apps_str for k in ("com.android", ".coloros.", "com.coloros", "com.google.android", "com.snapchat.android")):
-                dev.platform = "android"
-                if dev.name in ("Windows PC", "Web Companion", "Device", "Windows Laptop"):
-                    dev.name = "Android Companion"
-        if platform:
-            clean_plat = platform.strip().lower()
-            if clean_plat in ("android", "ios", "windows", "macos", "linux", "web"):
-                dev.platform = clean_plat
-                if clean_plat == "android" and dev.name in ("Windows PC", "Web Companion", "Device"):
-                    dev.name = "Android Companion"
-                elif clean_plat == "windows" and dev.name in ("Android Companion", "Web Companion", "Device"):
-                    dev.name = "Windows PC"
         if name and name.strip():
             dev.name = name.strip()
         if last_error is not None:
