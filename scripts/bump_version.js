@@ -65,7 +65,8 @@ function bump() {
   console.log(`   1. git add .`);
   console.log(`   2. git commit -m "Release v${newVersion}"`);
   console.log(`   3. git push origin main`);
-  console.log(`   4. Go to GitHub Actions and click "Run workflow" (or run: git tag android-v${newVersion}; git push origin android-v${newVersion})`);
+  console.log(`   4. Tag and push releases (triggers both Android and Windows builds):`);
+  console.log(`      git tag android-v${newVersion}; git tag windows-v${newVersion}; git push origin android-v${newVersion} windows-v${newVersion}`);
   console.log('\n🔗 Permanent download link to share with anyone:');
   console.log('   https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA.apk\n');
 }

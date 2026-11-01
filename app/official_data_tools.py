@@ -557,3 +557,4 @@ def get_official_data_privacy_note() -> dict:
         "zero_server_storage": True,
         "zero_automatic_sending": True,
     }
+

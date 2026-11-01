@@ -284,3 +284,4 @@ async def test_agent_tool_handlers_d3_integration(test_user):
     )
     assert res_draft["success"] is True
     assert res_draft["needs_user_confirmation"] is True
+

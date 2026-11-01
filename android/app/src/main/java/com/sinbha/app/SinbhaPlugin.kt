@@ -19,6 +19,8 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.pm.PackageInfoCompat
 import java.util.Locale
+import org.json.JSONObject
+import org.json.JSONArray
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
