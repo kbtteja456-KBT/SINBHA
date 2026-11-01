@@ -123,11 +123,15 @@ def format_step_description(tool_name: str, args: dict, result: dict) -> str:
         return f"Triggered ring on {args.get('target_device', 'phone')}"
     elif tool_name == "open_url":
         browser = f" in {args.get('browser')}" if args.get("browser") else ""
-        return f"Opened {args.get('url', '')}{browser}"
+        if result and result.get("success"):
+            return f"Opened {args.get('url', '')}{browser}"
+        return f"Could not open {args.get('url', '')}{browser}"
     elif tool_name == "find_installed_app":
         return f"Searched installed apps for '{args.get('query', '')}'"
     elif tool_name == "open_app":
-        return f"Opened app '{args.get('name', '')}'"
+        if result and result.get("success"):
+            return f"Opened app '{args.get('name', '')}'"
+        return f"Could not open app '{args.get('name', '')}'"
     elif tool_name == "type_text":
         return f"Typed text into active window"
     elif tool_name == "press_keys":

@@ -30,8 +30,10 @@ const ALLOWED_APP_TARGETS = {
   'cmd': { type: 'binary', binary: 'cmd.exe', args: [] },
   'chrome': { type: 'binary', binary: 'chrome.exe', fallbackUrl: 'https://google.com' },
   'google chrome': { type: 'binary', binary: 'chrome.exe', fallbackUrl: 'https://google.com' },
-  'code': { type: 'binary', binary: 'code.cmd', fallbackBinary: 'code.exe' },
-  'vscode': { type: 'binary', binary: 'code.cmd', fallbackBinary: 'code.exe' },
+  'code': { type: 'special', app: 'vscode' },
+  'vscode': { type: 'special', app: 'vscode' },
+  'vs code': { type: 'special', app: 'vscode' },
+  'visual studio code': { type: 'special', app: 'vscode' },
   'claude': { type: 'special', app: 'claude' },
   'chatgpt': { type: 'special', app: 'chatgpt' },
   'antigravity': { type: 'special', app: 'antigravity' }
@@ -292,6 +294,36 @@ async function safeLaunchDesktopApp(appNameOrTarget) {
           return { success: true, app: 'antigravity', method: 'desktop_exe', pid };
         }
         // Fallback to start menu search
+      }
+
+      if (mapping.type === 'special' && (target === 'vscode' || target === 'vs code' || target === 'code' || target === 'visual studio code')) {
+        const userCode = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Microsoft VS Code', 'Code.exe');
+        const progCode = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Microsoft VS Code', 'Code.exe');
+        const progCodeX86 = path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Microsoft VS Code', 'Code.exe');
+        const codeExe = fs.existsSync(userCode) ? userCode : (fs.existsSync(progCode) ? progCode : (fs.existsSync(progCodeX86) ? progCodeX86 : null));
+
+        if (codeExe) {
+          const child = spawn(codeExe, [], { shell: false, detached: true, stdio: 'ignore' });
+          const pid = child.pid;
+          child.unref();
+          return { success: true, app: 'Visual Studio Code', method: 'desktop_exe', pid };
+        }
+
+        const cmdPath = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Microsoft VS Code', 'bin', 'code.cmd');
+        if (fs.existsSync(cmdPath)) {
+          const child = spawn('cmd.exe', ['/c', cmdPath], { shell: false, detached: true, stdio: 'ignore' });
+          const pid = child.pid;
+          child.unref();
+          return { success: true, app: 'Visual Studio Code', method: 'cmd_launcher', pid };
+        }
+
+        const vsLnk = path.join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Visual Studio Code.lnk');
+        if (fs.existsSync(vsLnk)) {
+          await shell.openPath(vsLnk);
+          return { success: true, app: 'Visual Studio Code', method: 'shortcut', path: vsLnk };
+        }
+
+        return { success: false, error: 'Visual Studio Code not found on this computer' };
       }
     }
 
