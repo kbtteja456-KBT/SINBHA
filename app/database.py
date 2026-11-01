@@ -5,6 +5,7 @@ Supports connection pooling, UTC timestamps, per-user isolation, and rate-limiti
 """
 
 import os
+import sys
 import re
 import json
 import secrets
@@ -56,6 +57,30 @@ def verify_password(hash_str: str, password: str) -> bool:
 
 # ----------------- Database URL & Connection Setup -----------------
 
+PROD_DB_MARKERS = [
+    "ep-royal-rain-b3d5qpa9",  # Neon production database endpoint identifier
+    "sinbha-backend.onrender.com",
+]
+
+def is_production_database_url(url: str) -> bool:
+    """Checks whether a database URL or environment indicates production."""
+    u = (url or "").lower()
+    return any(marker in u for marker in PROD_DB_MARKERS)
+
+def assert_not_production_test_db(url: str):
+    """
+    Step 1C Item 1: Refuses to run tests if DATABASE_URL looks like production.
+    Tests must strictly run against local SQLite or an isolated Neon dev branch.
+    """
+    is_test_env = "pytest" in sys.modules or bool(os.getenv("PYTEST_CURRENT_TEST")) or os.getenv("ENV") == "test"
+    if is_test_env:
+        if is_production_database_url(url) or os.getenv("NEON_BRANCH", "").lower() == "production":
+            raise RuntimeError(
+                "CRITICAL SAFETY GUARD VIOLATION: Test refused to run!\n"
+                "DATABASE_URL or environment is configured for PRODUCTION.\n"
+                "Tests must NEVER connect to the production database or Neon production branch."
+            )
+
 def get_database_url() -> str:
     """
     Reads DATABASE_URL from environment or fallback to SQLite.
@@ -64,6 +89,9 @@ def get_database_url() -> str:
     """
     url = os.getenv("DATABASE_URL", "").strip()
     is_production = os.getenv("ENV", "development").lower() == "production"
+
+    # Step 1C Item 1: Verify test runner safety guard
+    assert_not_production_test_db(url)
 
     if not url:
         if is_production:
@@ -126,6 +154,7 @@ def get_db_session():
 
 def set_engine_url(new_url: str):
     """Dynamically reconfigures engine (used for testing or switching DBs)."""
+    assert_not_production_test_db(new_url)
     global engine, SessionLocal, DATABASE_URL, is_sqlite
     DATABASE_URL = new_url
     is_sqlite = DATABASE_URL.startswith("sqlite")
