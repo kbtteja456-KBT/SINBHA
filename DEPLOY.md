@@ -62,7 +62,7 @@ To keep your local development data separate from your live users' data:
 - **Branch**: `main` (or `master`)
 - **Runtime**: `Python`
 - **Build Command**: `./build.sh` (installs dependencies and automatically runs Alembic migrations)
-- **Start Command**: `uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2`
+- **Start Command**: `uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1 --ws websockets`
 - **Instance Type**: `Free`
 
 ### Step 4.3: Add Environment Variables

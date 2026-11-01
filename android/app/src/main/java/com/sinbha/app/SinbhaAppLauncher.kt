@@ -345,6 +345,22 @@ object SinbhaAppLauncher {
             true
         }
 
+        // Step C2.8 Item 5: Android 10+ strictly restricts background activity launches.
+        // If overlay permission is not granted, Android suppresses the launch.
+        // Post tap-to-open notification and report 'needs_tap' honestly.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !canOverlay) {
+            showTapToOpenNotification(context, appName, launchIntent)
+            return LaunchResult(
+                success = false,
+                app = appName,
+                packageName = packageName,
+                method = method,
+                needsTap = true,
+                needsOverlayPermission = true,
+                error = "needs a tap: Android blocked background launch (enable 'Display over other apps' in Settings to allow direct open)"
+            )
+        }
+
         try {
             context.startActivity(launchIntent)
             return LaunchResult(
@@ -354,20 +370,18 @@ object SinbhaAppLauncher {
                 method = if (canOverlay) "$method+overlay_exemption" else "$method+direct_start"
             )
         } catch (e: Exception) {
-            // Background start was restricted by Android OS
+            // Background start was restricted by Android OS or security manager
+            showTapToOpenNotification(context, appName, launchIntent)
+            return LaunchResult(
+                success = false,
+                app = appName,
+                packageName = packageName,
+                method = method,
+                needsTap = true,
+                needsOverlayPermission = !canOverlay,
+                error = "could not be verified: background launch blocked (${e.message})"
+            )
         }
-
-        // If direct start was blocked, show tap-to-open notification
-        showTapToOpenNotification(context, appName, launchIntent)
-        return LaunchResult(
-            success = false,
-            app = appName,
-            packageName = packageName,
-            method = method,
-            needsTap = true,
-            needsOverlayPermission = !canOverlay,
-            error = "needs a tap: Android blocked background launch; notification posted to tap and open"
-        )
     }
 
     private fun showTapToOpenNotification(context: Context, appName: String, launchIntent: Intent) {

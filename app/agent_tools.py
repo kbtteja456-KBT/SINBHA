@@ -1004,12 +1004,14 @@ async def handle_get_device_status(user_id: int, args: dict, ctx: dict) -> dict:
     ws_connected = bool(relay and (user_id, dev_id) in getattr(relay, "active_websockets", {}))
     is_online = bool(relay and relay.is_device_connected(user_id, dev_id))
 
-    telem = getattr(relay, "device_telemetry", {}).get((user_id, dev_id), {}) if relay else {}
-    battery_level = telem.get("battery_level") or target_dev.get("battery_level")
-    is_charging = telem.get("is_charging")
+    telem = relay.get_device_telemetry(user_id, dev_id) if (relay and hasattr(relay, "get_device_telemetry")) else {}
+    if not telem and relay:
+        telem = getattr(relay, "device_telemetry", {}).get((user_id, dev_id), {})
+    battery_level = telem.get("battery_level") or telem.get("battery") or target_dev.get("battery_level")
+    is_charging = telem.get("is_charging") if "is_charging" in telem else target_dev.get("is_charging")
     last_poll_age = telem.get("last_poll_age")
-    last_http_status = telem.get("last_http_status")
-    last_error = telem.get("last_error")
+    last_http_status = telem.get("last_http_status") or target_dev.get("last_http_status")
+    last_error = telem.get("last_error") or target_dev.get("last_error")
     permissions = telem.get("permissions") or {}
 
     diag_parts = [

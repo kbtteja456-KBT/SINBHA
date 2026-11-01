@@ -34,6 +34,7 @@ from app.models import (
     PendingAction,
     DeviceToken,
     Device,
+    DeviceCommand,
     SearchCache,
     SearchUsageLog,
     utc_now,
@@ -137,13 +138,43 @@ def init_db():
     try:
         with engine.connect() as conn:
             if engine.dialect.name == "sqlite":
+                # Check device_tokens
                 res = conn.exec_driver_sql("PRAGMA table_info(device_tokens)").fetchall()
-                col_names = [r[1] for r in res]
-                if "device_id" not in col_names:
+                token_cols = [r[1] for r in res]
+                if "device_id" not in token_cols:
                     conn.exec_driver_sql("ALTER TABLE device_tokens ADD COLUMN device_id VARCHAR(64)")
                     conn.commit()
+
+                # Check devices table columns (Step C2.8)
+                res_dev = conn.exec_driver_sql("PRAGMA table_info(devices)").fetchall()
+                dev_cols = [r[1] for r in res_dev]
+                new_dev_cols = [
+                    ("last_ping_at", "DATETIME"),
+                    ("websocket_connected", "BOOLEAN DEFAULT 0"),
+                    ("battery_level", "INTEGER"),
+                    ("is_charging", "BOOLEAN DEFAULT 0"),
+                    ("client_version", "VARCHAR(64)"),
+                    ("supported_tools_json", "TEXT"),
+                    ("installed_apps_json", "TEXT"),
+                    ("last_error", "TEXT"),
+                    ("last_http_status", "INTEGER"),
+                ]
+                for c_name, c_type in new_dev_cols:
+                    if c_name not in dev_cols:
+                        conn.exec_driver_sql(f"ALTER TABLE devices ADD COLUMN {c_name} {c_type}")
+                        conn.commit()
+
             elif engine.dialect.name == "postgresql":
                 conn.exec_driver_sql("ALTER TABLE device_tokens ADD COLUMN IF NOT EXISTS device_id VARCHAR(64)")
+                conn.exec_driver_sql("ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_ping_at TIMESTAMP WITH TIME ZONE")
+                conn.exec_driver_sql("ALTER TABLE devices ADD COLUMN IF NOT EXISTS websocket_connected BOOLEAN DEFAULT FALSE")
+                conn.exec_driver_sql("ALTER TABLE devices ADD COLUMN IF NOT EXISTS battery_level INTEGER")
+                conn.exec_driver_sql("ALTER TABLE devices ADD COLUMN IF NOT EXISTS is_charging BOOLEAN DEFAULT FALSE")
+                conn.exec_driver_sql("ALTER TABLE devices ADD COLUMN IF NOT EXISTS client_version VARCHAR(64)")
+                conn.exec_driver_sql("ALTER TABLE devices ADD COLUMN IF NOT EXISTS supported_tools_json TEXT")
+                conn.exec_driver_sql("ALTER TABLE devices ADD COLUMN IF NOT EXISTS installed_apps_json TEXT")
+                conn.exec_driver_sql("ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_error TEXT")
+                conn.exec_driver_sql("ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_http_status INTEGER")
                 conn.commit()
     except Exception:
         pass
@@ -1612,6 +1643,20 @@ def _device_to_dict(dev: Device) -> dict:
     attempts = getattr(dev, "pairing_attempts", 0) or 0
     is_locked = attempts >= 5
 
+    supported_tools = None
+    if getattr(dev, "supported_tools_json", None):
+        try:
+            supported_tools = json.loads(dev.supported_tools_json)
+        except Exception:
+            pass
+
+    installed_apps = None
+    if getattr(dev, "installed_apps_json", None):
+        try:
+            installed_apps = json.loads(dev.installed_apps_json)
+        except Exception:
+            pass
+
     return {
         "id": dev.id,
         "device_id": dev.device_id,
@@ -1626,6 +1671,15 @@ def _device_to_dict(dev: Device) -> dict:
         "is_locked": is_locked,
         "created_at": dev.created_at.isoformat() if dev.created_at else "",
         "last_seen_at": dev.last_seen_at.isoformat() if dev.last_seen_at else "",
+        "last_ping_at": dev.last_ping_at.isoformat() if getattr(dev, "last_ping_at", None) else None,
+        "websocket_connected": bool(getattr(dev, "websocket_connected", False)),
+        "battery_level": getattr(dev, "battery_level", None),
+        "is_charging": bool(getattr(dev, "is_charging", False)),
+        "client_version": getattr(dev, "client_version", None),
+        "supported_tools": supported_tools,
+        "installed_apps": installed_apps,
+        "last_error": getattr(dev, "last_error", None),
+        "last_http_status": getattr(dev, "last_http_status", None),
     }
 
 def verify_user_password(user_id: int, password: str) -> bool:
@@ -2222,3 +2276,220 @@ def set_active_ai_provider(user_id: int, provider: str) -> str:
         clean = "auto"
     set_setting(user_id, "active_ai_provider", clean)
     return clean
+
+# ----------------- Persistent Device Commands & Multi-Worker Presence (Step C2.8) -----------------
+
+def _device_command_to_dict(cmd: DeviceCommand, session: Optional[OrmSession] = None) -> dict:
+    """Serializes a DeviceCommand model into a client/relay dictionary."""
+    decrypted_payload = {}
+    if cmd.payload_encrypted:
+        try:
+            raw = decrypt_text(cmd.payload_encrypted)
+            decrypted_payload = json.loads(raw)
+        except Exception:
+            pass
+
+    res_data = None
+    if cmd.result:
+        try:
+            res_data = json.loads(cmd.result)
+        except Exception:
+            res_data = cmd.result
+
+    sender_name = "Trusted Device"
+    if session and cmd.sender_device:
+        sdev = session.scalar(select(Device).where(and_(Device.user_id == cmd.user_id, Device.device_id == cmd.sender_device)))
+        if sdev:
+            sender_name = sdev.name
+
+    expiry_seconds = 60
+    if cmd.expires_at and cmd.created_at:
+        expiry_seconds = max(5, int((cmd.expires_at - cmd.created_at).total_seconds()))
+
+    created_ts = cmd.created_at.timestamp() if cmd.created_at else 0.0
+    expires_ts = cmd.expires_at.timestamp() if cmd.expires_at else 0.0
+    updated_ts = cmd.updated_at.timestamp() if cmd.updated_at else 0.0
+
+    return {
+        "id": cmd.id,
+        "command_id": cmd.id,
+        "user_id": cmd.user_id,
+        "sender_device": cmd.sender_device,
+        "sender_name": sender_name,
+        "target_device": cmd.target_device,
+        "type": cmd.type,
+        "command_type": cmd.type,
+        "payload": decrypted_payload,
+        "status": cmd.status,
+        "result": res_data,
+        "error": cmd.error,
+        "created_at": created_ts,
+        "expires_at": expires_ts,
+        "updated_at": updated_ts,
+        "expiry": expiry_seconds,
+    }
+
+def create_device_command(
+    user_id: int,
+    cmd_id: str,
+    sender_device: str,
+    target_device: str,
+    cmd_type: str,
+    payload: dict,
+    expiry_seconds: int = 60,
+    status: str = "queued",
+) -> dict:
+    """
+    Step C2.8: Inserts persistent command into device_commands table.
+    Payload is encrypted at rest using Fernet encryption.
+    """
+    now = utc_now()
+    expires_at = now + timedelta(seconds=max(10, int(expiry_seconds)))
+    encrypted_payload = encrypt_text(json.dumps(payload or {}))
+    with get_db_session() as session:
+        existing = session.scalar(select(DeviceCommand).where(DeviceCommand.id == cmd_id))
+        if existing:
+            return _device_command_to_dict(existing, session)
+        cmd = DeviceCommand(
+            id=cmd_id,
+            user_id=user_id,
+            sender_device=sender_device,
+            target_device=target_device,
+            type=cmd_type,
+            payload_encrypted=encrypted_payload,
+            status=status,
+            created_at=now,
+            expires_at=expires_at,
+            updated_at=now,
+        )
+        session.add(cmd)
+        session.commit()
+        return _device_command_to_dict(cmd, session)
+
+def get_device_command(user_id: int, cmd_id: str) -> Optional[dict]:
+    """Retrieves command by ID from database."""
+    with get_db_session() as session:
+        cmd = session.scalar(
+            select(DeviceCommand).where(and_(DeviceCommand.user_id == user_id, DeviceCommand.id == cmd_id))
+        )
+        if not cmd:
+            return None
+        return _device_command_to_dict(cmd, session)
+
+def update_device_command_status(
+    user_id: int,
+    cmd_id: str,
+    status: str,
+    result: Optional[Any] = None,
+    error: Optional[str] = None
+) -> Optional[dict]:
+    """Updates status and result/error of a command in database."""
+    now = utc_now()
+    result_str = None
+    if result is not None:
+        if isinstance(result, (dict, list)):
+            result_str = json.dumps(result)
+        else:
+            result_str = str(result)
+    with get_db_session() as session:
+        cmd = session.scalar(
+            select(DeviceCommand).where(and_(DeviceCommand.user_id == user_id, DeviceCommand.id == cmd_id))
+        )
+        if not cmd:
+            return None
+        cmd.status = status
+        cmd.updated_at = now
+        if result_str is not None:
+            cmd.result = result_str
+        if error is not None:
+            cmd.error = error
+        session.commit()
+        return _device_command_to_dict(cmd, session)
+
+def get_pending_device_commands(user_id: int, device_id: str) -> List[dict]:
+    """
+    Step C2.8: Retrieves all unexpired pending commands for a device from the database.
+    Marks retrieved queued commands as 'delivered' in the database so duplicate execution is prevented.
+    """
+    now = utc_now()
+    with get_db_session() as session:
+        stmt = (
+            select(DeviceCommand)
+            .where(
+                and_(
+                    DeviceCommand.user_id == user_id,
+                    DeviceCommand.target_device == device_id,
+                    DeviceCommand.status.in_(["queued", "delivered"]),
+                    DeviceCommand.expires_at > now,
+                )
+            )
+            .order_by(DeviceCommand.created_at.asc())
+        )
+        commands = session.scalars(stmt).all()
+        results = []
+        for cmd in commands:
+            results.append(_device_command_to_dict(cmd, session))
+            if cmd.status == "queued":
+                cmd.status = "delivered"
+                cmd.updated_at = now
+        session.commit()
+        return results
+
+def update_device_presence(
+    user_id: int,
+    device_id: str,
+    last_ping: bool = False,
+    websocket_connected: Optional[bool] = None,
+    battery: Optional[int] = None,
+    is_charging: Optional[bool] = None,
+    client_version: Optional[str] = None,
+    supported_tools: Optional[list] = None,
+    installed_apps: Optional[list] = None,
+    last_error: Optional[str] = None,
+    last_http_status: Optional[int] = None,
+) -> Optional[dict]:
+    """
+    Step C2.8: Updates device presence directly in the database.
+    Persists across all worker processes and server restarts.
+    """
+    now = utc_now()
+    with get_db_session() as session:
+        dev = session.scalar(
+            select(Device).where(and_(Device.user_id == user_id, Device.device_id == device_id))
+        )
+        if not dev:
+            return None
+        dev.last_seen_at = now
+        if last_ping:
+            dev.last_ping_at = now
+        if websocket_connected is not None:
+            dev.websocket_connected = websocket_connected
+        if battery is not None:
+            try:
+                dev.battery_level = int(battery)
+            except Exception:
+                pass
+        if is_charging is not None:
+            dev.is_charging = bool(is_charging)
+        if client_version:
+            dev.client_version = str(client_version)
+        if supported_tools is not None:
+            dev.supported_tools_json = json.dumps(supported_tools)
+        if installed_apps is not None:
+            dev.installed_apps_json = json.dumps(installed_apps)
+        if last_error is not None:
+            dev.last_error = str(last_error)
+        if last_http_status is not None:
+            dev.last_http_status = int(last_http_status)
+        session.commit()
+        return _device_to_dict(dev)
+
+def get_device_presence(user_id: int, device_id: str) -> Optional[dict]:
+    """Returns real device presence data from the database."""
+    with get_db_session() as session:
+        dev = session.scalar(
+            select(Device).where(and_(Device.user_id == user_id, Device.device_id == device_id))
+        )
+        if not dev:
+            return None
+        return _device_to_dict(dev)

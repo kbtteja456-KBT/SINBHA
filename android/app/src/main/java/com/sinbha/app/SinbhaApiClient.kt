@@ -379,7 +379,7 @@ class SinbhaApiClient(private val context: Context) {
             val body = JSONObject().apply {
                 put("device_id", deviceId)
                 put("platform", "android")
-                put("version", "1.4.11")
+                put("version", BuildConfig.VERSION_NAME)
                 if (battery != null) put("battery", battery)
                 put("is_charging", isCharging)
                 if (installedApps != null && installedApps.length() > 0) {

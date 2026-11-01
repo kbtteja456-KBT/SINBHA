@@ -50,6 +50,7 @@ class User(Base):
     pending_actions = relationship("PendingAction", back_populates="user", cascade="all, delete-orphan")
     device_tokens = relationship("DeviceToken", back_populates="user", cascade="all, delete-orphan")
     devices = relationship("Device", back_populates="user", cascade="all, delete-orphan")
+    device_commands = relationship("DeviceCommand", back_populates="user", cascade="all, delete-orphan")
 
 class Session(Base):
     __tablename__ = "sessions"
@@ -205,11 +206,49 @@ class Device(Base):
     pairing_attempts = Column(Integer, default=0, nullable=False)
     created_at = Column(DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False)
     last_seen_at = Column(DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False)
+    last_ping_at = Column(DateTime(timezone=True), nullable=True)
+    websocket_connected = Column(Boolean, default=False, nullable=False)
+    battery_level = Column(Integer, nullable=True)
+    is_charging = Column(Boolean, default=False, nullable=True)
+    client_version = Column(String(64), nullable=True)
+    supported_tools_json = Column(Text, nullable=True)
+    installed_apps_json = Column(Text, nullable=True)
+    last_error = Column(Text, nullable=True)
+    last_http_status = Column(Integer, nullable=True)
 
     user = relationship("User", back_populates="devices")
 
     __table_args__ = (
         Index("ix_devices_user_status", "user_id", "status"),
+    )
+
+class DeviceCommand(Base):
+    """
+    Step C2.8: Persistent device commands stored in database (never in-memory only).
+    Allows multi-worker and multi-process deployments (like Render) to relay,
+    poll, execute, and verify command lifecycles without cross-process memory loss.
+    Payload is encrypted at rest using Fernet encryption.
+    """
+    __tablename__ = "device_commands"
+
+    id = Column(String(64), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    sender_device = Column(String(64), nullable=False)
+    target_device = Column(String(64), nullable=False, index=True)
+    type = Column(String(64), nullable=False)
+    payload_encrypted = Column(Text, nullable=False)
+    status = Column(String(32), default="queued", nullable=False, index=True)  # queued, delivered, started, succeeded, failed, timed_out, needs_tap
+    result = Column(Text, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, server_default=func.now(), onupdate=utc_now, nullable=False)
+
+    user = relationship("User", back_populates="device_commands")
+
+    __table_args__ = (
+        Index("ix_device_commands_user_target_status", "user_id", "target_device", "status"),
+        Index("ix_device_commands_expires", "expires_at"),
     )
 
 class SearchCache(Base):

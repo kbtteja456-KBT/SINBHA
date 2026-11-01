@@ -37,8 +37,13 @@ from app.agent_loop import (
 )
 
 
+@pytest.fixture(autouse=True)
+def setup_db():
+    db.init_db()
+
 @pytest.fixture
 def test_user():
+    db.init_db()
     email = f"c27_test_{int(time.time()*1000)}@sinbha.local"
     user = db.create_user(email, "hashed_pw", "C27 User", "UTC")
     u_id = user["id"] if isinstance(user, dict) else user

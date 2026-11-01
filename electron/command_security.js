@@ -15,28 +15,30 @@ const FORBIDDEN_SHELL_CHARS_REGEX = /[&|;`$<>^"'\r\n\t]/;
 
 // Known allowed application names mapped to safe targets
 const ALLOWED_APP_TARGETS = {
-  'whatsapp': { type: 'protocol', target: 'whatsapp:' },
-  'spotify': { type: 'protocol', target: 'spotify:' },
-  'youtube': { type: 'url', target: 'https://youtube.com' },
-  'snapchat': { type: 'url', target: 'https://web.snapchat.com' },
-  'instagram': { type: 'url', target: 'https://www.instagram.com' },
-  'notepad': { type: 'binary', binary: 'notepad.exe', args: [] },
-  'calculator': { type: 'binary', binary: 'calc.exe', args: [] },
-  'calc': { type: 'binary', binary: 'calc.exe', args: [] },
-  'explorer': { type: 'binary', binary: 'explorer.exe', args: [] },
-  'files': { type: 'binary', binary: 'explorer.exe', args: [] },
-  'file manager': { type: 'binary', binary: 'explorer.exe', args: [] },
-  'terminal': { type: 'binary', binary: 'wt.exe', args: [] },
-  'cmd': { type: 'binary', binary: 'cmd.exe', args: [] },
-  'chrome': { type: 'binary', binary: 'chrome.exe', fallbackUrl: 'https://google.com' },
-  'google chrome': { type: 'binary', binary: 'chrome.exe', fallbackUrl: 'https://google.com' },
-  'code': { type: 'special', app: 'vscode' },
-  'vscode': { type: 'special', app: 'vscode' },
-  'vs code': { type: 'special', app: 'vscode' },
-  'visual studio code': { type: 'special', app: 'vscode' },
-  'claude': { type: 'special', app: 'claude' },
-  'chatgpt': { type: 'special', app: 'chatgpt' },
-  'antigravity': { type: 'special', app: 'antigravity' }
+  'whatsapp': { type: 'protocol', target: 'whatsapp:', expected: ['WhatsApp.exe', 'WhatsApp.Root.exe'] },
+  'spotify': { type: 'protocol', target: 'spotify:', expected: ['Spotify.exe'] },
+  'youtube': { type: 'url', target: 'https://youtube.com', expected: ['chrome.exe', 'msedge.exe'] },
+  'snapchat': { type: 'url', target: 'https://web.snapchat.com', expected: ['chrome.exe', 'msedge.exe'] },
+  'instagram': { type: 'url', target: 'https://www.instagram.com', expected: ['chrome.exe', 'msedge.exe'] },
+  'notepad': { type: 'binary', binary: 'notepad.exe', args: [], expected: ['Notepad.exe', 'notepad.exe'] },
+  'calculator': { type: 'binary', binary: 'calc.exe', args: [], expected: ['CalculatorApp.exe', 'Calculator.exe', 'calc.exe'] },
+  'calc': { type: 'binary', binary: 'calc.exe', args: [], expected: ['CalculatorApp.exe', 'Calculator.exe', 'calc.exe'] },
+  'explorer': { type: 'binary', binary: 'explorer.exe', args: [], expected: ['explorer.exe'] },
+  'files': { type: 'binary', binary: 'explorer.exe', args: [], expected: ['explorer.exe'] },
+  'file manager': { type: 'binary', binary: 'explorer.exe', args: [], expected: ['explorer.exe'] },
+  'terminal': { type: 'binary', binary: 'wt.exe', args: [], expected: ['WindowsTerminal.exe', 'wt.exe'] },
+  'cmd': { type: 'binary', binary: 'cmd.exe', args: [], expected: ['cmd.exe'] },
+  'chrome': { type: 'binary', binary: 'chrome.exe', fallbackUrl: 'https://google.com', expected: ['chrome.exe', 'Chrome.exe'] },
+  'google chrome': { type: 'binary', binary: 'chrome.exe', fallbackUrl: 'https://google.com', expected: ['chrome.exe', 'Chrome.exe'] },
+  'edge': { type: 'binary', binary: 'msedge.exe', fallbackUrl: 'https://microsoft.com/edge', expected: ['msedge.exe', 'MSEdge.exe'] },
+  'microsoft edge': { type: 'binary', binary: 'msedge.exe', fallbackUrl: 'https://microsoft.com/edge', expected: ['msedge.exe', 'MSEdge.exe'] },
+  'code': { type: 'special', app: 'vscode', expected: ['Code.exe'] },
+  'vscode': { type: 'special', app: 'vscode', expected: ['Code.exe'] },
+  'vs code': { type: 'special', app: 'vscode', expected: ['Code.exe'] },
+  'visual studio code': { type: 'special', app: 'vscode', expected: ['Code.exe'] },
+  'claude': { type: 'special', app: 'claude', expected: ['Claude.exe'] },
+  'chatgpt': { type: 'special', app: 'chatgpt', expected: ['ChatGPT.exe'] },
+  'antigravity': { type: 'special', app: 'antigravity', expected: ['Antigravity.exe'] }
 };
 
 const ALLOWED_PROTOCOLS = new Set(['https:', 'http:', 'whatsapp:', 'spotify:']);
@@ -160,8 +162,66 @@ function validateTypeInputPayload(payload) {
 }
 
 /**
+ * Step C2.8 Item 4: Checks if a process is running using tasklist with argument array (zero shell strings).
+ */
+function checkProcessRunning(processName) {
+  return new Promise((resolve) => {
+    execFile('tasklist.exe', ['/FI', `IMAGENAME eq ${processName}`, '/FO', 'CSV', '/NH'], { shell: false }, (err, stdout) => {
+      if (err || !stdout) {
+        return resolve(null);
+      }
+      const lines = stdout.trim().split(/\r?\n/);
+      for (const line of lines) {
+        if (!line || line.startsWith('INFO:')) continue;
+        const parts = line.split('","');
+        if (parts.length >= 2) {
+          const rawPid = parts[1].replace(/["']/g, '').trim();
+          const parsed = parseInt(rawPid, 10);
+          if (!isNaN(parsed) && parsed > 0) {
+            return resolve(parsed);
+          }
+        }
+      }
+      resolve(null);
+    });
+  });
+}
+
+/**
+ * Step C2.8 Item 4: Verifies that expected process or window appeared (waits up to 8s).
+ * Strictly reports success ONLY after verifying process appeared.
+ */
+async function verifyProcessAppeared(expectedProcessNames, maxWaitMs = 8000) {
+  if (!Array.isArray(expectedProcessNames)) {
+    expectedProcessNames = expectedProcessNames ? [expectedProcessNames] : [];
+  }
+  if (expectedProcessNames.length === 0) {
+    return { verified: true, pid: null };
+  }
+  const startTime = Date.now();
+  const pollInterval = 300;
+
+  while (Date.now() - startTime < maxWaitMs) {
+    for (const procName of expectedProcessNames) {
+      const pid = await checkProcessRunning(procName);
+      if (pid) {
+        return { verified: true, pid, processName: procName };
+      }
+    }
+    await new Promise(r => setTimeout(r, pollInterval));
+  }
+
+  return {
+    verified: false,
+    error: `Process '${expectedProcessNames.join(', ')}' did not appear within ${maxWaitMs / 1000}s timeout`
+  };
+}
+
+/**
  * Safely launches a desktop app, search, URL, or typing text.
  * NEVER uses shell string interpolation or cmd.exe /c start.
+ * Step C2.8 Item 4: Handles shell.openPath string error, listens for spawn 'error' events,
+ * and reports success ONLY after verifying expected process appeared (up to 8s).
  */
 async function safeLaunchDesktopApp(appNameOrTarget) {
   try {
@@ -215,22 +275,54 @@ async function safeLaunchDesktopApp(appNameOrTarget) {
       return { success: true, app: target || 'browser', method: 'search', query: searchQuery };
     }
 
-    // 3. Typing text into Notepad using safe spawn and argument array
+    // 3. Store App launched via shell:AppsFolder with argument array
+    if (target.startsWith('shell:appsfolder\\') || target.includes('!app')) {
+      let spawnError = null;
+      const child = spawn('explorer.exe', [target], {
+        shell: false,
+        detached: true,
+        stdio: 'ignore'
+      });
+      child.on('error', (err) => { spawnError = err.message; });
+      await new Promise(r => setTimeout(r, 120));
+      if (spawnError) {
+        return { success: false, error: `Spawn error: ${spawnError}` };
+      }
+      child.unref();
+
+      const verify = await verifyProcessAppeared(['CalculatorApp.exe', 'Calculator.exe', 'ApplicationFrameHost.exe'], 8000);
+      if (!verify.verified) {
+        return { success: false, error: verify.error, app: target };
+      }
+      return { success: true, app: target, method: 'store_app', pid: verify.pid };
+    }
+
+    // 4. Typing text into Notepad using safe spawn and argument array
     if (target === 'notepad' && typeText) {
       const tempPath = path.join(os.tmpdir(), 'sinbha_note.txt');
       fs.writeFileSync(tempPath, typeText, 'utf8');
       
+      let spawnError = null;
       const child = spawn('notepad.exe', [tempPath], {
         shell: false,
         detached: true,
         stdio: 'ignore'
       });
-      const pid = child.pid;
+      child.on('error', (err) => { spawnError = err.message; });
+      await new Promise(r => setTimeout(r, 120));
+      if (spawnError) {
+        return { success: false, error: `Spawn error: ${spawnError}` };
+      }
       child.unref();
-      return { success: true, app: 'notepad', method: 'notepad_file', text: typeText, pid };
+
+      const verify = await verifyProcessAppeared(['Notepad.exe', 'notepad.exe'], 8000);
+      if (!verify.verified) {
+        return { success: false, error: verify.error, app: 'notepad' };
+      }
+      return { success: true, app: 'notepad', method: 'notepad_file', text: typeText, pid: verify.pid || child.pid };
     }
 
-    // 4. Known desktop app mappings
+    // 5. Known desktop app mappings
     const mapping = ALLOWED_APP_TARGETS[target];
     if (mapping) {
       if (mapping.type === 'protocol' || mapping.type === 'url') {
@@ -239,13 +331,14 @@ async function safeLaunchDesktopApp(appNameOrTarget) {
       }
 
       if (mapping.type === 'binary') {
+        let spawnError = null;
         const child = spawn(mapping.binary, mapping.args || [], {
           shell: false,
           detached: true,
           stdio: 'ignore'
         });
-        const pid = child.pid;
-        child.on('error', () => {
+        child.on('error', (err) => {
+          spawnError = err.message;
           if (mapping.fallbackUrl) {
             shell.openExternal(mapping.fallbackUrl);
           } else if (mapping.fallbackBinary) {
@@ -257,17 +350,37 @@ async function safeLaunchDesktopApp(appNameOrTarget) {
             fallbackChild.unref();
           }
         });
+        await new Promise(r => setTimeout(r, 120));
+        if (spawnError && !mapping.fallbackUrl && !mapping.fallbackBinary) {
+          return { success: false, error: `Spawn error: ${spawnError}`, app: target };
+        }
         child.unref();
-        return { success: true, app: target, method: 'spawn_binary', pid };
+
+        const verify = await verifyProcessAppeared(mapping.expected || [mapping.binary], 8000);
+        if (!verify.verified) {
+          if (mapping.fallbackUrl) {
+            await shell.openExternal(mapping.fallbackUrl);
+            return { success: true, app: target, method: 'web_fallback', url: mapping.fallbackUrl };
+          }
+          return { success: false, error: verify.error, app: target };
+        }
+        return { success: true, app: target, method: 'spawn_binary', pid: verify.pid || child.pid };
       }
 
       if (mapping.type === 'special' && target === 'claude') {
         const localClaude = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Claude', 'Claude.exe');
         if (fs.existsSync(localClaude)) {
+          let spawnError = null;
           const child = spawn(localClaude, [], { shell: false, detached: true, stdio: 'ignore' });
-          const pid = child.pid;
-          child.unref();
-          return { success: true, app: 'claude', method: 'desktop_exe', pid };
+          child.on('error', (err) => { spawnError = err.message; });
+          await new Promise(r => setTimeout(r, 120));
+          if (!spawnError) {
+            child.unref();
+            const verify = await verifyProcessAppeared(['Claude.exe'], 8000);
+            if (verify.verified) {
+              return { success: true, app: 'claude', method: 'desktop_exe', pid: verify.pid || child.pid };
+            }
+          }
         }
         await shell.openExternal('https://claude.ai');
         return { success: true, app: 'claude', method: 'web_fallback' };
@@ -276,10 +389,17 @@ async function safeLaunchDesktopApp(appNameOrTarget) {
       if (mapping.type === 'special' && target === 'chatgpt') {
         const localGpt = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'ChatGPT', 'ChatGPT.exe');
         if (fs.existsSync(localGpt)) {
+          let spawnError = null;
           const child = spawn(localGpt, [], { shell: false, detached: true, stdio: 'ignore' });
-          const pid = child.pid;
-          child.unref();
-          return { success: true, app: 'chatgpt', method: 'desktop_exe', pid };
+          child.on('error', (err) => { spawnError = err.message; });
+          await new Promise(r => setTimeout(r, 120));
+          if (!spawnError) {
+            child.unref();
+            const verify = await verifyProcessAppeared(['ChatGPT.exe'], 8000);
+            if (verify.verified) {
+              return { success: true, app: 'chatgpt', method: 'desktop_exe', pid: verify.pid || child.pid };
+            }
+          }
         }
         await shell.openExternal('https://chatgpt.com');
         return { success: true, app: 'chatgpt', method: 'web_fallback' };
@@ -288,12 +408,18 @@ async function safeLaunchDesktopApp(appNameOrTarget) {
       if (mapping.type === 'special' && target === 'antigravity') {
         const localAg = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Antigravity', 'Antigravity.exe');
         if (fs.existsSync(localAg)) {
+          let spawnError = null;
           const child = spawn(localAg, [], { shell: false, detached: true, stdio: 'ignore' });
-          const pid = child.pid;
-          child.unref();
-          return { success: true, app: 'antigravity', method: 'desktop_exe', pid };
+          child.on('error', (err) => { spawnError = err.message; });
+          await new Promise(r => setTimeout(r, 120));
+          if (!spawnError) {
+            child.unref();
+            const verify = await verifyProcessAppeared(['Antigravity.exe'], 8000);
+            if (verify.verified) {
+              return { success: true, app: 'antigravity', method: 'desktop_exe', pid: verify.pid || child.pid };
+            }
+          }
         }
-        // Fallback to start menu search
       }
 
       if (mapping.type === 'special' && (target === 'vscode' || target === 'vs code' || target === 'code' || target === 'visual studio code')) {
@@ -303,31 +429,40 @@ async function safeLaunchDesktopApp(appNameOrTarget) {
         const codeExe = fs.existsSync(userCode) ? userCode : (fs.existsSync(progCode) ? progCode : (fs.existsSync(progCodeX86) ? progCodeX86 : null));
 
         if (codeExe) {
+          let spawnError = null;
           const child = spawn(codeExe, [], { shell: false, detached: true, stdio: 'ignore' });
-          const pid = child.pid;
+          child.on('error', (err) => { spawnError = err.message; });
+          await new Promise(r => setTimeout(r, 120));
+          if (spawnError) {
+            return { success: false, error: `Spawn error: ${spawnError}` };
+          }
           child.unref();
-          return { success: true, app: 'Visual Studio Code', method: 'desktop_exe', pid };
-        }
 
-        const cmdPath = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Microsoft VS Code', 'bin', 'code.cmd');
-        if (fs.existsSync(cmdPath)) {
-          const child = spawn('cmd.exe', ['/c', cmdPath], { shell: false, detached: true, stdio: 'ignore' });
-          const pid = child.pid;
-          child.unref();
-          return { success: true, app: 'Visual Studio Code', method: 'cmd_launcher', pid };
+          const verify = await verifyProcessAppeared(['Code.exe'], 8000);
+          if (!verify.verified) {
+            return { success: false, error: verify.error, app: 'Visual Studio Code' };
+          }
+          return { success: true, app: 'Visual Studio Code', method: 'desktop_exe', pid: verify.pid || child.pid };
         }
 
         const vsLnk = path.join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Visual Studio Code.lnk');
         if (fs.existsSync(vsLnk)) {
-          await shell.openPath(vsLnk);
-          return { success: true, app: 'Visual Studio Code', method: 'shortcut', path: vsLnk };
+          const openErr = await shell.openPath(vsLnk);
+          if (openErr) {
+            return { success: false, error: `Failed to open shortcut '${vsLnk}': ${openErr}` };
+          }
+          const verify = await verifyProcessAppeared(['Code.exe'], 8000);
+          if (!verify.verified) {
+            return { success: false, error: verify.error, app: 'Visual Studio Code' };
+          }
+          return { success: true, app: 'Visual Studio Code', method: 'shortcut', path: vsLnk, pid: verify.pid };
         }
 
         return { success: false, error: 'Visual Studio Code not found on this computer' };
       }
     }
 
-    // 5. Dynamic Start Menu shortcut search using shell.openPath (zero shell execution)
+    // 6. Dynamic Start Menu shortcut search using shell.openPath (zero shell execution)
     const userStartMenu = path.join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Start Menu', 'Programs');
     const allStartMenu = path.join(process.env.PROGRAMDATA || 'C:\\ProgramData', 'Microsoft', 'Windows', 'Start Menu', 'Programs');
 
@@ -347,8 +482,16 @@ async function safeLaunchDesktopApp(appNameOrTarget) {
 
     const foundLnk = searchShortcuts(userStartMenu) || searchShortcuts(allStartMenu);
     if (foundLnk) {
-      await shell.openPath(foundLnk);
-      return { success: true, app: target, method: 'start_menu_shortcut', path: foundLnk };
+      const openErr = await shell.openPath(foundLnk);
+      if (openErr) {
+        return { success: false, error: `Failed to open shortcut '${foundLnk}': ${openErr}` };
+      }
+      const targetBase = path.basename(foundLnk, '.lnk');
+      const verify = await verifyProcessAppeared([`${target}.exe`, `${targetBase}.exe`], 8000);
+      if (!verify.verified) {
+        return { success: false, error: verify.error, app: target };
+      }
+      return { success: true, app: target, method: 'start_menu_shortcut', path: foundLnk, pid: verify.pid };
     }
 
     return { success: false, error: `App '${target}' not found in allowlist or Start Menu` };
@@ -895,6 +1038,8 @@ module.exports = {
   openUrlWithBrowser,
   openAppWithFallback,
   safePressKeys,
+  checkProcessRunning,
+  verifyProcessAppeared,
   levenshteinDistance,
   computeSimilarity
 };

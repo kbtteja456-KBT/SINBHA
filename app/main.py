@@ -30,6 +30,7 @@ from app.web_intelligence import (
     SearchDecisionEngine,
 )
 from app.device_relay import relay_manager
+from app.version import get_app_version
 from app.ai_brain import call_sinbha_brain, extract_explicit_facts
 from app.security import (
     is_production,
@@ -1713,6 +1714,7 @@ async def device_websocket_endpoint(websocket: WebSocket):
 
             msg_type = msg.get("type")
             if msg_type == "ping":
+                db.update_device_presence(user_id, device_id, last_ping=True, websocket_connected=True)
                 await websocket.send_text(json.dumps({"type": "pong", "time": time.time()}))
             elif msg_type == "send_command":
                 cmd_data = msg.get("command") or {}
@@ -1730,7 +1732,7 @@ async def device_websocket_endpoint(websocket: WebSocket):
                 relay_manager.update_command_status(user_id, cid, st, result=res_data, error=err_data)
             elif msg_type == "device_status":
                 platform = msg.get("platform", "unknown")
-                version = msg.get("version", "1.4.11")
+                version = msg.get("version") or get_app_version()
                 tools = msg.get("supported_tools")
                 installed_apps = msg.get("installed_apps")
                 relay_manager.record_device_capabilities(
@@ -1778,8 +1780,9 @@ async def update_device_command_status_endpoint(payload: dict, user: dict = Depe
 @app.get("/api/devices/heartbeat")
 async def device_heartbeat_endpoint(request: Request, user: dict = Depends(get_device_command_user)):
     """
-    Step C2.6 Item 1 & 3: Heartbeat endpoint for mobile companion device command channel.
-    Updates last_seen, records battery/platform telemetry and installed apps.
+    Step C2.6 & C2.8: Heartbeat endpoint for mobile companion device command channel.
+    Updates presence in database (last_ping_at, battery, platform, client_version, installed_apps)
+    and returns pending commands from database.
     """
     data = {}
     try:
@@ -1789,16 +1792,26 @@ async def device_heartbeat_endpoint(request: Request, user: dict = Depends(get_d
 
     q_dev_id = request.query_params.get("device_id")
     device_id = data.get("device_id") or q_dev_id or user.get("device_id")
+    current_ver = get_app_version()
     if device_id:
         clean_id = device_id.strip()
         relay_manager.mark_device_active(user["id"], clean_id)
-        db.update_device_last_seen(clean_id)
+        db.update_device_presence(
+            user_id=user["id"],
+            device_id=clean_id,
+            last_ping=True,
+            battery=data.get("battery"),
+            is_charging=data.get("is_charging", False),
+            client_version=data.get("version") or current_ver,
+            supported_tools=data.get("supported_tools"),
+            installed_apps=data.get("installed_apps"),
+        )
         if "battery" in data or "platform" in data:
             relay_manager.store_device_telemetry(user["id"], clean_id, {
                 "battery": data.get("battery"),
                 "is_charging": data.get("is_charging", False),
                 "platform": data.get("platform", "android"),
-                "version": data.get("version", "1.4.11"),
+                "version": data.get("version") or current_ver,
                 "installed_apps": data.get("installed_apps"),
                 "updated_at": time.time()
             })
@@ -1807,7 +1820,7 @@ async def device_heartbeat_endpoint(request: Request, user: dict = Depends(get_d
                 user["id"],
                 clean_id,
                 data.get("platform", "android"),
-                data.get("version", "1.4.11"),
+                data.get("version") or current_ver,
                 data.get("supported_tools"),
                 installed_apps=data.get("installed_apps")
             )
@@ -2212,19 +2225,19 @@ async def device_self_test_endpoint(user: dict = Depends(get_current_user)):
                 "detail": f"Phone reported expected rejection: {res.get('error') or res.get('message')}"
             })
 
-    # 10. Command Channel Diagnostics (Step C2.6 Item 3: Keep last poll time, status, and error)
+    # 10. Command Channel Diagnostics (Step C2.6 & C2.8: Persistent DB presence)
     for d in devs:
         did = d["device_id"]
         is_conn = relay_manager.is_device_connected(user_id, did)
         tel = relay_manager.get_device_telemetry(user_id, did) or {}
-        last_act = relay_manager.device_last_active.get((user_id, did))
-        act_str = f"{int(time.time() - last_act)}s ago" if last_act else "Never"
+        dev_presence = db.get_device_presence(user_id, did) or {}
+        last_seen = dev_presence.get("last_seen_at") or d.get("last_seen_at")
         apps_count = len(relay_manager.get_device_installed_apps(user_id, did))
         tests.append({
             "id": f"diagnostics_{did}",
             "name": f"Channel Diagnostics: {d.get('name')}",
             "status": "pass" if is_conn else "info",
-            "detail": f"Status: {'CONNECTED (WebSocket)' if is_conn else 'Polling/Offline'}, Last Active: {act_str}, Battery: {tel.get('battery', 'N/A')}%, Installed Apps Reported: {apps_count}"
+            "detail": f"Status: {'CONNECTED (WebSocket)' if is_conn else 'Polling/Offline'}, Last Seen: {last_seen or 'Never'}, Battery: {tel.get('battery', 'N/A')}%, Installed Apps Reported: {apps_count}"
         })
 
     # Step C2.7 Item 7: 12 Common Phone Apps Self-Test
@@ -2280,6 +2293,25 @@ async def device_self_test_endpoint(user: dict = Depends(get_current_user)):
         "fail_count": fail_count,
         "tests": tests
     }
+
+
+@app.post("/api/diagnostics/self-test/reliability")
+async def device_self_test_reliability_endpoint(request: Request, user: dict = Depends(get_current_user)):
+    """
+    Step C2.8 Item 7:
+    Executes 50 commands in a row across laptop (Notepad, Calculator, VS Code, Chrome)
+    and phone (Settings, Camera, Files, Snapchat), returning success rate, average delay,
+    and failure reasons.
+    """
+    from scripts.self_test_reliability import run_50_command_reliability_test
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    is_sim = body.get("simulated", False)
+    summary = await run_50_command_reliability_test(user["id"], relay_manager, simulated=is_sim)
+    return summary
 
 # ----------------- Host Info & Static Files -----------------
 

@@ -256,3 +256,25 @@ test('Windows App Index (C2.5 Item 3): openAppWithFallback never silently opens 
   assert.ok(res.message.includes('Would you like me to open the website instead?'));
 });
 
+test('Process Verification (C2.8 Item 4): checkProcessRunning and verifyProcessAppeared', async () => {
+  const { checkProcessRunning, verifyProcessAppeared } = require('../electron/command_security');
+
+  // 1. Check running system process (explorer.exe is always running on Windows)
+  const explorerPid = await checkProcessRunning('explorer.exe');
+  assert.ok(explorerPid !== null && typeof explorerPid === 'number' && explorerPid > 0);
+
+  // 2. Check non-existent process returns null
+  const fakePid = await checkProcessRunning('non_existent_process_12345.exe');
+  assert.strictEqual(fakePid, null);
+
+  // 3. verifyProcessAppeared returns verified: true with pid for running process
+  const verifyRunning = await verifyProcessAppeared(['explorer.exe'], 1000);
+  assert.strictEqual(verifyRunning.verified, true);
+  assert.strictEqual(verifyRunning.pid, explorerPid);
+
+  // 4. verifyProcessAppeared times out and reports failure for non-existent process
+  const verifyFake = await verifyProcessAppeared(['non_existent_process_12345.exe'], 600);
+  assert.strictEqual(verifyFake.verified, false);
+  assert.ok(verifyFake.error.includes('did not appear within'));
+});
+
