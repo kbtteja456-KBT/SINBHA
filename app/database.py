@@ -2697,10 +2697,13 @@ def update_device_presence(
     installed_apps: Optional[list] = None,
     last_error: Optional[str] = None,
     last_http_status: Optional[int] = None,
+    platform: Optional[str] = None,
+    name: Optional[str] = None,
 ) -> Optional[dict]:
     """
     Step C2.8: Updates device presence directly in the database.
     Persists across all worker processes and server restarts.
+    Includes automatic platform and companion name self-healing.
     """
     now = utc_now()
     with get_db_session() as session:
@@ -2727,6 +2730,22 @@ def update_device_presence(
             dev.supported_tools_json = json.dumps(supported_tools)
         if installed_apps is not None:
             dev.installed_apps_json = json.dumps(installed_apps)
+            # Automatic platform self-healing if Android apps are present
+            apps_str = json.dumps(installed_apps).lower()
+            if any(k in apps_str for k in ("com.android", ".coloros.", "com.coloros", "com.google.android", "com.snapchat.android")):
+                dev.platform = "android"
+                if dev.name in ("Windows PC", "Web Companion", "Device", "Windows Laptop"):
+                    dev.name = "Android Companion"
+        if platform:
+            clean_plat = platform.strip().lower()
+            if clean_plat in ("android", "ios", "windows", "macos", "linux", "web"):
+                dev.platform = clean_plat
+                if clean_plat == "android" and dev.name in ("Windows PC", "Web Companion", "Device"):
+                    dev.name = "Android Companion"
+                elif clean_plat == "windows" and dev.name in ("Android Companion", "Web Companion", "Device"):
+                    dev.name = "Windows PC"
+        if name and name.strip():
+            dev.name = name.strip()
         if last_error is not None:
             dev.last_error = str(last_error)
         if last_http_status is not None:

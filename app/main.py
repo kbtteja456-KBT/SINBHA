@@ -1830,7 +1830,10 @@ async def device_websocket_endpoint(websocket: WebSocket):
             strict_pairing = os.getenv("STRICT_DEVICE_PAIRING", "false").lower() == "true"
             auto_connect = not strict_pairing and os.getenv("AUTO_CONNECT_DEVICES", "true").lower() == "true"
             if auto_connect or token.startswith("snb_cmd_") or token.startswith("snb_dev_"):
-                inferred_platform = "android" if (device_id.startswith("android_") or "phone" in device_id.lower()) else "windows"
+                q_plat = websocket.query_params.get("platform") or ""
+                ua = (websocket.headers.get("user-agent") or "").lower()
+                is_phone_dev = "android" in q_plat.lower() or "android" in ua or "okhttp" in ua or token.startswith("snb_dev_") or device_id.startswith("android_") or "phone" in device_id.lower()
+                inferred_platform = "android" if is_phone_dev else "windows"
                 default_name = "Android Companion" if inferred_platform == "android" else "Windows PC"
                 dev = db.create_or_register_device(user_id, device_id, name=(dev.get("name") if dev else default_name), platform=inferred_platform, is_signup=True)
             else:

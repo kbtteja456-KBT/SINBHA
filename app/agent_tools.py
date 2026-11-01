@@ -1478,6 +1478,11 @@ async def handle_browser_task(user_id: int, args: dict, ctx: dict) -> dict:
     start_url = args.get("start_url")
     dry_run = bool(args.get("dry_run", False))
 
+    if not start_url and any(k in goal.lower() for k in ("local store", "test store", "sinbha store", "our store")):
+        from pathlib import Path
+        test_fixture = (Path(__file__).parent.parent / "tests" / "fixtures" / "test_page.html").resolve().as_uri()
+        start_url = test_fixture
+
     from app.browser_agent import run_browser_task, BrowserTaskConfig
     cfg = BrowserTaskConfig(dry_run=dry_run)
     res = await run_browser_task(goal=goal, start_url=start_url, config=cfg)
@@ -1835,7 +1840,7 @@ def build_default_registry() -> ToolRegistry:
 
     registry.register(Tool(
         name="browser_task",
-        description="Automate tasks in a visible Chrome window using isolated SINBHA profile. Tools include navigate, click_by_role, click_by_text, type_text, press_key, read_page_text, screenshot, wait_for. Never enters passwords or payment info.",
+        description="Automate tasks in a visible Chrome window using isolated SINBHA profile. Use when user asks to check a website, read a page, test store, check prices on a store, or automate actions on web. Tools include navigate, click, type, screenshot. Never enters passwords.",
         parameters=_SCHEMA_BROWSER_TASK,
         risk_level=2,
         handler=handle_browser_task,

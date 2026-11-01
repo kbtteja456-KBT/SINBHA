@@ -101,6 +101,7 @@ class CommandRelayManager:
             client_version=app_version,
             supported_tools=tools,
             installed_apps=installed_apps,
+            platform=platform,
         )
         return {
             "platform": platform,

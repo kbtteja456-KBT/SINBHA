@@ -299,3 +299,4 @@ async def test_emergency_stop():
         assert "Emergency STOP" in nav_res["error"]
     finally:
         await agent.close()
+

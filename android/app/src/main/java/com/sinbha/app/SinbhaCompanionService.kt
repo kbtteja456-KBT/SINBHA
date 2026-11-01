@@ -184,7 +184,7 @@ class SinbhaCompanionService : Service() {
         val deviceId = ensureDeviceId()
         val backend = prefs.backendUrl
         val wsBase = backend.replace("https://", "wss://").replace("http://", "ws://")
-        val wsUrl = "$wsBase/api/ws/devices?token=$token&device_id=$deviceId"
+        val wsUrl = "$wsBase/api/ws/devices?token=$token&device_id=$deviceId&platform=android"
 
         val request = Request.Builder()
             .url(wsUrl)
