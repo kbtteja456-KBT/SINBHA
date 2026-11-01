@@ -131,7 +131,8 @@ object SinbhaAppLauncher {
         val query = payload.optString("search_query", null)?.takeIf { it.isNotBlank() }
         val url = payload.optString("url", null)?.takeIf { it.isNotBlank() }
         val text = payload.optString("type_text", null)?.takeIf { it.isNotBlank() }
-        return launchAppWithResult(context, app, query, url, text)
+        val targetPackage = payload.optString("package", null)?.takeIf { it.isNotBlank() }
+        return launchAppWithResult(context, app, query, url, text, targetPackage)
     }
 
     fun launchApp(
@@ -139,9 +140,10 @@ object SinbhaAppLauncher {
         appName: String,
         searchQuery: String? = null,
         url: String? = null,
-        typeText: String? = null
+        typeText: String? = null,
+        targetPackage: String? = null
     ): Boolean {
-        return launchAppWithResult(context, appName, searchQuery, url, typeText).success
+        return launchAppWithResult(context, appName, searchQuery, url, typeText, targetPackage).success
     }
 
     /**
@@ -155,11 +157,20 @@ object SinbhaAppLauncher {
         appName: String,
         searchQuery: String? = null,
         url: String? = null,
-        typeText: String? = null
+        typeText: String? = null,
+        targetPackage: String? = null
     ): LaunchResult {
         val cleanName = appName.lowercase().trim()
         val normalizedQuery = cleanName.replace(Regex("[^a-z0-9]"), "")
         val pm = context.packageManager
+
+        // 0. Explicit Package requested or resolved by candidate matching (Step C2.7 Item 4)
+        if (!targetPackage.isNullOrBlank()) {
+            val pkgIntent = pm.getLaunchIntentForPackage(targetPackage)
+            if (pkgIntent != null) {
+                return launchIntentSafely(context, appName, targetPackage, pkgIntent, method = "resolved_package")
+            }
+        }
 
         // 1. Direct URL handling (explicit URL requested)
         if (!url.isNullOrBlank()) {
@@ -334,21 +345,19 @@ object SinbhaAppLauncher {
             true
         }
 
-        if (canOverlay) {
-            try {
-                context.startActivity(launchIntent)
-                return LaunchResult(
-                    success = true,
-                    app = appName,
-                    packageName = packageName,
-                    method = "$method+overlay_exemption"
-                )
-            } catch (e: Exception) {
-                // Background start was restricted by Android OS
-            }
+        try {
+            context.startActivity(launchIntent)
+            return LaunchResult(
+                success = true,
+                app = appName,
+                packageName = packageName,
+                method = if (canOverlay) "$method+overlay_exemption" else "$method+direct_start"
+            )
+        } catch (e: Exception) {
+            // Background start was restricted by Android OS
         }
 
-        // If overlay is missing or direct start was blocked, show tap-to-open notification
+        // If direct start was blocked, show tap-to-open notification
         showTapToOpenNotification(context, appName, launchIntent)
         return LaunchResult(
             success = false,

@@ -198,6 +198,16 @@ class SinbhaCompanionService : Service() {
                 prefs.wsConnected = true
                 prefs.lastWsError = null
 
+                // Send immediate auth frame to ensure session validity
+                try {
+                    val authPayload = JSONObject().apply {
+                        put("type", "auth")
+                        put("token", token)
+                        put("device_id", deviceId)
+                    }
+                    ws.send(authPayload.toString())
+                } catch (e: Exception) {}
+
                 // Send capability handshake with installed apps
                 serviceScope.launch {
                     try {
@@ -228,6 +238,16 @@ class SinbhaCompanionService : Service() {
                         ws.send(handshake.toString())
                     } catch (e: Exception) {
                         e.printStackTrace()
+                    }
+                }
+
+                // WebSocket Keepalive Loop (20s ping to survive reverse proxy timeouts)
+                serviceScope.launch {
+                    while (prefs.wsConnected && webSocket != null) {
+                        delay(20_000L)
+                        try {
+                            webSocket?.send(JSONObject().apply { put("type", "ping") }.toString())
+                        } catch (e: Exception) {}
                     }
                 }
             }
@@ -324,8 +344,8 @@ class SinbhaCompanionService : Service() {
                     prefs.lastError = e.message
                 }
 
-                // If WebSocket is active, poll less aggressively (every 8s); if disconnected, poll every 3s
-                val pollDelay = if (prefs.wsConnected) 8000L else 3000L
+                // If WebSocket is active, poll less aggressively (every 5s); if disconnected, poll every 2s
+                val pollDelay = if (prefs.wsConnected) 5000L else 2000L
                 delay(pollDelay)
             }
         }

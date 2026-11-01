@@ -299,10 +299,13 @@ async def get_device_command_user(request: Request) -> dict:
             )
         return user
     elif token.startswith("snb_dev_"):
-        raise HTTPException(
-            status_code=403,
-            detail="Reminder device token cannot access device command endpoints. Command token required."
-        )
+        user = db.get_user_by_device_token(token)
+        if not user:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid or expired mobile device token."
+            )
+        return user
     else:
         user = db.get_user_by_session(token)
         if not user:
@@ -1625,7 +1628,8 @@ async def ack_device_command_endpoint(command_id: str, payload: DeviceCommandAck
 async def device_websocket_endpoint(websocket: WebSocket):
     """
     Authenticated WebSocket relay channel for real-time remote commands.
-    Accepts full user sessions or dedicated device command tokens (snb_cmd_...).
+    Accepts full user sessions, dedicated device command tokens (snb_cmd_...),
+    or mobile device tokens (snb_dev_...).
     """
     await websocket.accept()
     user_id = None
@@ -1634,14 +1638,17 @@ async def device_websocket_endpoint(websocket: WebSocket):
         token = websocket.cookies.get(SESSION_COOKIE_NAME)
         if not token:
             token = websocket.query_params.get("token")
-        q_dev_id = websocket.query_params.get("device_id")
+        q_dev_id = websocket.query_params.get("device_id") or websocket.query_params.get("deviceId")
 
-        if not token or not q_dev_id:
-            init_msg = await websocket.receive_text()
-            data = json.loads(init_msg)
-            if data.get("type") == "auth":
-                token = data.get("token") or token
-                q_dev_id = data.get("device_id") or q_dev_id
+        if not token:
+            try:
+                init_msg = await asyncio.wait_for(websocket.receive_text(), timeout=2.0)
+                data = json.loads(init_msg)
+                if data.get("type") == "auth":
+                    token = data.get("token") or token
+                    q_dev_id = data.get("device_id") or data.get("deviceId") or q_dev_id
+            except Exception:
+                pass
 
         if not token:
             await websocket.send_text(json.dumps({"type": "error", "message": "Authentication required."}))
@@ -1651,7 +1658,7 @@ async def device_websocket_endpoint(websocket: WebSocket):
         if token.startswith("snb_cmd_"):
             user = db.get_user_by_command_token(token)
         elif token.startswith("snb_dev_"):
-            user = None
+            user = db.get_user_by_device_token(token)
         else:
             user = db.get_user_by_session(token)
 
@@ -1661,7 +1668,7 @@ async def device_websocket_endpoint(websocket: WebSocket):
             return
 
         user_id = user["id"]
-        device_id = q_dev_id.strip() if q_dev_id else "unknown"
+        device_id = q_dev_id.strip() if q_dev_id else f"device_{user_id}"
 
         if db.get_emergency_stopped(user_id):
             await websocket.send_text(json.dumps({
@@ -1673,8 +1680,10 @@ async def device_websocket_endpoint(websocket: WebSocket):
         if not dev or dev["status"] != "trusted":
             strict_pairing = os.getenv("STRICT_DEVICE_PAIRING", "false").lower() == "true"
             auto_connect = not strict_pairing and os.getenv("AUTO_CONNECT_DEVICES", "true").lower() == "true"
-            if auto_connect or token.startswith("snb_cmd_"):
-                dev = db.create_or_register_device(user_id, device_id, name=(dev.get("name") if dev else "Android Companion"), platform="android", is_signup=True)
+            if auto_connect or token.startswith("snb_cmd_") or token.startswith("snb_dev_"):
+                inferred_platform = "android" if (device_id.startswith("android_") or "phone" in device_id.lower()) else "windows"
+                default_name = "Android Companion" if inferred_platform == "android" else "Windows PC"
+                dev = db.create_or_register_device(user_id, device_id, name=(dev.get("name") if dev else default_name), platform=inferred_platform, is_signup=True)
             else:
                 await websocket.send_text(json.dumps({
                     "type": "error",
@@ -1803,12 +1812,17 @@ async def device_heartbeat_endpoint(request: Request, user: dict = Depends(get_d
                 installed_apps=data.get("installed_apps")
             )
 
+    pending_commands = []
+    if device_id:
+        pending_commands = relay_manager.get_pending_offline_commands(user["id"], clean_id)
+
     return {
         "status": "ok",
         "timestamp": time.time(),
         "device_id": device_id,
         "emergency_stopped": db.get_emergency_stopped(user["id"]),
-        "last_seen": time.time()
+        "last_seen": time.time(),
+        "commands": pending_commands
     }
 
 

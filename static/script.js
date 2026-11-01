@@ -3224,7 +3224,11 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const wsUrl = `${protocol}//${window.location.host}/api/ws/devices?device_id=${encodeURIComponent(deviceId)}`;
+      let tokenParam = "";
+      if (currentUser && currentUser.token) {
+        tokenParam = `&token=${encodeURIComponent(currentUser.token)}`;
+      }
+      const wsUrl = `${protocol}//${window.location.host}/api/ws/devices?device_id=${encodeURIComponent(deviceId)}${tokenParam}`;
 
       try {
         deviceWs = new WebSocket(wsUrl);
@@ -3232,6 +3236,13 @@ document.addEventListener("DOMContentLoaded", () => {
         deviceWs.onopen = () => {
           console.log("🌸 Secure device channel connected");
           try {
+            if (currentUser && currentUser.token) {
+              deviceWs.send(JSON.stringify({
+                type: "auth",
+                token: currentUser.token,
+                device_id: deviceId
+              }));
+            }
             deviceWs.send(JSON.stringify({ type: "ping" }));
           } catch(e) {}
           reportDeviceBattery();
@@ -3369,9 +3380,14 @@ document.addEventListener("DOMContentLoaded", () => {
       } catch (e) {}
     }
 
-    // Dispatcher for incoming remote commands and pairing events (Step 16 / 16b / 16c)
+    // Dispatcher for incoming remote commands and pairing events (Step 16 / 16b / 16c / C2.7)
     function handleIncomingDeviceMessage(msg) {
-      if (msg.type === "remote_command") {
+      if (!msg) return;
+      const rawType = msg.type || msg.command_type;
+      const isCommand = rawType === "remote_command" || Boolean(msg.command_type) ||
+        ["open_app", "open_url", "open_link", "find_installed_app", "type_text", "type_input", "press_keys", "send_note", "ring_phone", "sync_tasks", "system_control", "get_battery"].includes(rawType);
+
+      if (isCommand) {
         if (msg.requires_confirmation) {
           showRemoteConfirmModal(msg);
         } else {
@@ -3466,7 +3482,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (cmdId) {
         reportCommandLifecycle(cmdId, "started");
       }
-      const type = cmd.command_type;
+      const type = cmd.command_type || cmd.type;
       const payload = cmd.payload || {};
       const sender = cmd.sender_name || "Paired Device";
 
@@ -3641,12 +3657,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Send ACK back to server and mark lifecycle succeeded
         if (cmdId) {
-          reportCommandLifecycle(cmdId, "succeeded", { executed: true, type: type });
+          reportCommandLifecycle(cmdId, "succeeded", { executed: true, type: type, app: payload.app || "" });
+          try {
+            await fetch(`/api/devices/commands/${encodeURIComponent(cmdId)}/ack`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ status: "executed", command_id: cmdId, result: { executed: true, type: type, app: payload.app || "" } })
+            });
+          } catch(e) {}
         }
-        await fetch(`/api/devices/commands/${encodeURIComponent(cmd.id)}/ack`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "executed" })
         });
       } catch (e) {
         console.error("Error executing remote command:", e);

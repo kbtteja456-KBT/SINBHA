@@ -388,7 +388,7 @@ class CommandRelayManager:
         self,
         user_id: int,
         cmd_id: str,
-        timeout: float = 10.0
+        timeout: float = 18.0
     ) -> dict:
         """
         Awaits until the command moves to terminal state ('succeeded', 'failed', 'executed', 'needs_tap'),

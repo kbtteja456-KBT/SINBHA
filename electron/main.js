@@ -64,7 +64,8 @@ function createMainWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
-      contextIsolation: true
+      contextIsolation: true,
+      backgroundThrottling: false
     }
   });
 
@@ -138,7 +139,8 @@ function createOverlayWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
-      contextIsolation: true
+      contextIsolation: true,
+      backgroundThrottling: false
     }
   });
 
@@ -316,6 +318,81 @@ async function checkDueRemindersLoop() {
   } catch (e) {
     // Server waking up or network unavailable
   }
+}
+
+// ----------------- Desktop Remote Command Poller Loop -----------------
+async function checkPendingDesktopCommandsLoop() {
+  try {
+    const cookieHeader = await getSessionCookieHeader();
+    if (!cookieHeader) return;
+
+    // Get device ID from local storage config or default
+    const configPath = path.join(app.getPath('userData'), 'sinbha_device_id.txt');
+    let devId = 'windows_desktop';
+    if (fs.existsSync(configPath)) {
+      try { devId = fs.readFileSync(configPath, 'utf8').trim() || devId; } catch(e) {}
+    }
+
+    const url = `${config.BACKEND_URL}/api/devices/commands/pending?device_id=${encodeURIComponent(devId)}`;
+    const res = await fetch(url, {
+      headers: {
+        'Cookie': cookieHeader,
+        'X-Requested-With': 'XMLHttpRequest'
+      }
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data && Array.isArray(data.commands) && data.commands.length > 0) {
+        for (const cmd of data.commands) {
+          const type = cmd.command_type || cmd.type;
+          const payload = cmd.payload || {};
+          const cmdId = cmd.id || cmd.command_id;
+          if (cmdId) {
+            // Report started
+            await fetch(`${config.BACKEND_URL}/api/devices/command-status`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Cookie': cookieHeader },
+              body: JSON.stringify({ command_id: cmdId, status: 'started' })
+            }).catch(() => {});
+          }
+
+          let outcome = { success: false };
+          if (type === 'open_app') {
+            outcome = await safeLaunchDesktopApp(payload);
+          } else if (type === 'open_url') {
+            outcome = await openUrlWithBrowser(payload.url || '', payload.browser || 'default');
+          } else if (type === 'type_input') {
+            outcome = await safeTypeInput(payload);
+          } else if (type === 'press_keys') {
+            outcome = await safePressKeys(payload.keys || payload);
+          } else if (type === 'lock_workstation') {
+            outcome = await safeLockWorkstation();
+          }
+
+          if (cmdId) {
+            const st = outcome && outcome.success ? 'succeeded' : 'failed';
+            await fetch(`${config.BACKEND_URL}/api/devices/command-status`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Cookie': cookieHeader },
+              body: JSON.stringify({
+                command_id: cmdId,
+                status: st,
+                result: outcome,
+                error: outcome && outcome.error ? outcome.error : undefined
+              })
+            }).catch(() => {});
+
+            await fetch(`${config.BACKEND_URL}/api/devices/commands/${encodeURIComponent(cmdId)}/ack`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Cookie': cookieHeader },
+              body: JSON.stringify({ status: 'executed', command_id: cmdId, result: outcome })
+            }).catch(() => {});
+          }
+        }
+      }
+    }
+  } catch (e) {}
 }
 
 // ----------------- What's New Window (Requirement 6) -----------------
@@ -716,6 +793,10 @@ if (!gotTheLock) {
     // Catch-up check on startup & periodic polling (Requirement 2)
     setTimeout(checkDueRemindersLoop, 3000);
     setInterval(checkDueRemindersLoop, config.REMINDER_POLL_INTERVAL_SECONDS * 1000);
+
+    // Real-time remote command poller (2.5s loop for instant execution)
+    setTimeout(checkPendingDesktopCommandsLoop, 1500);
+    setInterval(checkPendingDesktopCommandsLoop, 2500);
 
     // Auto-update & What's New checks
     setupAutoUpdater();
