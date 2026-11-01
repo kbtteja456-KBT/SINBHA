@@ -1466,6 +1466,56 @@ async def handle_screen_task(user_id: int, args: dict, ctx: dict) -> dict:
     return res
 
 
+async def handle_browser_task(user_id: int, args: dict, ctx: dict) -> dict:
+    """
+    Step C3b: Managed Chrome with Playwright.
+    Controls websites through natural language using Playwright with isolated SINBHA profile.
+    Explicit user confirmation is required for sensitive actions.
+    """
+    goal = sanitize_text_arg(args.get("goal", ""), 500)
+    if not goal:
+        return {"success": False, "error": "Browser goal cannot be empty."}
+    start_url = args.get("start_url")
+    dry_run = bool(args.get("dry_run", False))
+
+    from app.browser_agent import run_browser_task, BrowserTaskConfig
+    cfg = BrowserTaskConfig(dry_run=dry_run)
+    res = await run_browser_task(goal=goal, start_url=start_url, config=cfg)
+    return res
+
+
+async def handle_clear_browser_data(user_id: int, args: dict, ctx: dict) -> dict:
+    """
+    Step C3b: Clear SINBHA Browser Data.
+    Explains what will be deleted, requires confirmation, clears only ~/.sinbha/browser_profile.
+    Never touches normal Chrome profile.
+    """
+    confirmed = bool(args.get("confirmed", False))
+    from app.browser_agent import clear_sinbha_browser_data
+    return clear_sinbha_browser_data(confirmed=confirmed)
+
+
+_SCHEMA_BROWSER_TASK = {
+    "type": "object",
+    "properties": {
+        "goal": {"type": "string", "description": "The specific browser task or goal to perform (e.g. 'check price of item', 'read article at url')", "minLength": 2, "maxLength": 500},
+        "start_url": {"type": "string", "description": "Initial URL to navigate to (must be http or https)", "maxLength": 2000},
+        "dry_run": {"type": "boolean", "description": "Dry-run mode stops before any final click or modification", "default": False},
+    },
+    "required": ["goal"],
+    "additionalProperties": False,
+}
+
+_SCHEMA_CLEAR_BROWSER_DATA = {
+    "type": "object",
+    "properties": {
+        "confirmed": {"type": "boolean", "description": "Set to true to confirm deletion of SINBHA browser profile data (cookies, cache, storage)", "default": False},
+    },
+    "required": ["confirmed"],
+    "additionalProperties": False,
+}
+
+
 _SCHEMA_SCREEN_TASK = {
     "type": "object",
     "properties": {
@@ -1781,6 +1831,24 @@ def build_default_registry() -> ToolRegistry:
         risk_level=3,
         handler=handle_screen_task,
         confirmation_template="Allow SINBHA Screen Agent to perform '{goal}' on screen?",
+    ))
+
+    registry.register(Tool(
+        name="browser_task",
+        description="Automate tasks in a visible Chrome window using isolated SINBHA profile. Tools include navigate, click_by_role, click_by_text, type_text, press_key, read_page_text, screenshot, wait_for. Never enters passwords or payment info.",
+        parameters=_SCHEMA_BROWSER_TASK,
+        risk_level=2,
+        handler=handle_browser_task,
+        confirmation_template="Run browser task '{goal}' with SINBHA Chrome profile?",
+    ))
+
+    registry.register(Tool(
+        name="clear_browser_data",
+        description="Clear isolated SINBHA browser profile data (cookies, session, cache). Never touches normal Chrome profile.",
+        parameters=_SCHEMA_CLEAR_BROWSER_DATA,
+        risk_level=2,
+        handler=handle_clear_browser_data,
+        confirmation_template="Clear SINBHA Chrome profile data (cookies, cache, history)?",
     ))
 
     return registry

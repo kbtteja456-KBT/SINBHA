@@ -54,7 +54,7 @@ def send_email_sync(
     smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
     smtp_port = int(os.getenv("SMTP_PORT", "587").strip())
     smtp_user = os.getenv("SMTP_USER", "").strip()
-    smtp_pass = os.getenv("SMTP_PASS", "").strip()
+    smtp_pass = os.getenv("SMTP_PASS", "").strip().replace(" ", "")
     from_name = os.getenv("SMTP_FROM_NAME", "SINBHA Companion").strip()
     from_email = os.getenv("SMTP_FROM_EMAIL", smtp_user or "no-reply@sinbha.local").strip()
 
@@ -377,3 +377,4 @@ def send_security_alert_new_login(
     </div>
     """
     return send_email_sync(to_email, subject, text, html)
+

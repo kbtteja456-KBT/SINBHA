@@ -201,7 +201,11 @@ def validate_safe_typing(text: str) -> Tuple[bool, str]:
        (re.search(r"\b\d{4,8}\b", text) and any(w in lower for w in ("code", "otp", "pin", "verify", "verification"))):
         return False, "Typing OTP codes or authentication pins is strictly blocked for security."
 
-    if re.search(r"\b(?:\d[ -]*?){13,19}\b", text) and any(w in lower for w in ("card", "visa", "mastercard", "cvv", "cvc")):
+    # Credit card / payment numbers (13 to 19 digits with spaces or hyphens)
+    digits_only = re.sub(r"[ -]", "", text)
+    if (len(digits_only) >= 13 and len(digits_only) <= 19 and digits_only.isdigit()) or \
+       re.search(r"\b(?:\d{4}[ -]?){3,4}\d{1,4}\b", text) or \
+       (re.search(r"\b(?:\d[ -]*?){13,19}\b", text) and any(w in lower for w in ("card", "visa", "mastercard", "cvv", "cvc"))):
         return False, "Typing credit card or payment credentials is strictly blocked for security."
 
     return True, ""

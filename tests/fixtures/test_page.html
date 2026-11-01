@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>SINBHA Test Store</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    .product-card { border: 1px solid #ccc; padding: 15px; border-radius: 8px; width: 300px; }
+    .price { font-size: 1.2em; color: #2e7d32; font-weight: bold; }
+    .status { margin-top: 15px; padding: 10px; background: #e8f5e9; border-radius: 4px; display: none; }
+  </style>
+</head>
+<body>
+  <h1>SINBHA Local Test Store</h1>
+  <p>Welcome to the verified local test catalog.</p>
+
+  <div class="product-card">
+    <h2 id="product-title">Super Wireless Headphones</h2>
+    <p class="price" id="product-price">$49.99</p>
+    <p id="availability">In Stock: 15 units available</p>
+
+    <label for="qty">Quantity:</label>
+    <input type="number" id="qty" name="quantity" value="1" min="1" max="10" />
+
+    <div style="margin-top: 10px;">
+      <button id="add-to-cart-btn" onclick="showStatus('Added to cart')">Add to Cart</button>
+      <button id="buy-now-btn" onclick="showStatus('Order placed successfully!')">Buy Now</button>
+      <button id="delete-btn" onclick="showStatus('Product deleted')">Delete Item</button>
+    </div>
+  </div>
+
+  <div id="status-box" class="status"></div>
+
+  <div style="margin-top: 30px;">
+    <h3>Contact & Notes</h3>
+    <input type="text" id="notes-input" placeholder="Enter special instructions" />
+    <button id="save-notes-btn" onclick="showStatus('Notes saved: ' + document.getElementById('notes-input').value)">Save Notes</button>
+  </div>
+
+  <script>
+    function showStatus(msg) {
+      const el = document.getElementById('status-box');
+      el.textContent = msg;
+      el.style.display = 'block';
+    }
+  </script>
+</body>
+</html>
