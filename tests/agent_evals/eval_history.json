@@ -1,0 +1,60 @@
+[
+  {
+    "timestamp": "2026-11-01T17:45:31.195409+00:00",
+    "total_scenarios": 98,
+    "total_passed": 70,
+    "overall_pass_rate": 71.43,
+    "categories": {
+      "ROUTING_AND_DEVICES": 50.0,
+      "MULTI_STEP_AND_FOLLOWUP": 8.3,
+      "NATURAL_LANGUAGE_AND_ROBUSTNESS": 68.8,
+      "DEVICE_RELIABILITY_AND_FAILURES": 81.2,
+      "SECURITY_AND_INJECTION": 92.9,
+      "EMERGENCY_STOP": 100.0,
+      "MONEY_SAFETY_14A": 100.0
+    },
+    "failures_count": 28
+  },
+  {
+    "timestamp": "2026-11-01T17:46:28.747719+00:00",
+    "total_scenarios": 98,
+    "total_passed": 94,
+    "overall_pass_rate": 95.92,
+    "categories": {
+      "ROUTING_AND_DEVICES": 100.0,
+      "MULTI_STEP_AND_FOLLOWUP": 83.3,
+      "NATURAL_LANGUAGE_AND_ROBUSTNESS": 87.5,
+      "DEVICE_RELIABILITY_AND_FAILURES": 100.0,
+      "SECURITY_AND_INJECTION": 100.0,
+      "EMERGENCY_STOP": 100.0,
+      "MONEY_SAFETY_14A": 100.0
+    },
+    "failures_count": 4
+  },
+  {
+    "timestamp": "2026-11-01T17:47:04.694835+00:00",
+    "total_scenarios": 98,
+    "total_passed": 98,
+    "overall_pass_rate": 100.0,
+    "categories": {
+      "ROUTING_AND_DEVICES": 100.0,
+      "MULTI_STEP_AND_FOLLOWUP": 100.0,
+      "NATURAL_LANGUAGE_AND_ROBUSTNESS": 100.0,
+      "DEVICE_RELIABILITY_AND_FAILURES": 100.0,
+      "SECURITY_AND_INJECTION": 100.0,
+      "EMERGENCY_STOP": 100.0,
+      "MONEY_SAFETY_14A": 100.0
+    },
+    "failures_count": 0
+  },
+  {
+    "timestamp": "2026-11-01T17:47:30.749413+00:00",
+    "total_scenarios": 14,
+    "total_passed": 14,
+    "overall_pass_rate": 100.0,
+    "categories": {
+      "MONEY_SAFETY_14A": 100.0
+    },
+    "failures_count": 0
+  }
+]
