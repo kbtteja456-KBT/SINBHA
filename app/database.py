@@ -485,24 +485,36 @@ def delete_all_user_sessions(user_id: int):
 # ----------------- Step 17: Email Verification & Password Reset Operations -----------------
 
 def is_user_verified(user_id: int) -> bool:
-    """Checks whether a user's email address is verified."""
+    """
+    Checks whether a user's email address is verified.
+    Step 1C Item 3: Strict check. Never infers verification from trusted devices.
+    """
     if os.getenv("SKIP_EMAIL_VERIFICATION", "false").lower() == "true":
         return True
     with get_db_session() as session:
         user = session.scalar(select(User).where(User.id == user_id))
         if not user:
             return False
-        if user.is_verified:
-            return True
-        # Grandfather in existing accounts that already have paired trusted devices
-        has_trusted = session.scalar(
-            select(Device).where(and_(Device.user_id == user_id, Device.status == "trusted"))
-        )
-        if has_trusted:
-            user.is_verified = True
-            session.commit()
-            return True
-        return False
+        return bool(user.is_verified)
+
+
+def migrate_legacy_accounts_pre_step17(cutoff_date: Optional[datetime] = None) -> int:
+    """
+    Step 1C Item 3: One-time reviewable migration for legacy accounts created before Step 17.
+    Marks accounts created before the Step 17 cutoff (2026-11-01 12:00 UTC) as is_verified = True.
+    Does NOT infer verification dynamically from devices. New accounts remain unverified until email confirmation.
+    """
+    cutoff = cutoff_date or datetime(2026, 11, 1, 12, 0, 0, tzinfo=timezone.utc)
+    updated_count = 0
+    with get_db_session() as session:
+        legacy_users = session.scalars(
+            select(User).where(and_(User.created_at < cutoff, User.is_verified == False))
+        ).all()
+        for u in legacy_users:
+            u.is_verified = True
+            updated_count += 1
+        session.commit()
+    return updated_count
 
 def create_email_verification_token(user_id: int) -> str:
     """Generates a fresh email verification token expiring in 24 hours."""
