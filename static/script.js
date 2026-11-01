@@ -3666,7 +3666,6 @@ document.addEventListener("DOMContentLoaded", () => {
             });
           } catch(e) {}
         }
-        });
       } catch (e) {
         console.error("Error executing remote command:", e);
         if (cmdId) {
