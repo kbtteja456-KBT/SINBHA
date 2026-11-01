@@ -238,6 +238,10 @@ class SinbhaCompanionService : Service() {
                             put("sync_tasks")
                             put("emergency_stop")
                             put("get_device_status")
+                            if (SinbhaAccessibilityService.isRunning()) {
+                                put("android_screen_task")
+                                put("accessibility_action")
+                            }
                         }
                         val handshake = JSONObject().apply {
                             put("type", "device_status")
@@ -268,7 +272,7 @@ class SinbhaCompanionService : Service() {
                     val msg = JSONObject(text)
                     val rawType = msg.optString("type")
                     val type = if (rawType == "remote_command") msg.optString("command_type", rawType) else rawType
-                    if (type in listOf("open_app", "open_url", "ring_phone", "send_note", "emergency_stop", "get_device_status")) {
+                    if (type in listOf("open_app", "open_url", "ring_phone", "send_note", "emergency_stop", "get_device_status", "accessibility_action", "android_screen_task")) {
                         serviceScope.launch {
                             executeAndReportCommand(msg)
                         }
@@ -479,6 +483,45 @@ class SinbhaCompanionService : Service() {
                     val resObj = JSONObject().put("emergency_stopped", true)
                     apiClient.reportCommandStatus(cmdId, "succeeded", result = resObj)
                     sendWsStatus(cmdId, "succeeded", result = resObj)
+                }
+                "accessibility_action", "android_screen_task" -> {
+                    val s = SinbhaAccessibilityService.instance
+                    if (s == null) {
+                        val err = "SINBHA Accessibility Service is not active. Please enable it in Settings."
+                        apiClient.reportCommandStatus(cmdId, "failed", error = err)
+                        sendWsStatus(cmdId, "failed", error = err)
+                    } else {
+                        val act = payload.optString("action", "dump_tree")
+                        val target = payload.optString("target")
+                        val text = payload.optString("text")
+                        val x = payload.optDouble("x", 0.0).toFloat()
+                        val y = payload.optDouble("y", 0.0).toFloat()
+                        val pkg = payload.optString("package")
+
+                        val outcome: JSONObject = when (act.lowercase()) {
+                            "dump_screen", "dump_tree" -> s.dumpScreenTree()
+                            "tap_element" -> s.tapElement(target)
+                            "tap_coordinates" -> s.tapCoordinates(x, y)
+                            "type_text" -> s.typeText(text, target.ifEmpty { null })
+                            "scroll_forward" -> s.scroll(forward = true)
+                            "scroll_backward" -> s.scroll(forward = false)
+                            "press_back" -> s.pressBack()
+                            "press_home" -> s.pressHome()
+                            "open_app" -> s.openAppByPackage(pkg.ifEmpty { target })
+                            "capture_screen" -> s.captureScreenBase64()
+                            else -> JSONObject().apply {
+                                put("success", false)
+                                put("error", "UNKNOWN_ACTION")
+                                put("message", "Unknown action: $act")
+                            }
+                        }
+
+                        val success = outcome.optBoolean("success", false)
+                        val st = if (success) "succeeded" else "failed"
+                        val err = outcome.optString("error", null)
+                        apiClient.reportCommandStatus(cmdId, st, result = outcome, error = err)
+                        sendWsStatus(cmdId, st, result = outcome, error = err)
+                    }
                 }
                 else -> {
                     val err = "Unsupported command type: $type"

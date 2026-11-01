@@ -4,4 +4,6 @@
     <string name="title_activity_main">SINBHA</string>
     <string name="package_name">com.sinbha.app</string>
     <string name="custom_url_scheme">com.sinbha.app</string>
+    <string name="accessibility_service_name">SINBHA Screen Agent</string>
+    <string name="accessibility_service_description">SINBHA Screen Agent uses this service to read visible element structure, perform requested taps, typing and navigation on your behalf, and help you control your phone seamlessly. It will NEVER interact with banking apps, payment tools, or passwords.</string>
 </resources>

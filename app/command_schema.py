@@ -19,6 +19,8 @@ SUPPORTED_COMMAND_TYPES = [
     "sync_tasks",
     "emergency_stop",
     "get_device_status",
+    "android_screen_task",
+    "accessibility_action",
 ]
 
 DEFAULT_PLATFORM_SUPPORTED_TOOLS = {
@@ -30,6 +32,8 @@ DEFAULT_PLATFORM_SUPPORTED_TOOLS = {
         "sync_tasks",
         "emergency_stop",
         "get_device_status",
+        "android_screen_task",
+        "accessibility_action",
     ],
     "phone": [
         "open_app",
@@ -39,6 +43,8 @@ DEFAULT_PLATFORM_SUPPORTED_TOOLS = {
         "sync_tasks",
         "emergency_stop",
         "get_device_status",
+        "android_screen_task",
+        "accessibility_action",
     ],
     "windows": [
         "open_app",

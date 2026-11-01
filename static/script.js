@@ -2542,6 +2542,27 @@ document.addEventListener("DOMContentLoaded", () => {
                 pBatt.className = "android-perm-status missing";
               }
             }
+
+            // Android Accessibility Screen Agent (D1)
+            const pAccess = document.getElementById("accessibilityStatusBadge");
+            if (pAccess && window.Capacitor.Plugins.SinbhaNative.isAccessibilityServiceEnabled) {
+              try {
+                const accRes = await window.Capacitor.Plugins.SinbhaNative.isAccessibilityServiceEnabled();
+                if (accRes && accRes.enabled) {
+                  pAccess.textContent = "✓ Active";
+                  pAccess.style.background = "#dcfce7";
+                  pAccess.style.color = "#166534";
+                  pAccess.style.border = "1px solid #86efac";
+                } else {
+                  pAccess.textContent = "Inactive / Action Needed";
+                  pAccess.style.background = "#fee2e2";
+                  pAccess.style.color = "#991b1b";
+                  pAccess.style.border = "1px solid #fca5a5";
+                }
+              } catch (e) {
+                console.warn("Could not query accessibility status:", e);
+              }
+            }
           }
         } catch (err) {
           console.warn("Failed checking native permissions:", err);
@@ -2710,6 +2731,37 @@ document.addEventListener("DOMContentLoaded", () => {
     bindNativeAction("reqAlarmBtn", "exactAlarm");
     bindNativeAction("reqBatteryBtn", "battery");
     bindNativeAction("reqAutostartBtn", "autostart");
+
+    const enableAccessibilityBtn = document.getElementById("enableAccessibilityBtn");
+    if (enableAccessibilityBtn) {
+      enableAccessibilityBtn.addEventListener("click", async () => {
+        if (window.Capacitor?.Plugins?.SinbhaNative?.openAccessibilitySettings) {
+          try {
+            await window.Capacitor.Plugins.SinbhaNative.openAccessibilitySettings();
+            setTimeout(checkNativeCompanionSettings, 1000);
+          } catch (e) {
+            console.warn("Failed to open accessibility settings:", e);
+          }
+        } else {
+          showToast("Accessibility controls are available in the Android companion app.");
+        }
+      });
+    }
+
+    const openAppDetailsBtn = document.getElementById("openAppDetailsBtn");
+    if (openAppDetailsBtn) {
+      openAppDetailsBtn.addEventListener("click", async () => {
+        if (window.Capacitor?.Plugins?.SinbhaNative?.openAppDetailsSettings) {
+          try {
+            await window.Capacitor.Plugins.SinbhaNative.openAppDetailsSettings();
+          } catch (e) {
+            console.warn("Failed to open app details:", e);
+          }
+        } else {
+          showToast("Available on Android companion app.");
+        }
+      });
+    }
 
     const testBirdNativeBtn = document.getElementById("testBirdNativeBtn");
     if (testBirdNativeBtn) {

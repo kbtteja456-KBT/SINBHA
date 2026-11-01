@@ -787,4 +787,110 @@ class SinbhaPlugin : Plugin() {
             call.reject("Failed to open notification settings: ${e.message}")
         }
     }
+
+    /**
+     * Step D1: Checks if SINBHA Accessibility Service is currently active.
+     */
+    @PluginMethod
+    fun isAccessibilityServiceEnabled(call: PluginCall) {
+        val running = SinbhaAccessibilityService.isRunning()
+        call.resolve(JSObject().put("enabled", running))
+    }
+
+    /**
+     * Step D1: Opens Android Accessibility settings so user can enable SINBHA service.
+     */
+    @PluginMethod
+    fun openAccessibilitySettings(call: PluginCall) {
+        try {
+            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+            call.resolve(JSObject().put("success", true))
+        } catch (e: Exception) {
+            call.reject("Failed to open accessibility settings: ${e.message}")
+        }
+    }
+
+    /**
+     * Step D1: Opens Application Details settings for sideloaded app "Allow restricted settings" guide.
+     */
+    @PluginMethod
+    fun openAppDetailsSettings(call: PluginCall) {
+        try {
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = android.net.Uri.fromParts("package", context.packageName, null)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+            call.resolve(JSObject().put("success", true))
+        } catch (e: Exception) {
+            call.reject("Failed to open app details: ${e.message}")
+        }
+    }
+
+    /**
+     * Step D1: Dumps visible accessibility node tree as JSON.
+     */
+    @PluginMethod
+    fun dumpAccessibilityScreen(call: PluginCall) {
+        val s = SinbhaAccessibilityService.instance
+        if (s == null) {
+            call.reject("SINBHA Accessibility Service is not active. Please enable it in Settings.")
+            return
+        }
+        val tree = s.dumpScreenTree()
+        val res = JSObject()
+        val keys = tree.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            res.put(k, tree.get(k))
+        }
+        call.resolve(res)
+    }
+
+    /**
+     * Step D1: Performs an accessibility screen action (tap, type, scroll, back, home, open_app).
+     */
+    @PluginMethod
+    fun performScreenAction(call: PluginCall) {
+        val s = SinbhaAccessibilityService.instance
+        if (s == null) {
+            call.reject("SINBHA Accessibility Service is not active.")
+            return
+        }
+
+        val action = call.getString("action") ?: ""
+        val target = call.getString("target") ?: ""
+        val text = call.getString("text") ?: ""
+        val x = call.getDouble("x")?.toFloat() ?: 0f
+        val y = call.getDouble("y")?.toFloat() ?: 0f
+        val packageName = call.getString("package") ?: ""
+
+        val outcome: JSONObject = when (action.lowercase()) {
+            "tap_element" -> s.tapElement(target)
+            "tap_coordinates" -> s.tapCoordinates(x, y)
+            "type_text" -> s.typeText(text, target.ifEmpty { null })
+            "scroll_forward" -> s.scroll(forward = true)
+            "scroll_backward" -> s.scroll(forward = false)
+            "press_back" -> s.pressBack()
+            "press_home" -> s.pressHome()
+            "open_app" -> s.openAppByPackage(packageName.ifEmpty { target })
+            "capture_screen" -> s.captureScreenBase64()
+            else -> JSONObject().apply {
+                put("success", false)
+                put("error", "UNKNOWN_ACTION")
+                put("message", "Unknown screen action: $action")
+            }
+        }
+
+        val res = JSObject()
+        val keys = outcome.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            res.put(k, outcome.get(k))
+        }
+        call.resolve(res)
+    }
 }

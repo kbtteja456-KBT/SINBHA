@@ -675,6 +675,58 @@
         </div>
 
         <!-- ========================================================
+             STEP D1: ANDROID SCREEN AGENT & ACCESSIBILITY CONSENT
+             ======================================================== -->
+        <div class="settings-reminders-section" id="settingsAccessibilitySection">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <h3 style="margin: 0; display: flex; align-items: center; gap: 8px;">
+              <span>🤖 Android Screen Agent</span>
+            </h3>
+            <span id="accessibilityStatusBadge" class="badge" style="background: #f1f5f9; color: #475569; font-weight: 700; border: 1px solid #cbd5e1;">Checking...</span>
+          </div>
+          <p style="font-size: 0.82rem; color: #6b7280; margin: 0 0 12px 0;">
+            Controls your phone through Android's Accessibility service so you or your laptop can accomplish tasks like searching YouTube, checking settings, or navigating apps.
+          </p>
+
+          <!-- Consent & Security Disclosure Box -->
+          <div style="background: #faf5ff; border: 1.5px solid #e9d5ff; border-radius: 10px; padding: 12px; margin-bottom: 12px;">
+            <div style="font-size: 0.82rem; font-weight: 700; color: #7e22ce; margin-bottom: 6px;">🔒 Privacy & What SINBHA Can See / Do</div>
+            <ul style="font-size: 0.78rem; color: #4b5563; margin: 0 0 8px 16px; padding: 0; line-height: 1.45;">
+              <li><strong>What it can see:</strong> Visible element labels and screen structure to locate buttons and fields.</li>
+              <li><strong>What it can do:</strong> Tap buttons, type safe text, scroll, and open apps upon your request.</li>
+              <li><strong>What it NEVER touches:</strong> Banking apps (YONO, HDFC, ICICI), UPI tools (GPay, PhonePe, Paytm), and password managers. Automated typing of passwords, OTPs, and card numbers is strictly blocked.</li>
+              <li><strong>How to turn off:</strong> Disable this service anytime in phone Settings or using the Emergency STOP switch.</li>
+            </ul>
+          </div>
+
+          <!-- Sideloaded APK Restricted Settings Guide (Android 13/14/15) -->
+          <details style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.78rem; color: #92400e;">
+            <summary style="font-weight: 700; cursor: pointer; color: #b45309;">
+              📱 Sideloaded App? How to enable "Allow restricted settings"
+            </summary>
+            <p style="margin: 6px 0 4px 0; line-height: 1.4;">
+              On Android 13, 14, and 15, Android temporarily blocks accessibility for sideloaded APKs. To unblock:
+            </p>
+            <ol style="margin: 0 0 6px 18px; padding: 0; line-height: 1.45;">
+              <li>Tap <strong>"Open App Details"</strong> below (or Settings &rarr; Apps &rarr; SINBHA).</li>
+              <li>Tap the <strong>three dots (⋮)</strong> in the top right corner.</li>
+              <li>Tap <strong>"Allow restricted settings"</strong> and verify with your fingerprint or PIN.</li>
+              <li>Tap <strong>"Enable in Accessibility"</strong> below &rarr; turn on <strong>SINBHA Screen Agent</strong>.</li>
+            </ol>
+          </details>
+
+          <!-- Action Buttons -->
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button type="button" id="enableAccessibilityBtn" class="confirm-btn-primary" style="flex: 1; min-width: 150px; font-size: 0.82rem; justify-content: center;">
+              ⚙️ Enable in Accessibility
+            </button>
+            <button type="button" id="openAppDetailsBtn" class="confirm-btn-secondary" style="flex: 1; min-width: 150px; font-size: 0.82rem; justify-content: center;">
+              📱 Open App Details (3 dots)
+            </button>
+          </div>
+        </div>
+
+        <!-- ========================================================
              APP VERSION & UPDATES SECTION
              ======================================================== -->
         <div class="settings-reminders-section" id="settingsAppUpdateSection">

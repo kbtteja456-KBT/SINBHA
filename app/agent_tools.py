@@ -1514,6 +1514,32 @@ async def handle_screen_task(user_id: int, args: dict, ctx: dict) -> dict:
     return res
 
 
+async def handle_android_screen_task(user_id: int, args: dict, ctx: dict) -> dict:
+    """
+    Step D1: Autonomous Android Screen Agent using Accessibility Service.
+    Controls phone by reading element structure, tapping buttons, typing, and scrolling.
+    Strictly refuses banking apps, payment apps, and passwords.
+    """
+    goal = sanitize_text_arg(args.get("goal", ""), 500)
+    if not goal:
+        return {"success": False, "error": "Goal description cannot be empty."}
+
+    target_device = args.get("target_device")
+    relay = ctx.get("relay_manager")
+    db = ctx.get("db")
+
+    from app.android_screen_agent import run_android_screen_task
+    res = await run_android_screen_task(
+        user_id=user_id,
+        goal=goal,
+        target_device=target_device,
+        db_module=db,
+        relay_manager=relay
+    )
+    return res
+
+
+
 async def handle_browser_task(user_id: int, args: dict, ctx: dict) -> dict:
     """
     Step C3b: Managed Chrome with Playwright.
@@ -1575,6 +1601,16 @@ _SCHEMA_SCREEN_TASK = {
     "type": "object",
     "properties": {
         "goal": {"type": "string", "description": "The specific task or visual UI workflow to perform on the Windows desktop", "minLength": 2, "maxLength": 500},
+    },
+    "required": ["goal"],
+    "additionalProperties": False,
+}
+
+_SCHEMA_ANDROID_SCREEN_TASK = {
+    "type": "object",
+    "properties": {
+        "goal": {"type": "string", "description": "The specific task to perform on the Android phone using the Accessibility service (e.g. 'open YouTube and tell me how many subscribers Channel X has', 'open Settings and check WiFi')", "minLength": 2, "maxLength": 500},
+        "target_device": {"type": "string", "description": "Target Android phone name or hint (e.g. 'phone', 'Galaxy S21')", "maxLength": 50, "default": "phone"},
     },
     "required": ["goal"],
     "additionalProperties": False,
@@ -1886,6 +1922,15 @@ def build_default_registry() -> ToolRegistry:
         risk_level=3,
         handler=handle_screen_task,
         confirmation_template="Allow SINBHA Screen Agent to perform '{goal}' on screen?",
+    ))
+
+    registry.register(Tool(
+        name="android_screen_task",
+        description="Autonomous Android screen agent using the Accessibility service. Controls phone by reading element structure, tapping buttons, typing, and scrolling. Never touches banking apps or passwords.",
+        parameters=_SCHEMA_ANDROID_SCREEN_TASK,
+        risk_level=3,
+        handler=handle_android_screen_task,
+        confirmation_template="Allow SINBHA Screen Agent to perform '{goal}' on your phone?",
     ))
 
     registry.register(Tool(
