@@ -355,6 +355,41 @@ class SinbhaApiClient(private val context: Context) {
         false
     }
 
+    suspend fun registerDevice(
+        deviceId: String,
+        name: String,
+        platform: String = "android"
+    ): Boolean = withContext(Dispatchers.IO) {
+        val token = prefs.commandToken ?: prefs.sessionToken ?: return@withContext false
+        try {
+            val url = URL("${prefs.backendUrl}/api/devices/register")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("Authorization", "Bearer $token")
+                setRequestProperty("X-Command-Token", token)
+                setRequestProperty("Cookie", "sinbha_session=$token")
+                setRequestProperty("X-Requested-With", "XMLHttpRequest")
+                connectTimeout = 8000
+                readTimeout = 8000
+                doOutput = true
+            }
+
+            val body = JSONObject().apply {
+                put("device_id", deviceId)
+                put("name", name)
+                put("platform", platform)
+            }.toString()
+
+            OutputStreamWriter(conn.outputStream).use { it.write(body) }
+            val code = conn.responseCode
+            conn.disconnect()
+            code in 200..299
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     suspend fun sendHeartbeat(
         deviceId: String,
         installedApps: JSONArray? = null,

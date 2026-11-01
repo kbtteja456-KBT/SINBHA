@@ -1901,24 +1901,21 @@ def verify_user_password(user_id: int, password: str) -> bool:
             return False
         return verify_password(user.password_hash, password)
 
+VALID_PLATFORMS = {"windows", "android", "ios", "macos", "linux", "web", "desktop"}
+
 def create_or_register_device(
     user_id: int,
     device_id: str,
-    name: str = "Unknown Device",
-    platform: str = "web",
+    name: Optional[str] = None,
+    platform: Optional[str] = None,
     is_signup: bool = False,
     password: Optional[str] = None,
     require_email_confirm: bool = False,
 ) -> dict:
     """
     Registers a device for the user.
-    Step 16b Rules:
-    - New accounts at signup (is_signup=True or user created < 120s ago) may trust their first device automatically.
-    - For an account that already exists:
-      the first device must NOT become trusted automatically.
-      It requires re-entering the password to become trusted.
-    - Subsequent new devices (trusted_count > 0) are marked 'pending' and given a 6-digit one-time code expiring in 5 min.
-    - If device already exists and belongs to this user: updates last_seen_at, name, platform.
+    Step 1C Item 4: Platform and friendly unique name must be declared.
+    Server rejects missing or invalid platforms and never guesses from device ID or UA.
     """
     with get_db_session() as session:
         user = session.scalar(select(User).where(User.id == user_id))
@@ -1930,20 +1927,39 @@ def create_or_register_device(
             raise ValueError("Email verification required to pair devices. Please verify your email first.")
 
         dev = session.scalar(select(Device).where(Device.device_id == device_id))
+
+        plat = (platform or "").strip().lower()
+        if plat == "desktop":
+            plat = "windows"
+
+        if dev:
+            if not plat:
+                plat = dev.platform
+            if not name:
+                n = dev.name
+            else:
+                n = name.strip()
+        else:
+            if not plat or plat not in VALID_PLATFORMS:
+                raise ValueError(
+                    f"Registration rejected: platform must be explicitly declared and one of {sorted(p for p in VALID_PLATFORMS if p != 'desktop')}. Server will not guess platform."
+                )
+            n = (name or "").strip()
+            if len(n) < 2:
+                raise ValueError("Registration rejected: device name must be explicitly declared (at least 2 characters).")
+
         if dev:
             if dev.user_id != user_id:
                 dev.user_id = user_id
                 log_audit(
                     user_id,
                     "DEVICE_REASSIGNED",
-                    f"Device '{name}' ({device_id}) transferred to user {user_id} upon authentication.",
+                    f"Device '{n}' ({device_id}) transferred to user {user_id} upon authentication.",
                     session=session
                 )
             dev.last_seen_at = utc_now()
-            if name and name != "Unknown Device":
-                dev.name = name
-            if platform:
-                dev.platform = platform
+            dev.name = n
+            dev.platform = plat
 
             trusted_count = session.scalar(
                 select(func.count(Device.id))
@@ -2072,10 +2088,6 @@ def create_or_register_device(
                         f"First device '{name}' ({device_id}) verified with password and trusted.",
                         session=session
                     )
-            elif (is_signup or auto_connect) and not require_email_confirm:
-                status = "trusted"
-                pairing_code = None
-                pairing_expires_at = None
             else:
                 status = "pending"
                 pairing_code = f"{secrets.randbelow(900000) + 100000}"
@@ -2612,6 +2624,32 @@ def create_device_command(
         existing = session.scalar(select(DeviceCommand).where(DeviceCommand.id == cmd_id))
         if existing:
             return _device_command_to_dict(existing, session)
+
+        # Step 16b: Offline queue limit of 10 commands per target device
+        queued_count = session.scalar(
+            select(func.count(DeviceCommand.id))
+            .where(and_(
+                DeviceCommand.user_id == user_id,
+                DeviceCommand.target_device == target_device,
+                DeviceCommand.status == "queued",
+                DeviceCommand.expires_at > now
+            ))
+        ) or 0
+        if queued_count >= 10:
+            oldest = session.scalars(
+                select(DeviceCommand)
+                .where(and_(
+                    DeviceCommand.user_id == user_id,
+                    DeviceCommand.target_device == target_device,
+                    DeviceCommand.status == "queued"
+                ))
+                .order_by(DeviceCommand.created_at.asc())
+                .limit(queued_count - 9)
+            ).all()
+            for o in oldest:
+                o.status = "expired"
+                o.error = "Pruned due to queue overflow"
+
         cmd = DeviceCommand(
             id=cmd_id,
             user_id=user_id,
@@ -2681,19 +2719,19 @@ def get_pending_device_commands(user_id: int, device_id: str) -> List[dict]:
                 and_(
                     DeviceCommand.user_id == user_id,
                     DeviceCommand.target_device == device_id,
-                    DeviceCommand.status.in_(["queued", "delivered"]),
+                    DeviceCommand.status == "queued",
                     DeviceCommand.expires_at > now,
                 )
             )
             .order_by(DeviceCommand.created_at.asc())
+            .limit(10)
         )
         commands = session.scalars(stmt).all()
         results = []
         for cmd in commands:
             results.append(_device_command_to_dict(cmd, session))
-            if cmd.status == "queued":
-                cmd.status = "delivered"
-                cmd.updated_at = now
+            cmd.status = "delivered"
+            cmd.updated_at = now
         session.commit()
         return results
 
@@ -2715,7 +2753,6 @@ def update_device_presence(
     """
     Step C2.8: Updates device presence directly in the database.
     Persists across all worker processes and server restarts.
-    Includes automatic platform and companion name self-healing.
     """
     now = utc_now()
     with get_db_session() as session:

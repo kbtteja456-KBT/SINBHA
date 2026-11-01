@@ -2968,23 +2968,43 @@ document.addEventListener("DOMContentLoaded", () => {
       return devId;
     }
 
-    function getDevicePlatformAndName() {
+    async function getDevicePlatformAndName() {
+      // 1. Electron Desktop (Windows / Mac / Linux)
+      if (window.electronAPI && typeof window.electronAPI.getComputerName === "function") {
+        try {
+          const compName = await window.electronAPI.getComputerName();
+          if (compName && compName.trim()) {
+            return { platform: "windows", name: compName.trim() };
+          }
+        } catch (e) {}
+        return { platform: "windows", name: "Windows PC" };
+      }
+
+      // 2. Android Capacitor Native Companion
+      if (window.Capacitor && window.Capacitor.isPluginAvailable && window.Capacitor.isPluginAvailable("SinbhaNative")) {
+        try {
+          const info = await window.Capacitor.Plugins.SinbhaNative.getPhoneModel();
+          if (info && info.model && info.model.trim()) {
+            return { platform: "android", name: info.model.trim() };
+          }
+        } catch (e) {}
+        return { platform: "android", name: "Android Companion" };
+      }
+
+      // 3. Fallback Web Browser with user agent detection
       const ua = navigator.userAgent || "";
       let platform = "web";
       let name = "Web Browser";
 
-      if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) {
+      if (/Android/i.test(ua)) {
         platform = "android";
         name = "Android Companion";
-      } else if (/Android/i.test(ua)) {
-        platform = "android";
-        name = "Android Phone";
       } else if (/Windows/i.test(ua)) {
         platform = "windows";
         name = "Windows PC";
       } else if (/iPhone|iPad|iPod/i.test(ua)) {
         platform = "ios";
-        name = "iPhone / iPad";
+        name = "iPhone";
       } else if (/Mac/i.test(ua)) {
         platform = "macos";
         name = "Mac";
@@ -3080,7 +3100,7 @@ document.addEventListener("DOMContentLoaded", () => {
     async function initDeviceChannel() {
       if (!currentUser) return;
       const deviceId = getOrCreateDeviceId();
-      const { platform, name } = getDevicePlatformAndName();
+      const { platform, name } = await getDevicePlatformAndName();
 
       const nameEl = document.getElementById("currentDeviceName");
       if (nameEl && (!currentDeviceData || nameEl.textContent === "Detecting...")) {
@@ -3786,6 +3806,7 @@ document.addEventListener("DOMContentLoaded", () => {
               </div>
             </div>
             <div class="device-item-actions">
+              <button type="button" class="device-action-icon-btn rename-dev-btn" data-id="${d.device_id}" title="Rename Device">✏️</button>
               ${d.status === "trusted" ? `
                 <button type="button" class="device-action-icon-btn manage-dev-btn" data-id="${d.device_id}" title="Device Settings & Capabilities">⚙️ Settings</button>
               ` : ""}
@@ -3795,6 +3816,32 @@ document.addEventListener("DOMContentLoaded", () => {
               <button type="button" class="device-action-icon-btn revoke-dev-btn" data-id="${d.device_id}" title="Revoke Device" style="color: #be123c;">🗑️</button>
             </div>
           `;
+
+          // Hook rename button (Step 1C Item 4: Rename in Settings)
+          const renBtn = card.querySelector(".rename-dev-btn");
+          if (renBtn) {
+            renBtn.addEventListener("click", async () => {
+              const newName = prompt(`Enter a new name for '${d.name}':`, d.name);
+              if (newName && newName.trim() && newName.trim() !== d.name) {
+                try {
+                  const res = await fetch(`/api/devices/${encodeURIComponent(d.device_id)}/rename`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ name: newName.trim() })
+                  });
+                  const data = await res.json();
+                  if (res.ok && data.success) {
+                    showToast("Device renamed 🌸");
+                    await loadDevices();
+                  } else {
+                    showToast(data.detail || "Failed to rename device.");
+                  }
+                } catch (e) {
+                  showToast("Error renaming device: " + e.message);
+                }
+              }
+            });
+          }
 
           // Hook manage button
           const mBtn = card.querySelector(".manage-dev-btn");
@@ -4019,7 +4066,7 @@ document.addEventListener("DOMContentLoaded", () => {
           return;
         }
         const myId = getOrCreateDeviceId();
-        const { platform, name } = getDevicePlatformAndName();
+        const { platform, name } = await getDevicePlatformAndName();
         try {
           const res = await fetch("/api/devices/register", {
             method: "POST",
@@ -4090,7 +4137,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (submitBtn) submitBtn.disabled = true;
 
         const myId = getOrCreateDeviceId();
-        const { platform, name } = getDevicePlatformAndName();
+        const { platform, name } = await getDevicePlatformAndName();
 
         try {
           const res = await fetch("/api/devices/register", {

@@ -8,6 +8,7 @@
 const { app, BrowserWindow, Tray, Menu, ipcMain, screen, session, shell, dialog, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const {
   safeLaunchDesktopApp,
   safeTypeInput,
@@ -659,6 +660,10 @@ function setupIpcHandlers() {
   });
 
   // Status & Settings for UI
+  ipcMain.handle('get-computer-name', () => {
+    return os.hostname() || 'Windows PC';
+  });
+
   ipcMain.handle('get-app-status', () => {
     return {
       version: app.getVersion(),

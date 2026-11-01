@@ -25,5 +25,21 @@ db.init_db()
 @pytest.fixture(autouse=True)
 def setup_test_db():
     db.init_db()
+    # Create default verified test user (id=1) for mock/unit tests using user_id=1
+    with db.get_db_session() as session:
+        u1 = session.get(db.User, 1)
+        if not u1:
+            u1 = db.User(
+                id=1,
+                email="default_test_user_1@sinbha.local",
+                password_hash=db.hash_password("Password123!"),
+                is_verified=True,
+                created_at=db.utc_now()
+            )
+            session.add(u1)
+            try:
+                session.commit()
+            except Exception:
+                session.rollback()
     yield
 

@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   birdDeparted: () => ipcRenderer.send('bird-departed'),
 
   // Settings & Status
+  getComputerName: () => ipcRenderer.invoke('get-computer-name'),
   getAppStatus: () => ipcRenderer.invoke('get-app-status'),
   setDnd: (enabled) => ipcRenderer.invoke('set-dnd', enabled),
   setStartWithWindows: (enabled) => ipcRenderer.invoke('set-start-with-windows', enabled),

@@ -554,6 +554,22 @@ class SinbhaPlugin : Plugin() {
     }
 
     /**
+     * Step 1C Item 4: Declares phone model for device registration.
+     */
+    @PluginMethod
+    fun getPhoneModel(call: PluginCall) {
+        val manufacturer = Build.MANUFACTURER.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
+        val model = Build.MODEL
+        val name = if (model.startsWith(manufacturer, ignoreCase = true)) model else "$manufacturer $model"
+        val res = JSObject().apply {
+            put("model", name)
+            put("manufacturer", Build.MANUFACTURER)
+            put("device", Build.DEVICE)
+        }
+        call.resolve(res)
+    }
+
+    /**
      * Requirement 6: Diagnostics screen data provider.
      * Collects permissions, scheduled alarms, device token status, last sync,
      * and error buffer without exposing tokens, passwords, or personal data.

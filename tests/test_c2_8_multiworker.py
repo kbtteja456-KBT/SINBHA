@@ -63,6 +63,7 @@ def test_multiworker_command_relay_and_resolution():
         device_id=target_dev_id,
         name="Windows PC",
         platform="windows",
+        password="Password123!",
         is_signup=True
     )
     assert dev["status"] == "trusted"
@@ -203,6 +204,7 @@ def test_multiworker_http_api_endpoints():
         device_id=target_dev_id,
         name="Desktop PC",
         platform="windows",
+        password="Password123!",
         is_signup=True
     )
     cmd_token_data = db.create_device_command_token(user_id, target_dev_id)

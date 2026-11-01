@@ -68,8 +68,10 @@ def send_email_sync(
     }
     _outbox.append(email_record)
 
-    # If SMTP credentials are missing, log and return (development mode / test mode)
-    if not smtp_user or not smtp_pass:
+    # Step 1C Item 2: In tests or offline dev mode, NEVER use real SMTP credentials
+    import sys
+    is_test = "pytest" in sys.modules or bool(os.getenv("PYTEST_CURRENT_TEST")) or os.getenv("MOCK_EMAIL", "").lower() == "true"
+    if is_test or not smtp_user or not smtp_pass:
         print(f"[EMAIL SERVICE - DEV/OFFLINE] To: {to_email} | Subject: '{subject}' | Recorded to outbox.")
         return True
 

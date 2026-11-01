@@ -165,10 +165,13 @@ class FactUpdateRequest(BaseModel):
 # Step 16 / 16b: Device & Command Request Models
 class DeviceRegisterRequest(BaseModel):
     device_id: str
-    name: Optional[str] = "Web Companion"
-    platform: Optional[str] = "web"
+    name: Optional[str] = None
+    platform: Optional[str] = None
     password: Optional[str] = None
     is_signup: Optional[bool] = False
+
+class DeviceRenameRequest(BaseModel):
+    name: str
 
 class DevicePairApproveRequest(BaseModel):
     code: str
@@ -1571,6 +1574,8 @@ async def register_device_endpoint(payload: DeviceRegisterRequest, user: dict = 
     """
     Registers or handshakes a device for the logged-in user.
     - Step 17 Item 2: Unverified accounts cannot pair new devices.
+    - Step 1C Item 4: Each client must DECLARE its platform and friendly unique name.
+      Server rejects missing/invalid platform or empty name, and never guesses from UA or ID prefix.
     - For accounts with no trusted device: trusting first device needs password AND email confirmation link.
     - Subsequent new devices start in 'pending' status with a 5-minute one-time pairing code and security email.
     - Broadcasts pairing_requested event to connected trusted devices if pending.
@@ -1580,12 +1585,27 @@ async def register_device_endpoint(payload: DeviceRegisterRequest, user: dict = 
             status_code=403,
             detail="Email verification required to pair devices. Please check your inbox or request a new verification link."
         )
+
+    plat = (payload.platform or "").strip().lower()
+    if not plat or plat not in db.VALID_PLATFORMS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Registration rejected: platform must be explicitly declared and one of {sorted(db.VALID_PLATFORMS)}. Server will not guess platform."
+        )
+
+    name = (payload.name or "").strip()
+    if len(name) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Registration rejected: device name must be explicitly declared (at least 2 characters)."
+        )
+
     try:
         device = db.create_or_register_device(
             user_id=user["id"],
             device_id=payload.device_id.strip(),
-            name=payload.name or "Web Companion",
-            platform=payload.platform or "web",
+            name=name,
+            platform=plat,
             password=payload.password,
             is_signup=payload.is_signup or False,
             require_email_confirm=True,
@@ -1678,6 +1698,22 @@ async def update_device_endpoint(device_id: str, payload: DeviceUpdateRequest, u
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update device: {e}")
+
+@app.post("/api/devices/{device_id}/rename")
+@app.put("/api/devices/{device_id}/rename")
+async def rename_device_endpoint(device_id: str, payload: DeviceRenameRequest, user: dict = Depends(get_current_user)):
+    """Step 1C Item 4: Explicit device renaming endpoint in Settings."""
+    clean_name = (payload.name or "").strip()
+    if len(clean_name) < 2:
+        raise HTTPException(status_code=400, detail="Device name must be at least 2 characters.")
+    try:
+        updated = db.rename_device(user["id"], device_id.strip(), clean_name)
+        return {"success": True, "device": updated}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to rename device: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to update device: {e}")
 
 @app.delete("/api/devices/{device_id}")
@@ -1826,20 +1862,29 @@ async def device_websocket_endpoint(websocket: WebSocket):
             }))
 
         dev = db.get_device_by_id(user_id, device_id)
-        if not dev or dev["status"] != "trusted":
+        if not dev:
+            await websocket.send_text(json.dumps({
+                "type": "error",
+                "message": "Device is not registered. Please register the device first declaring its platform and name."
+            }))
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
+        if dev["status"] != "trusted":
             strict_pairing = os.getenv("STRICT_DEVICE_PAIRING", "false").lower() == "true"
             auto_connect = not strict_pairing and os.getenv("AUTO_CONNECT_DEVICES", "true").lower() == "true"
-            if auto_connect or token.startswith("snb_cmd_") or token.startswith("snb_dev_"):
-                q_plat = websocket.query_params.get("platform") or ""
-                ua = (websocket.headers.get("user-agent") or "").lower()
-                is_phone_dev = "android" in q_plat.lower() or "android" in ua or "okhttp" in ua or token.startswith("snb_dev_") or device_id.startswith("android_") or "phone" in device_id.lower()
-                inferred_platform = "android" if is_phone_dev else "windows"
-                default_name = "Android Companion" if inferred_platform == "android" else "Windows PC"
-                dev = db.create_or_register_device(user_id, device_id, name=(dev.get("name") if dev else default_name), platform=inferred_platform, is_signup=True)
+            if auto_connect:
+                dev = db.create_or_register_device(
+                    user_id=user_id,
+                    device_id=device_id,
+                    name=dev["name"],
+                    platform=dev["platform"],
+                    is_signup=True
+                )
             else:
                 await websocket.send_text(json.dumps({
                     "type": "error",
-                    "message": f"Device is not trusted (status: {dev['status'] if dev else 'unregistered'})."
+                    "message": f"Device is not trusted (status: {dev['status']})."
                 }))
                 await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
                 return

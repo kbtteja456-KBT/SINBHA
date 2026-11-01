@@ -182,6 +182,17 @@ class SinbhaCompanionService : Service() {
         isWsConnecting = true
 
         val deviceId = ensureDeviceId()
+        val manufacturer = Build.MANUFACTURER.replaceFirstChar { if (it.isLowerCase()) it.titlecase(java.util.Locale.ROOT) else it.toString() }
+        val model = Build.MODEL
+        val phoneModel = if (model.startsWith(manufacturer, ignoreCase = true)) model else "$manufacturer $model"
+
+        // Step 1C Item 4: Register device declaring platform and friendly phone model
+        serviceScope.launch {
+            try {
+                apiClient.registerDevice(deviceId, phoneModel, "android")
+            } catch (e: Exception) {}
+        }
+
         val backend = prefs.backendUrl
         val wsBase = backend.replace("https://", "wss://").replace("http://", "ws://")
         val wsUrl = "$wsBase/api/ws/devices?token=$token&device_id=$deviceId&platform=android"
