@@ -315,9 +315,13 @@ class SinbhaApiClient(private val context: Context) {
         error: String? = null
     ): Boolean = withContext(Dispatchers.IO) {
         val token = prefs.commandToken ?: prefs.sessionToken ?: return@withContext false
+        val nowIso = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).apply {
+            timeZone = java.util.TimeZone.getTimeZone("UTC")
+        }.format(java.util.Date())
         val body = JSONObject().apply {
             put("command_id", commandId)
             put("status", status)
+            put("client_timestamp", nowIso)
             if (result != null) put("result", result)
             if (!error.isNullOrBlank()) put("error", error)
         }.toString()

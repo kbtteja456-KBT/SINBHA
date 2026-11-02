@@ -57,7 +57,7 @@ class TestC29VersionCheck:
             assert res.get("status") == "CLIENT_OUTDATED" or res.get("error") == "CLIENT_OUTDATED"
             assert res.get("success") is False
             err_msg = (res.get("error") or "") + " " + (res.get("message") or "")
-            assert "please update your app" in err_msg.lower()
+            assert "please update" in err_msg.lower()
 
 
 class TestC29NoUnconditionalFallbacks:

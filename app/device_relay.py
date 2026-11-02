@@ -299,14 +299,17 @@ class CommandRelayManager:
         status: str,
         result: Optional[dict] = None,
         error: Optional[str] = None,
+        client_timestamp: Optional[str] = None,
     ) -> dict:
         """
-        Step C2.8 Item 2:
-        Updates command status in database.
+        Step C2.8 & C2.10:
+        Updates command status in database and records lifecycle stage timestamps.
         Checks for late confirmations if status is succeeded and previously timed out.
         """
         prev_entry = db.get_device_command(user_id, cmd_id)
-        updated = db.update_device_command_status(user_id, cmd_id, status, result=result, error=error)
+        updated = db.update_device_command_status(
+            user_id, cmd_id, status, result=result, error=error, client_timestamp=client_timestamp
+        )
         entry = updated or {
             "command_id": cmd_id,
             "user_id": user_id,
@@ -396,11 +399,12 @@ class CommandRelayManager:
         timeout: float = 10.0
     ) -> dict:
         """
-        Step C2.8 Item 2:
+        Step C2.8 & C2.10:
         Awaits up to timeout (default 10s) by polling the database row.
-        Removes in-memory queues and waiters so ANY worker process can report completion.
+        Includes 'not_installed' as a terminal status so negative checks resolve immediately.
+        On timeout, compiles and returns the exact 6-stage lifecycle table and identifies first_missing_stage.
         """
-        terminal_statuses = ("succeeded", "failed", "executed", "needs_tap")
+        terminal_statuses = ("succeeded", "failed", "executed", "needs_tap", "not_installed")
         start_time = time.time()
         poll_interval = 0.12  # 120ms polling interval
 
@@ -414,11 +418,17 @@ class CommandRelayManager:
 
         # Timed out after timeout window: update row in DB to 'timed_out'
         db.update_device_command_status(user_id, cmd_id, status="timed_out")
+        cmd_rec = db.get_device_command(user_id, cmd_id) or {}
+        stages = cmd_rec.get("stages", {})
+        table, first_missing = db.format_stage_table(stages)
         return {
             "command_id": cmd_id,
             "status": "timed_out",
             "success": False,
-            "message": "I sent it to your device, but could not confirm (timed out after 10s)."
+            "stages": stages,
+            "stage_table": table,
+            "first_missing_stage": first_missing,
+            "message": f"I sent it to your device, but could not confirm (timed out after 10s). First missing stage: {first_missing or 'unknown'}."
         }
 
     def store_user_notifications(self, user_id: int, notifications: List[dict]):
@@ -836,10 +846,13 @@ class CommandRelayManager:
             }
 
         # 7. Target Capabilities & Permission Level gating (Rule 4)
-        # Step C2.9 Item 8: Refuse remote commands from a client older than the server expects
+        # Step C2.9 & C2.10: Refuse remote commands from a client older than minimum supported version
         client_ver = target_dev.get("client_version")
-        from app.version import is_client_version_supported
-        if client_ver and not is_client_version_supported(client_ver):
+        target_platform = (target_dev.get("platform") or "").lower()
+        dev_type = "phone" if target_platform in ("android", "phone", "mobile") else "laptop"
+        from app.version import is_client_version_supported, get_effective_min_version
+        if client_ver and not is_client_version_supported(client_ver, platform=target_platform):
+            effective_min = get_effective_min_version(target_platform)
             db.log_audit(
                 user_id,
                 "DEVICE_COMMAND_RELAY",
@@ -849,13 +862,14 @@ class CommandRelayManager:
                     "sender_device": sender_id,
                     "target_device": target_id,
                     "client_version": client_ver,
+                    "min_version": effective_min,
                     "result": "client_outdated"
                 })
             )
             return {
                 "success": False,
                 "error": "CLIENT_OUTDATED",
-                "message": f"Your {target_dev.get('name', 'device')} is running v{client_ver}. please update your app.",
+                "message": f"Your {dev_type} app is version {client_ver}, please update to {effective_min}.",
                 "needs_update": True
             }
 
@@ -961,8 +975,10 @@ class CommandRelayManager:
                 self.unregister_websocket(user_id, target_id, ws)
 
         # Always persist in database (device_commands table) encrypted at rest
-        # Both WebSocket delivery and persistent polling retrieve and update this row
-        cmd_status = "delivered" if relayed else "queued"
+        # Both WebSocket delivery and persistent polling retrieve and update this row.
+        # Step C2.10: If relayed via WebSocket, mark 'ws_sent' so that if the WS drops the frame,
+        # the client's poll loop can still recover and drain it without double-fetching.
+        cmd_status = "ws_sent" if relayed else "queued"
         db.create_device_command(
             user_id=user_id,
             cmd_id=cmd_id,

@@ -3,214 +3,1359 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
-  <title>SINBHA - Personal Companion</title>
-  <style>
-    :root {
-      --bg: #fff5f7;
-      --card-bg: #ffffff;
-      --text: #1e293b;
-      --subtext: #64748b;
-      --accent: #f472b6;
-      --accent-deep: #db2777;
-      --accent-glow: rgba(244, 114, 182, 0.35);
-      --border: #fce7f3;
-    }
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    }
-    body {
-      background: var(--bg);
-      color: var(--text);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      padding: 24px 16px;
-      user-select: none;
-    }
-    .container {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: 28px;
-      padding: 36px 24px;
-      max-width: 380px;
-      width: 100%;
-      text-align: center;
-      box-shadow: 0 15px 35px rgba(244, 114, 182, 0.15);
-      position: relative;
-    }
-    .logo-wrapper {
-      position: relative;
-      width: 100px;
-      height: 100px;
-      margin: 0 auto 20px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .logo-img {
-      width: 84px;
-      height: 84px;
-      border-radius: 50%;
-      object-fit: cover;
-      box-shadow: 0 4px 20px var(--accent-glow);
-      animation: float 3s ease-in-out infinite;
-    }
-    .pulse-ring {
-      position: absolute;
-      width: 100%;
-      height: 100%;
-      border-radius: 50%;
-      border: 2px solid var(--accent);
-      animation: ripple 2s cubic-bezier(0, 0.2, 0.8, 1) infinite;
-    }
-    h1 {
-      font-size: 22px;
-      font-weight: 700;
-      margin-bottom: 10px;
-      color: #0f172a;
-    }
-    h1 span {
-      color: var(--accent-deep);
-    }
-    p {
-      color: var(--subtext);
-      font-size: 14px;
-      line-height: 1.5;
-      margin-bottom: 24px;
-    }
-    .status-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      background: #fdf2f8;
-      border: 1px solid #fbcfe8;
-      padding: 8px 16px;
-      border-radius: 20px;
-      font-size: 13px;
-      color: var(--accent-deep);
-      font-weight: 500;
-      margin-bottom: 22px;
-    }
-    .dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--accent-deep);
-      animation: blink 1.2s infinite;
-    }
-    .retry-btn {
-      background: linear-gradient(135deg, #ec4899, #f43f5e);
-      color: #fff;
-      border: none;
-      padding: 13px 32px;
-      border-radius: 14px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      width: 100%;
-      transition: all 0.2s ease;
-      box-shadow: 0 4px 14px rgba(236, 72, 153, 0.3);
-    }
-    .retry-btn:active {
-      transform: scale(0.98);
-    }
-    .footer-note {
-      margin-top: 20px;
-      font-size: 12px;
-      color: #94a3b8;
-    }
-    @keyframes float {
-      0%, 100% { transform: translateY(0); }
-      50% { transform: translateY(-6px); }
-    }
-    @keyframes ripple {
-      0% { transform: scale(0.8); opacity: 1; }
-      100% { transform: scale(1.3); opacity: 0; }
-    }
-    @keyframes blink {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.3; }
-    }
-  </style>
+  <meta name="theme-color" content="#fff5f7">
+  <title>SINBHA - Your Personal Companion</title>
+  <link rel="icon" type="image/png" href="/static/favicon.png">
+  <link rel="shortcut icon" href="/static/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <link rel="stylesheet" href="/static/style.css?v=1.4.0">
 </head>
 <body>
-  <div class="container">
-    <div class="logo-wrapper">
-      <div class="pulse-ring"></div>
-      <img src="elephant_logo.png" alt="SINBHA Logo" class="logo-img">
-    </div>
-    <h1>SINBHA is <span>Waking Up</span> 🌸</h1>
-    <p>
-      Your personal companion is spinning up in the cloud.<br>
-      This takes just a few moments!
-    </p>
 
-    <div class="status-badge">
-      <div class="dot"></div>
-      <span id="statusText">Connecting in <b id="countdown">4</b>s...</span>
+  <!-- ========================================================
+       AUTH SCREEN (SIGNUP / LOGIN) - PINK & WHITE THEME (STEP 9)
+       ======================================================== -->
+  <div id="authScreen" class="auth-screen-overlay" style="display: none;">
+    <!-- Top-Left Branding with Cute Elephant Logo -->
+    <div class="auth-topleft-branding">
+      <img src="/static/elephant_logo.png" alt="SINBHA Cute Elephant Logo" class="auth-elephant-logo" />
+      <span class="auth-branding-title">SINBHA</span>
     </div>
 
-    <div>
-      <button id="retryBtn" class="retry-btn">Retry Now ⚡</button>
-    </div>
+    <!-- Center Card -->
+    <div class="auth-card">
+      <div class="auth-card-header">
+        <div class="auth-logo-circle">
+          <img src="/static/elephant_logo.png" alt="SINBHA Elephant Mascot" class="auth-card-elephant" />
+        </div>
+        <h2 class="auth-card-title">Welcome to SINBHA</h2>
+        <p class="auth-card-subtitle">Your calm, mindful companion for tasks & habits</p>
+      </div>
 
-    <div class="footer-note">
-      Automatic health check • Always ready
+      <!-- Tab Buttons -->
+      <div class="auth-tabs">
+        <button id="tabLoginBtn" class="auth-tab-btn active" type="button">Log In</button>
+        <button id="tabSignupBtn" class="auth-tab-btn" type="button">Sign Up</button>
+      </div>
+
+      <!-- Error / Notification Alert -->
+      <div id="authAlert" class="auth-alert" style="display: none;"></div>
+
+      <!-- LOGIN FORM -->
+      <form id="loginForm" class="auth-form" autocomplete="on">
+        <div class="auth-field">
+          <label for="loginEmail">Email address</label>
+          <input type="email" id="loginEmail" placeholder="yourname@example.com" required autocomplete="email" />
+        </div>
+        <div class="auth-field">
+          <label for="loginPassword">Password</label>
+          <input type="password" id="loginPassword" placeholder="Enter your password" required autocomplete="current-password" />
+        </div>
+        <button type="submit" id="loginSubmitBtn" class="auth-submit-btn">
+          Log In 🌸
+        </button>
+      </form>
+
+      <!-- SIGNUP FORM -->
+      <form id="signupForm" class="auth-form" style="display: none;" autocomplete="on">
+        <div class="auth-field">
+          <label for="signupEmail">Email address</label>
+          <input type="email" id="signupEmail" placeholder="yourname@example.com" required autocomplete="email" />
+        </div>
+        <div class="auth-field">
+          <label for="signupPassword">Password (minimum 8 characters)</label>
+          <input type="password" id="signupPassword" minlength="8" placeholder="At least 8 characters" required autocomplete="new-password" />
+        </div>
+
+        <div class="auth-checkboxes">
+          <label class="auth-checkbox-label">
+            <input type="checkbox" id="signupAgeCheck" required />
+            <span>I am 18 years of age or older</span>
+          </label>
+          <label class="auth-checkbox-label">
+            <input type="checkbox" id="signupTermsCheck" required />
+            <span>I agree to the <button type="button" id="openTermsLink" class="text-link-btn">Terms of Service</button> and <button type="button" id="openPrivacyLink" class="text-link-btn">Privacy Policy</button></span>
+          </label>
+        </div>
+
+        <div class="auth-ai-disclaimer">
+          <span>🌸 <strong>Notice:</strong> Messages are processed by an AI provider to assist you with companion support, memory facts, and task scheduling.</span>
+        </div>
+
+        <button type="submit" id="signupSubmitBtn" class="auth-submit-btn">
+          Create Account 🌸
+        </button>
+      </form>
     </div>
   </div>
 
+  <!-- MAIN APP CONTAINER -->
+  <div class="app-container" id="appContainer">
+    <!-- Top Header Bar (Full Desktop Width) -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="avatar-container">
+          <img src="/static/elephant_logo.png" alt="SINBHA Logo" class="header-elephant-avatar" />
+          <span class="status-dot" id="statusDot" title="Online"></span>
+        </div>
+        <div class="companion-details">
+          <h1 class="companion-name">SINBHA</h1>
+          <span class="companion-status" id="companionStatus">Here for you</span>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <!-- User Pill with Email & Logout -->
+        <div id="userHeaderPill" class="user-header-pill" style="display: none;">
+          <span id="headerUserEmail" class="header-user-email">user</span>
+          <button id="headerLogoutBtn" class="header-logout-btn" title="Log Out">Log Out</button>
+        </div>
+
+        <!-- Developer Memory Button (Hidden unless DEV_MODE=true AND admin) -->
+        <button id="devMemoryBtn" class="header-btn dev-btn" style="display: none;" title="Developer Memory Inspector (DEV_MODE=true)">
+          <span class="btn-icon">🛠️</span>
+          <span class="btn-text">Dev Memory</span>
+          <span id="devFactBadge" class="badge">0</span>
+        </button>
+
+        <!-- Tasks Drawer Button -->
+        <button id="tasksBtn" class="header-btn tasks-btn" title="View your tasks">
+          <span class="btn-icon">📋</span>
+          <span class="btn-text">Tasks</span>
+          <span id="taskCountBadge" class="badge">0</span>
+        </button>
+
+        <!-- Private Inbox Button (Step D2) -->
+        <button id="inboxBtn" class="header-btn" title="Private Notification Inbox">
+          <span class="btn-icon">📬</span>
+          <span class="btn-text">Inbox</span>
+          <span id="inboxCountBadge" class="badge" style="display: none;">0</span>
+        </button>
+
+        <!-- Emergency STOP Button -->
+        <button id="stopBtn" class="header-btn stop-btn" title="Immediate Emergency Stop">
+          <span class="btn-icon">🛑</span>
+          <span class="btn-text">STOP</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Emergency Stopped Banner (Hidden unless stopped) -->
+    <div id="stopBanner" class="stop-banner" style="display: none;">
+      <div class="stop-banner-content">
+        <span>🛑 Emergency Stop is active. Processing is paused.</span>
+        <button id="bannerResumeBtn" class="resume-btn">🌸 Resume Chat</button>
+      </div>
+    </div>
+
+    <!-- Persistent New Version Available Banner (Step C2.10 Version Safety) -->
+    <div id="newVersionBanner" class="top-pairing-banner" style="display: none; background: #ecfdf5; border-bottom: 2px solid #10b981; padding: 10px 16px; align-items: center; justify-content: space-between; gap: 12px; font-size: 0.86rem; color: #065f46; z-index: 50;">
+      <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+        <span style="font-size: 1.2rem;">✨</span>
+        <strong id="newVersionBannerTitle">New version available:</strong>
+        <span id="newVersionBannerText">An updated version is ready to install.</span>
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <a id="newVersionBannerDownloadBtn" href="#" target="_blank" class="confirm-btn-primary" style="padding: 5px 12px; font-size: 0.8rem; text-decoration: none; display: inline-flex; align-items: center; background: #059669; color: #fff; border-radius: 6px; font-weight: 700;">Update Now</a>
+      </div>
+    </div>
+
+    <!-- Prominent Device Pairing Banner (Requirement 4: Obvious in app, no hunting in settings) -->
+    <div id="topPairingBanner" class="top-pairing-banner" style="display: none; background: #fffbeb; border-bottom: 2px solid #f59e0b; padding: 10px 16px; align-items: center; justify-content: space-between; gap: 12px; font-size: 0.86rem; color: #92400e; z-index: 50;">
+      <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+        <span style="font-size: 1.2rem;">⏳</span>
+        <strong>Device Pairing:</strong>
+        <span>Pair this device by approving code</span>
+        <span id="topPairingCodeDisplay" style="font-family: monospace; font-weight: 800; font-size: 1.1rem; background: #fff; padding: 2px 8px; border-radius: 6px; border: 1px dashed #f59e0b; color: #b45309; letter-spacing: 2px;">------</span>
+        <span>on your trusted device.</span>
+        <span id="topPairingCountdown" style="font-size: 0.78rem; color: #b45309;">(Expires in 5:00)</span>
+      </div>
+      <div style="display: flex; gap: 8px;">
+        <button type="button" id="topRefreshPairCodeBtn" style="background: #fef3c7; border: 1px solid #f59e0b; color: #b45309; border-radius: 6px; padding: 4px 10px; font-size: 0.78rem; font-weight: 600; cursor: pointer;">New Code</button>
+        <button type="button" id="topOpenPairSettingsBtn" style="background: #f59e0b; border: none; color: #fff; border-radius: 6px; padding: 4px 12px; font-size: 0.78rem; font-weight: 600; cursor: pointer;">Pairing Details</button>
+      </div>
+    </div>
+
+    <!-- Chat Messages Scroll Area -->
+    <main class="chat-container" id="chatContainer">
+      <div class="chat-messages" id="chatMessages">
+        <!-- Messages will load dynamically from SQLite database -->
+      </div>
+      <div id="scrollAnchor"></div>
+    </main>
+
+    <!-- Bottom Input Area (Mobile Safe) -->
+    <footer class="input-area">
+      <div class="input-container-inner">
+        <div class="input-card">
+          <textarea
+            id="messageInput"
+            placeholder="Message SINBHA... (or type STOP to halt)"
+            rows="1"
+            maxlength="2000"
+            autocomplete="off"
+          ></textarea>
+          <button id="sendBtn" class="send-btn" title="Send message" disabled>
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </div>
+        <div class="input-footer-note">
+          <span>Private memory saved locally on your computer</span>
+          <span class="footer-separator">&bull;</span>
+          <button id="openSettingsBtn" class="settings-link-btn" title="Settings & Privacy">⚙️ Settings</button>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Shared Drawer Overlay Backdrop -->
+  <div class="drawer-overlay" id="drawerOverlay"></div>
+
+  <!-- DEVELOPER-ONLY MEMORY VIEWER (Active only if DEV_MODE=true AND admin) -->
+  <aside class="side-drawer dev-drawer" id="devMemoryDrawer" aria-hidden="true" style="display: none;">
+    <div class="drawer-header dev-drawer-header">
+      <div class="drawer-title-group">
+        <span class="drawer-icon">🛠️</span>
+        <div>
+          <h2>Dev Memory Inspector</h2>
+          <span class="dev-tag">DEV_MODE=true</span>
+        </div>
+      </div>
+      <button id="closeDevMemoryBtn" class="close-drawer-btn" aria-label="Close developer memory drawer">&times;</button>
+    </div>
+    
+    <div class="drawer-content">
+      <div class="dev-info-card">
+        <p><strong>Developer Test Console:</strong> This panel is only accessible when <code>DEV_MODE=true</code> is set in <code>.env</code> AND you are logged in as an admin.</p>
+        <button id="devRefreshBtn" class="dev-refresh-btn">🔄 Refresh Facts & Audit Log</button>
+      </div>
+
+      <div class="facts-section-title">
+        <span>SQLite Stored Facts</span>
+        <span id="devFactsCountLabel" class="count-tag">0</span>
+      </div>
+
+      <div id="devFactsList" class="dev-facts-list">
+        <!-- Rendered dynamically for developer testing -->
+      </div>
+
+      <div class="facts-section-title" style="margin-top: 24px;">
+        <span>Dev Trace Panel (Model Output & Timings)</span>
+      </div>
+      <div id="devTracePanelList" class="dev-trace-list" style="display: flex; flex-direction: column; gap: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.76rem; max-height: 280px; overflow-y: auto;">
+        <div style="color: #6b7280; font-style: italic; padding: 6px;">No traces yet. Chat with SINBHA to inspect model output, tool calls, and latencies.</div>
+      </div>
+
+      <div class="facts-section-title" style="margin-top: 24px;">
+        <span>Recent Audit Logs</span>
+      </div>
+      <div id="devAuditLogList" class="dev-audit-list">
+        <!-- Rendered dynamically -->
+      </div>
+    </div>
+  </aside>
+
+  <!-- PRIVATE INBOX MODAL (Step D2) -->
+  <div class="settings-modal-overlay" id="inboxModal" style="display: none;">
+    <div class="settings-modal-card" style="max-width: 520px;">
+      <div class="settings-modal-header">
+        <div class="modal-title-group">
+          <span class="modal-icon">📬</span>
+          <h2>Private Notification Inbox</h2>
+        </div>
+        <button class="modal-close-btn" id="closeInboxBtn" title="Close modal">&times;</button>
+      </div>
+      <div class="settings-modal-body" style="padding: 18px 24px;">
+        <div style="background: #eff6ff; border: 1.5px solid #bfdbfe; border-radius: 10px; padding: 12px; margin-bottom: 14px; font-size: 0.8rem; color: #1e40af; line-height: 1.45;">
+          <strong>🔒 Zero-Storage Guarantee:</strong> Notifications from your phone are buffered purely in volatile memory. Messages from other people are personal data: they are <em>never stored in the database</em> and <em>never logged</em>. Banking and payment alerts are strictly excluded.
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <span style="font-size: 0.85rem; font-weight: 700; color: #374151;">Recent Alerts</span>
+          <div style="display: flex; gap: 8px;">
+            <button type="button" id="refreshInboxBtn" class="confirm-btn-secondary" style="font-size: 0.78rem; padding: 5px 12px;">🔄 Refresh</button>
+            <button type="button" id="clearInboxBtn" class="confirm-btn-secondary" style="font-size: 0.78rem; padding: 5px 12px; color: #dc2626;">🗑️ Clear</button>
+          </div>
+        </div>
+
+        <div id="inboxList" style="display: flex; flex-direction: column; gap: 10px; min-height: 120px; max-height: 360px; overflow-y: auto;">
+          <div style="text-align: center; color: #9ca3af; font-size: 0.85rem; padding: 30px 0;">No alerts in your private inbox.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SETTINGS MODAL -->
+  <div class="settings-modal-overlay" id="settingsModal" style="display: none;">
+    <div class="settings-modal-card">
+      <div class="settings-modal-header">
+        <div class="modal-title-group">
+          <span class="modal-icon">⚙️</span>
+          <h2>Settings & Privacy</h2>
+        </div>
+        <button id="closeSettingsBtn" class="close-modal-btn" aria-label="Close settings">&times;</button>
+      </div>
+      <div class="settings-modal-body">
+        
+        <!-- User Account Card (Step 9) -->
+        <div class="settings-info-section" style="background: #fff0f3; border: 1.5px solid #fbcfe8; border-radius: 12px; padding: 14px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 1.2rem;">🌸</span>
+              <strong id="settingsUserEmail" style="color: #9d174d; font-size: 0.94rem;">user@example.com</strong>
+            </div>
+            <span id="settingsAdminBadge" class="count-tag" style="display: none; background: #f472b6; color: white;">Admin</span>
+          </div>
+          <p style="font-size: 0.78rem; color: #6b7280; margin: 0 0 10px 0;">All your chats, facts, tasks, and settings are strictly private to this account.</p>
+          <button id="settingsLogoutBtn" class="confirm-btn-secondary" style="padding: 6px 12px; font-size: 0.8rem;">
+            Log Out of SINBHA
+          </button>
+        </div>
+
+        <div class="settings-reminders-section">
+          <h3>🕊️ Bird Reminders & Quiet Hours</h3>
+          <p>Customize how your feathered companion delivers gentle check-ins.</p>
+
+          <div class="setting-field-group">
+            <label for="aiProviderSelect" class="setting-label">
+              <strong>Approved AI Model Provider</strong>
+              <span class="setting-desc">Select which provider processes your chats, or disable external AI calls</span>
+            </label>
+            <select id="aiProviderSelect" class="setting-select">
+              <option value="auto" selected>Auto (Groq / OpenRouter)</option>
+              <option value="groq">Groq Cloud (Ultra-Fast Llama)</option>
+              <option value="openrouter">OpenRouter AI (Multi-Model Gateway)</option>
+              <option value="disabled">Disable External AI (Local Only)</option>
+            </select>
+          </div>
+
+          <div class="setting-field-group">
+            <label for="persistenceSelect" class="setting-label">
+              <strong>Reminder Persistence</strong>
+              <span class="setting-desc">How often the bird revisits pending or overdue tasks</span>
+            </label>
+            <select id="persistenceSelect" class="setting-select">
+              <option value="gentle">Gentle (Once a day)</option>
+              <option value="normal" selected>Normal (Every 30 minutes)</option>
+              <option value="persistent">Persistent (Every 15 minutes)</option>
+            </select>
+          </div>
+
+          <!-- Country selector for helplines (Requirement 6) -->
+          <div class="setting-field-group">
+            <label for="countrySelect" class="setting-label">
+              <strong>Country (Support Helplines)</strong>
+              <span class="setting-desc">Provides localized crisis and wellness contacts if you ever ask for help</span>
+            </label>
+            <select id="countrySelect" class="setting-select">
+              <option value="US" selected>United States / International</option>
+              <option value="IN">India</option>
+              <option value="UK">United Kingdom</option>
+              <option value="CA">Canada</option>
+              <option value="AU">Australia</option>
+            </select>
+          </div>
+
+          <!-- Timezone selector (Step 10 Requirement 6) -->
+          <div class="setting-field-group">
+            <label for="timezoneSelect" class="setting-label">
+              <strong>Timezone</strong>
+              <span class="setting-desc">Used for scheduling your reminders and converting relative times</span>
+            </label>
+            <select id="timezoneSelect" class="setting-select">
+              <option value="UTC">UTC (Coordinated Universal Time)</option>
+              <option value="Asia/Kolkata">Asia/Kolkata (IST +5:30)</option>
+              <option value="America/New_York">America/New_York (EST/EDT)</option>
+              <option value="America/Chicago">America/Chicago (CST/CDT)</option>
+              <option value="America/Los_Angeles">America/Los_Angeles (PST/PDT)</option>
+              <option value="Europe/London">Europe/London (GMT/BST)</option>
+              <option value="Europe/Paris">Europe/Paris (CET/CEST)</option>
+              <option value="Asia/Tokyo">Asia/Tokyo (JST)</option>
+              <option value="Australia/Sydney">Australia/Sydney (AEST/AEDT)</option>
+            </select>
+          </div>
+
+          <div class="setting-field-group">
+            <div class="setting-switch-row">
+              <label class="setting-switch">
+                <input type="checkbox" id="quietHoursToggle" checked>
+                <span class="setting-slider"></span>
+              </label>
+              <div class="setting-switch-info">
+                <strong>Enable Quiet Hours</strong>
+                <span class="setting-desc">Pauses repeat bird visits during resting time</span>
+              </div>
+            </div>
+
+            <div class="quiet-time-picker-row" id="quietTimePickerRow">
+              <div class="time-picker-item">
+                <label for="quietStartInput">From:</label>
+                <input type="time" id="quietStartInput" value="22:00" class="setting-time-input">
+              </div>
+              <div class="time-picker-item">
+                <label for="quietEndInput">Until:</label>
+                <input type="time" id="quietEndInput" value="08:00" class="setting-time-input">
+              </div>
+            </div>
+            <div class="setting-note">
+              ℹ️ Explicit reminders you specifically scheduled will always arrive at their exact time, even during quiet hours.
+            </div>
+          </div>
+        </div>
+
+        <!-- Alarm-Grade Reminders & Audio Modes -->
+        <div class="settings-reminders-section" id="settingsAlarmSection">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <h3 style="margin: 0;">⏰ Alarm-Grade Reminders & Sounds</h3>
+            <span class="badge" style="background: #fdf2f8; color: #db2777; border: 1px solid #fbcfe8;">Alarm Stream</span>
+          </div>
+          <p>Clock-app reliability with full-screen wakeup, looping audio, rising volume, and customizable sound modes.</p>
+
+          <!-- Your Name for Spoken Reminders -->
+          <div class="setting-field-group">
+            <label for="settingUserDisplayName" class="setting-label">
+              <strong>Your Name (for Spoken Voice Reminders)</strong>
+              <span class="setting-desc">Used in spoken greetings: "Hey &lt;name&gt;, it is time to write your notes"</span>
+            </label>
+            <input type="text" id="settingUserDisplayName" class="setting-text-input" placeholder="e.g. Teja" style="width: 100%; padding: 8px 12px; border-radius: 8px; border: 1.5px solid #e2e8f0; font-size: 0.95rem; box-sizing: border-box; margin-top: 4px;">
+          </div>
+
+          <!-- Sound Mode Selector -->
+          <div class="setting-field-group">
+            <label for="settingSoundModeSelect" class="setting-label">
+              <strong>Default Reminder Sound</strong>
+              <span class="setting-desc">Default mode for reminders (or ask in chat: "remind me with voice", "remind me with a song")</span>
+            </label>
+            <select id="settingSoundModeSelect" class="setting-select">
+              <option value="alarm_tone" selected>🔔 Alarm Tone (Default)</option>
+              <option value="voice">🗣️ Spoken Voice (Android & Windows Speech)</option>
+              <option value="voice_then_tone">🗣️🔔 Spoken Voice, then Alarm Tone</option>
+              <option value="song">🎵 Custom Song / Audio File</option>
+            </select>
+          </div>
+
+          <!-- Song Picker (for Song Mode) -->
+          <div class="setting-field-group" id="settingSongPickerGroup" style="display: none;">
+            <label for="settingSongFileInput" class="setting-label">
+              <strong>Pick Song / Audio File from Device</strong>
+              <span class="setting-desc">Choose an MP3, AAC, or audio track from your phone or PC</span>
+            </label>
+            <div style="display: flex; gap: 8px; align-items: center; margin-top: 6px;">
+              <input type="file" id="settingSongFileInput" accept="audio/*" style="display: none;">
+              <button type="button" id="settingPickSongBtn" class="confirm-btn-secondary" style="padding: 6px 14px; font-size: 0.85rem; cursor: pointer;">📁 Pick Audio File</button>
+              <span id="settingPickedSongName" style="font-size: 0.85rem; color: #64748b; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 200px;">No custom song selected</span>
+            </div>
+          </div>
+
+          <!-- Voice Preview Button (Requirement 3) -->
+          <div class="setting-field-group" style="margin-top: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <strong>Voice Preview</strong>
+                <span class="setting-desc" style="display: block;">Hear how your spoken reminder sounds</span>
+              </div>
+              <button type="button" id="previewVoiceBtn" class="confirm-btn-secondary" style="background: #fdf2f8; border: 1.5px solid #f472b6; color: #be185d; padding: 6px 16px; font-weight: 600; cursor: pointer; border-radius: 8px;">
+                🔊 Hear Preview
+              </button>
+            </div>
+          </div>
+
+          <!-- Allow Alarms in Do Not Disturb -->
+          <div class="setting-field-group">
+            <div class="setting-switch-row">
+              <label class="setting-switch">
+                <input type="checkbox" id="dndAllowAlarmsToggle" checked>
+                <span class="setting-slider"></span>
+              </label>
+              <div class="setting-switch-info">
+                <strong>Allow Alarms in Do Not Disturb</strong>
+                <span class="setting-desc">Plays on the device ALARM audio stream even when silent or DND is active</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Web Search Section (Step 15) -->
+        <div class="settings-reminders-section" id="settingsWebSearchSection">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <h3 style="margin: 0;">🌐 Web Search</h3>
+            <span class="badge" style="background: #e0f2fe; color: #0284c7;">Current Facts & Prices</span>
+          </div>
+          <p>Allow SINBHA to look up verified facts, recent news, prices, and links safely.</p>
+
+          <div class="setting-field-group">
+            <div class="setting-switch-row">
+              <label class="setting-switch">
+                <input type="checkbox" id="webSearchToggle" checked>
+                <span class="setting-slider"></span>
+              </label>
+              <div class="setting-switch-text">
+                <strong>Enable Real Web Search</strong>
+                <span>Searches verified web pages for fresh information. Personal data, memories, and passwords are never included in searches.</span>
+              </div>
+            </div>
+            <div class="setting-note" style="margin-top: 10px;">
+              🛡️ Safe by design: Web pages are treated as untrusted data and can never trigger tasks or change your memories. Daily limit: 15 searches/day.
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-reminders-section" id="settingsDesktopSection">
+          <h3>🖥️ Desktop App Options</h3>
+          <p>Windows desktop integration and presentation behavior.</p>
+
+          <div class="setting-field-group">
+            <div class="setting-switch-row">
+              <label class="setting-switch">
+                <input type="checkbox" id="dndToggle">
+                <span class="setting-slider"></span>
+              </label>
+              <div class="setting-switch-info">
+                <strong>Do Not Disturb</strong>
+                <span class="setting-desc">Stops bird from appearing while fullscreen or presenting</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="setting-field-group">
+            <div class="setting-switch-row">
+              <label class="setting-switch">
+                <input type="checkbox" id="startWithWindowsToggle">
+                <span class="setting-slider"></span>
+              </label>
+              <div class="setting-switch-info">
+                <strong>Start with Windows</strong>
+                <span class="setting-desc">Automatically launch in system tray on login (default off)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-reminders-section" id="settingsAndroidSection" style="display: none;">
+          <h3>📱 Android Companion & Permissions</h3>
+          <p>Configure background permissions and floating companion bird.</p>
+
+          <div class="android-permission-cards">
+            <!-- Notifications -->
+            <div class="android-perm-card" id="permCardNotif">
+              <div class="android-perm-header">
+                <span class="android-perm-icon">🔔</span>
+                <div class="android-perm-info">
+                  <strong>Notifications</strong>
+                  <span class="android-perm-desc">Allows high-priority alerts when tasks are due</span>
+                </div>
+                <span class="android-perm-status" id="permStatusNotif">Checking...</span>
+              </div>
+              <button type="button" class="android-perm-btn" id="reqNotifBtn">Grant Permission</button>
+            </div>
+
+            <!-- Display Over Other Apps -->
+            <div class="android-perm-card" id="permCardOverlay">
+              <div class="android-perm-header">
+                <span class="android-perm-icon">🕊️</span>
+                <div class="android-perm-info">
+                  <strong>Display Over Other Apps</strong>
+                  <span class="android-perm-desc">Enables the gentle floating bird companion to visit you over other apps</span>
+                </div>
+                <span class="android-perm-status" id="permStatusOverlay">Checking...</span>
+              </div>
+              <button type="button" class="android-perm-btn" id="reqOverlayBtn">Grant Permission</button>
+            </div>
+
+            <!-- Exact Alarms -->
+            <div class="android-perm-card" id="permCardAlarm">
+              <div class="android-perm-header">
+                <span class="android-perm-icon">⏰</span>
+                <div class="android-perm-info">
+                  <strong>Exact Alarms</strong>
+                  <span class="android-perm-desc">Wakes the phone at the exact minute your scheduled reminders are due</span>
+                </div>
+                <span class="android-perm-status" id="permStatusAlarm">Checking...</span>
+              </div>
+              <button type="button" class="android-perm-btn" id="reqAlarmBtn">Grant Permission</button>
+            </div>
+
+            <!-- Full-Screen Alarms (Android 14+) -->
+            <div class="android-perm-card" id="permCardFullScreen">
+              <div class="android-perm-header">
+                <span class="android-perm-icon">📱</span>
+                <div class="android-perm-info">
+                  <strong>Full-Screen Alarms (Lock Screen Wakeup)</strong>
+                  <span class="android-perm-desc">Wakes the phone screen and starts the full-screen alarm experience when phone is asleep or app is closed</span>
+                </div>
+                <span class="android-perm-status" id="permStatusFullScreen">Checking...</span>
+              </div>
+              <button type="button" class="android-perm-btn" id="reqFullScreenBtn">Allow Full-Screen Alarms</button>
+            </div>
+
+            <!-- Battery Optimization -->
+            <div class="android-perm-card" id="permCardBattery">
+              <div class="android-perm-header">
+                <span class="android-perm-icon">🔋</span>
+                <div class="android-perm-info">
+                  <strong>Battery Optimization (Don't optimize)</strong>
+                  <span class="android-perm-desc">Prevents Android from freezing SINBHA in the background</span>
+                </div>
+                <span class="android-perm-status" id="permStatusBattery">Checking...</span>
+              </div>
+              <button type="button" class="android-perm-btn" id="reqBatteryBtn">Allow Background Running</button>
+            </div>
+
+            <!-- OnePlus / Oppo / Realme Specialized Card -->
+            <div class="android-perm-card brand-highlight" id="permCardBrand">
+              <div class="android-perm-header">
+                <span class="android-perm-icon">🚀</span>
+                <div class="android-perm-info">
+                  <strong>OxygenOS / ColorOS Auto-launch</strong>
+                  <span class="android-perm-desc">OnePlus & Realme phones require enabling "Auto-launch" & "Allow background activity" in App Management</span>
+                </div>
+              </div>
+              <button type="button" class="android-perm-btn" id="reqAutostartBtn">Open Auto-launch Settings</button>
+            </div>
+          </div>
+
+          <div style="margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap;">
+            <button type="button" id="testBirdNativeBtn" class="confirm-btn-primary" style="flex: 1; min-width: 140px; justify-content: center;">
+              🕊️ Test Bird Flight
+            </button>
+            <button type="button" id="syncRemindersNativeBtn" class="confirm-btn-secondary" style="flex: 1; min-width: 140px; justify-content: center;">
+              🔄 Sync Exact Alarms
+            </button>
+          </div>
+
+          <!-- Requirement 6: Companion Diagnostics -->
+          <div class="android-diagnostics-section" style="margin-top: 18px; padding-top: 14px; border-top: 1px solid #fce7f3;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <h4 style="margin: 0; font-size: 0.95rem; color: #be185d; font-weight: 700;">🛠️ Companion Diagnostics</h4>
+              <button type="button" id="refreshDiagnosticsBtn" style="background: #fff; border: 1px solid #fbcfe8; border-radius: 6px; padding: 4px 10px; font-size: 0.78rem; color: #be185d; cursor: pointer; font-weight: 600;">🔄 Refresh</button>
+            </div>
+            <div id="diagnosticsDisplay" style="background: #fdf2f8; border: 1px solid #fbcfe8; border-radius: 8px; padding: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.78rem; color: #374151; max-height: 220px; overflow-y: auto; white-space: pre-wrap; line-height: 1.45;">Loading diagnostics...</div>
+            <button type="button" id="copyDiagnosticsBtn" class="confirm-btn-secondary" style="width: 100%; margin-top: 8px; justify-content: center; font-size: 0.85rem; font-weight: 600;">
+              📋 Copy Diagnostics (Safe / No Personal Data)
+            </button>
+
+            <!-- One-Button Real Device Check (Step C2.10 Item 1) -->
+            <div style="margin-top: 14px; border-top: 1px solid #fbcfe8; padding-top: 12px;">
+              <div style="font-weight: 700; font-size: 0.85rem; color: #1e3a8a; margin-bottom: 4px;">📡 Remote Command Real Device Check</div>
+              <p style="font-size: 0.76rem; color: #6b7280; margin-bottom: 8px;">Tests end-to-end delivery through the identical chat path across all connected devices.</p>
+              <button type="button" id="btnRealDeviceCheck" class="confirm-btn-primary" style="width: 100%; justify-content: center; font-size: 0.88rem; font-weight: 700; background: linear-gradient(135deg, #2563eb, #1d4ed8); color: #fff; border: none; border-radius: 8px; padding: 10px; cursor: pointer;">
+                🔍 Run Real Device Check (Cross-Device 6-App Test)
+              </button>
+              <div id="realDeviceCheckResultsContainer" style="display: none; margin-top: 10px; background: #fff; border: 1.5px solid #bfdbfe; border-radius: 8px; padding: 12px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <strong style="font-size: 0.85rem; color: #1e3a8a;">Remote Path Verification:</strong>
+                  <span id="realDeviceSummaryBadge" style="font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 12px; background: #e5e7eb; color: #374151;">Ready</span>
+                </div>
+                <div id="realDeviceResultsList" style="display: flex; flex-direction: column; gap: 6px; font-size: 0.8rem;"></div>
+              </div>
+            </div>
+
+            <!-- Local Launcher Test (Step C2.10 Item 1: Separate section, never mixed with remote check) -->
+            <div style="margin-top: 14px; border-top: 1px dashed #fbcfe8; padding-top: 12px;">
+              <div style="font-weight: 700; font-size: 0.85rem; color: #9d174d; margin-bottom: 4px;">⚙️ Local Launcher Test</div>
+              <p style="font-size: 0.76rem; color: #6b7280; margin-bottom: 8px;">Tests client OS-level app launcher mechanics directly on this computer/phone.</p>
+              <button type="button" id="runDeviceSelfTestBtn" class="confirm-btn-primary" style="width: 100%; justify-content: center; font-size: 0.88rem; font-weight: 700; background: linear-gradient(135deg, #ec4899, #be185d); color: #fff; border: none; border-radius: 8px; padding: 10px; cursor: pointer;">
+                🚀 Run Local Launcher Test
+              </button>
+              <div id="selfTestResultsContainer" style="display: none; margin-top: 10px; background: #fff; border: 1.5px solid #fbcfe8; border-radius: 8px; padding: 12px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <strong style="font-size: 0.85rem; color: #831843;">Local Launcher Results:</strong>
+                  <span id="selfTestSummaryBadge" style="font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 12px; background: #e5e7eb; color: #374151;">Ready</span>
+                </div>
+                <div id="selfTestList" style="display: flex; flex-direction: column; gap: 6px; font-size: 0.8rem;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ========================================================
+             MY DEVICES (STEP 16: DEVICE PAIRING & SECURE CHANNEL)
+             ======================================================== -->
+        <div class="settings-reminders-section" id="settingsDevicesSection">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <h3 style="margin: 0;">📱 My Devices</h3>
+            <span id="devicesCountBadge" class="badge" style="background: #fce7f3; color: #be185d;">0</span>
+          </div>
+          <p>Secure command channel & paired devices (Windows, Android, Web).</p>
+
+          <!-- Current Device Card -->
+          <div class="current-device-card" id="currentDeviceCard" style="background: #fdf2f8; border: 1.5px solid #fbcfe8; border-radius: 10px; padding: 12px; margin-bottom: 12px;">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <div>
+                <span style="font-size: 0.72rem; text-transform: uppercase; color: #9ca3af; font-weight: 700; letter-spacing: 0.5px;">This Device</span>
+                <div id="currentDeviceName" style="font-size: 0.95rem; font-weight: 700; color: #1f2937;">Detecting...</div>
+                <div id="currentDeviceStatusBadge" style="font-size: 0.75rem; color: #059669; font-weight: 600;">● Trusted</div>
+              </div>
+              <button type="button" id="refreshDevicesBtn" class="confirm-btn-secondary" style="font-size: 0.78rem; padding: 4px 10px;">🔄 Refresh</button>
+            </div>
+          </div>
+
+          <!-- Pending Pairing Alert Banner (if this device is pending) -->
+          <div id="pendingPairingBanner" class="pending-pairing-card" style="display: none; background: #fffbeb; border: 1.5px solid #fde68a; border-radius: 10px; padding: 12px; margin-bottom: 12px;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+              <span style="font-size: 1.2rem;">⏳</span>
+              <strong style="color: #92400e;">Pairing Approval Required</strong>
+            </div>
+            <p style="font-size: 0.82rem; margin: 0 0 10px 0; color: #92400e; line-height: 1.4;">
+              This device must be approved from an already trusted device using this one-time code:
+            </p>
+            <div class="pairing-code-display" id="pairingCodeDisplay" style="text-align: center; font-size: 1.8rem; font-family: monospace; font-weight: 800; letter-spacing: 6px; color: #b45309; background: #fff; padding: 10px; border-radius: 8px; border: 1px dashed #f59e0b;">------</div>
+            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; color: #b45309; margin-top: 8px;">
+              <span id="pairingCountdownText">Expires in 5:00</span>
+              <button type="button" id="refreshPairCodeBtn" style="background: none; border: none; color: #b45309; cursor: pointer; font-size: 0.78rem; text-decoration: underline;">New Code</button>
+            </div>
+
+            <!-- Existing Account First Device: Trust with Password (Step 16b Rule 2) -->
+            <div id="firstDevicePasswordSection" style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed #fcd34d;">
+              <p style="font-size: 0.78rem; color: #92400e; margin: 0 0 6px 0;">
+                <strong>Existing account?</strong> Enter your password to trust this device as your first trusted device:
+              </p>
+              <div style="display: flex; gap: 6px;">
+                <input type="password" id="firstDevicePasswordInput" placeholder="Account password" style="flex: 1; padding: 6px 10px; border: 1.5px solid #fcd34d; border-radius: 6px; font-size: 0.85rem;" />
+                <button type="button" id="trustFirstDeviceBtn" class="confirm-btn-primary" style="padding: 6px 12px; font-size: 0.8rem; white-space: nowrap;">Trust Device 🌸</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Devices List -->
+          <div id="devicesList" class="devices-list-container" style="display: flex; flex-direction: column; gap: 8px;">
+            <div style="font-size: 0.82rem; color: #9ca3af; text-align: center; padding: 12px;">Loading paired devices...</div>
+          </div>
+
+          <!-- Device Actions -->
+          <div style="display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap;">
+            <button type="button" id="openPairModalBtn" class="confirm-btn-primary" style="flex: 1; min-width: 140px; justify-content: center; font-size: 0.85rem;">
+              ➕ Pair New Device
+            </button>
+            <button type="button" id="disconnectAllDevicesBtn" class="purge-trigger-btn" style="flex: 1; min-width: 140px; justify-content: center; font-size: 0.85rem; padding: 8px 12px; margin-top: 0;">
+              🔌 Disconnect All
+            </button>
+          </div>
+          <p style="font-size: 0.74rem; color: #6b7280; margin: 8px 0 0 0; line-height: 1.35;">
+            💡 <strong>STOP switch vs Disconnect All:</strong> "STOP" pauses all remote commands (resumable anytime; devices stay paired). "Disconnect All" completely revokes all devices.
+          </p>
+        </div>
+
+        <!-- ========================================================
+             STEP D1: ANDROID SCREEN AGENT & ACCESSIBILITY CONSENT
+             ======================================================== -->
+        <div class="settings-reminders-section" id="settingsAccessibilitySection">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <h3 style="margin: 0; display: flex; align-items: center; gap: 8px;">
+              <span>🤖 Android Screen Agent</span>
+            </h3>
+            <span id="accessibilityStatusBadge" class="badge" style="background: #f1f5f9; color: #475569; font-weight: 700; border: 1px solid #cbd5e1;">Checking...</span>
+          </div>
+          <p style="font-size: 0.82rem; color: #6b7280; margin: 0 0 12px 0;">
+            Controls your phone through Android's Accessibility service so you or your laptop can accomplish tasks like searching YouTube, checking settings, or navigating apps.
+          </p>
+
+          <!-- Consent & Security Disclosure Box -->
+          <div style="background: #faf5ff; border: 1.5px solid #e9d5ff; border-radius: 10px; padding: 12px; margin-bottom: 12px;">
+            <div style="font-size: 0.82rem; font-weight: 700; color: #7e22ce; margin-bottom: 6px;">🔒 Privacy & What SINBHA Can See / Do</div>
+            <ul style="font-size: 0.78rem; color: #4b5563; margin: 0 0 8px 16px; padding: 0; line-height: 1.45;">
+              <li><strong>What it can see:</strong> Visible element labels and screen structure to locate buttons and fields.</li>
+              <li><strong>What it can do:</strong> Tap buttons, type safe text, scroll, and open apps upon your request.</li>
+              <li><strong>What it NEVER touches:</strong> Banking apps (YONO, HDFC, ICICI), UPI tools (GPay, PhonePe, Paytm), and password managers. Automated typing of passwords, OTPs, and card numbers is strictly blocked.</li>
+              <li><strong>How to turn off:</strong> Disable this service anytime in phone Settings or using the Emergency STOP switch.</li>
+            </ul>
+          </div>
+
+          <!-- Sideloaded APK Restricted Settings Guide (Android 13/14/15) -->
+          <details style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.78rem; color: #92400e;">
+            <summary style="font-weight: 700; cursor: pointer; color: #b45309;">
+              📱 Sideloaded App? How to enable "Allow restricted settings"
+            </summary>
+            <p style="margin: 6px 0 4px 0; line-height: 1.4;">
+              On Android 13, 14, and 15, Android temporarily blocks accessibility for sideloaded APKs. To unblock:
+            </p>
+            <ol style="margin: 0 0 6px 18px; padding: 0; line-height: 1.45;">
+              <li>Tap <strong>"Open App Details"</strong> below (or Settings &rarr; Apps &rarr; SINBHA).</li>
+              <li>Tap the <strong>three dots (⋮)</strong> in the top right corner.</li>
+              <li>Tap <strong>"Allow restricted settings"</strong> and verify with your fingerprint or PIN.</li>
+              <li>Tap <strong>"Enable in Accessibility"</strong> below &rarr; turn on <strong>SINBHA Screen Agent</strong>.</li>
+            </ol>
+          </details>
+
+          <!-- Action Buttons -->
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button type="button" id="enableAccessibilityBtn" class="confirm-btn-primary" style="flex: 1; min-width: 150px; font-size: 0.82rem; justify-content: center;">
+              ⚙️ Enable in Accessibility
+            </button>
+            <button type="button" id="openAppDetailsBtn" class="confirm-btn-secondary" style="flex: 1; min-width: 150px; font-size: 0.82rem; justify-content: center;">
+              📱 Open App Details (3 dots)
+            </button>
+          </div>
+        </div>
+
+        <!-- ========================================================
+             APP VERSION & UPDATES SECTION
+             ======================================================== -->
+        <div class="settings-reminders-section" id="settingsAppUpdateSection">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <h3 style="margin: 0; display: flex; align-items: center; gap: 8px;">
+              <span>🌸 App Version & Updates</span>
+            </h3>
+            <span id="currentAppVersionBadge" class="badge" style="background: #fdf2f8; color: #db2777; font-weight: 700; border: 1px solid #fbcfe8;">v1.0.7</span>
+          </div>
+          <p style="font-size: 0.82rem; color: #6b7280; margin: 0 0 12px 0;">
+            Check for the latest companion updates, overlay improvements, and new capabilities.
+          </p>
+
+          <div style="background: #f8fafc; border: 1.5px solid #e2e8f0; border-radius: 10px; padding: 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+            <div>
+              <div style="font-size: 0.72rem; text-transform: uppercase; color: #94a3b8; font-weight: 700; letter-spacing: 0.5px;">Current Platform</div>
+              <div id="installedVersionText" style="font-size: 0.95rem; font-weight: 700; color: #0f172a; margin-top: 2px;">SINBHA Companion v1.0.7</div>
+              <div id="updateStatusText" style="font-size: 0.78rem; color: #16a34a; font-weight: 600; margin-top: 3px;">● System is up to date</div>
+            </div>
+            <button type="button" id="manualCheckUpdateBtn" class="confirm-btn-primary" style="font-size: 0.85rem; padding: 9px 16px; font-weight: 700; display: flex; align-items: center; gap: 6px;">
+              🔄 Check for Updates
+            </button>
+          </div>
+        </div>
+
+        <div class="settings-danger-section">
+          <h3>Data Rights & Account Management (Step 11)</h3>
+          <p>Download your personal archive, update your security credentials, or permanently erase your data.</p>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <button id="downloadDataBtn" class="confirm-btn-secondary" style="width: 100%; justify-content: center; font-weight: 600;">
+              📥 Download My Data (JSON Export)
+            </button>
+            <button id="openChangePasswordBtn" class="confirm-btn-secondary" style="width: 100%; justify-content: center;">
+              🔑 Change Account Password
+            </button>
+            <button id="openPurgeConfirmBtn" class="purge-trigger-btn">
+              🗑️ Clear all my messages & tasks
+            </button>
+            <button id="openDeleteAccountConfirmBtn" class="purge-trigger-btn" style="background: #fff1f2; border: 1.5px solid #fecdd3; color: #be123c;">
+              ⚠️ Delete my account and all my data
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CHANGE PASSWORD MODAL (Requirement 9) -->
+  <div class="confirm-modal-overlay" id="changePasswordModal" style="display: none;">
+    <div class="confirm-modal-card" style="max-width: 420px; text-align: left;">
+      <div class="modal-sticky-header">
+        <h3 style="margin: 0; color: #db2777;">🔑 Change Password</h3>
+        <button id="closeChangePasswordBtn" class="popup-close-btn" aria-label="Close change password">&times;</button>
+      </div>
+      <div class="modal-scroll-body">
+        <p style="font-size: 0.82rem; color: #6b7280; margin-bottom: 14px;">Updating your password will immediately invalidate all other active sessions across your devices.</p>
+        <form id="changePasswordForm">
+          <div style="margin-bottom: 12px;">
+            <label style="display: block; font-size: 0.82rem; font-weight: 600; margin-bottom: 4px; color: #374151;">Current Password</label>
+            <input type="password" id="currentPasswordInput" required style="width: 100%; padding: 8px 12px; border: 1.5px solid #e5e7eb; border-radius: 8px; font-size: 0.9rem;">
+          </div>
+          <div style="margin-bottom: 16px;">
+            <label style="display: block; font-size: 0.82rem; font-weight: 600; margin-bottom: 4px; color: #374151;">New Password (min 8 chars)</label>
+            <input type="password" id="newPasswordInput" required minlength="8" style="width: 100%; padding: 8px 12px; border: 1.5px solid #e5e7eb; border-radius: 8px; font-size: 0.9rem;">
+          </div>
+          <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px;">
+            <button type="button" id="cancelChangePasswordBtn" class="confirm-btn-secondary">Cancel</button>
+            <button type="submit" id="submitChangePasswordBtn" class="confirm-btn-primary">Update Password</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- PURGE CONFIRMATION POPUP -->
+  <div class="confirm-modal-overlay" id="purgeConfirmModal" style="display: none;">
+    <div class="confirm-modal-card">
+      <div class="confirm-icon-box">⚠️</div>
+      <h3>Clear your messages & tasks?</h3>
+      <p>This will erase your chat history, remembered facts, and tasks for this account. Your user login will be kept.</p>
+      <div class="confirm-modal-actions">
+        <button id="cancelPurgeBtn" class="confirm-btn-secondary">Cancel</button>
+        <button id="confirmPurgeBtn" class="confirm-btn-danger">Yes, Delete Data</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- DELETE ACCOUNT CONFIRMATION MODAL (Requirement 8) -->
+  <div class="confirm-modal-overlay" id="deleteAccountConfirmModal" style="display: none;">
+    <div class="confirm-modal-card">
+      <div class="confirm-icon-box">🛑</div>
+      <h3>Delete account permanently?</h3>
+      <p>This will permanently erase your user account, login credentials, chat history, memories, tasks, and settings. This action cannot be reversed.</p>
+      <div class="confirm-modal-actions">
+        <button id="cancelDeleteAccountBtn" class="confirm-btn-secondary">Cancel</button>
+        <button id="confirmDeleteAccountBtn" class="confirm-btn-danger">Yes, Delete Account & All Data</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TERMS OF SERVICE MODAL (Requirement 14: Marked Needs Legal Review) -->
+  <div class="confirm-modal-overlay" id="termsModal" style="display: none;">
+    <div class="confirm-modal-card" style="max-width: 520px; text-align: left;">
+      <div class="modal-sticky-header">
+        <h3 style="margin: 0; color: #db2777;">🌸 Terms of Service <span style="font-size: 0.7rem; background: #fef08a; color: #854d0e; padding: 2px 6px; border-radius: 4px; font-weight: normal;">Needs Legal Review</span></h3>
+        <button id="closeTermsBtn" class="popup-close-btn" aria-label="Close terms of service">&times;</button>
+      </div>
+      <div class="modal-scroll-body modal-text-content">
+        <p><strong>1. AI Companion & Boundaries:</strong> SINBHA is an automated AI personal assistant designed to help you organize daily tasks, habits, and gentle reminders. <em>SINBHA is NOT a licensed therapist, healthcare professional, or emergency crisis service.</em> If you are experiencing a mental health emergency, please immediately call 988 or your local emergency services.</p>
+        <p><strong>2. Age Requirement (18+):</strong> You must be at least 18 years of age to register and use SINBHA.</p>
+        <p><strong>3. AI Provider Processing:</strong> Your chat messages are processed by an AI provider (e.g. OpenRouter / Google Gemini) to generate conversational responses and extract schedule details.</p>
+        <p><strong>4. Account Security:</strong> You are responsible for safeguarding your credentials with a strong password (minimum 8 characters).</p>
+      </div>
+      <div class="modal-sticky-footer" style="margin-top: 16px; text-align: right;">
+        <button id="confirmTermsCloseBtn" class="confirm-btn-secondary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PRIVACY POLICY MODAL (Requirement 14: Marked Needs Legal Review) -->
+  <div class="confirm-modal-overlay" id="privacyModal" style="display: none;">
+    <div class="confirm-modal-card" style="max-width: 520px; text-align: left;">
+      <div class="modal-sticky-header">
+        <h3 style="margin: 0; color: #db2777;">🌸 Privacy Policy <span style="font-size: 0.7rem; background: #fef08a; color: #854d0e; padding: 2px 6px; border-radius: 4px; font-weight: normal;">Needs Legal Review</span></h3>
+        <button id="closePrivacyBtn" class="popup-close-btn" aria-label="Close privacy policy">&times;</button>
+      </div>
+      <div class="modal-scroll-body modal-text-content">
+        <p><strong>1. Strict User Isolation:</strong> Every message, fact, task, and reminder is bound to your user account and never shared with other users. Admins cannot read your chat contents.</p>
+        <p><strong>2. Encryption at Rest:</strong> Sensitive message contents and memory facts are stored encrypted at rest in our database using Fernet symmetric encryption.</p>
+        <p><strong>3. AI Processing & Approved Providers:</strong> Messages are processed exclusively by your approved AI model providers: <strong>Groq Cloud</strong> (ultra-fast frontier open-weight models) and <strong>OpenRouter AI</strong> (multi-model gateway). No other third party receives your conversation text. Plain passwords, OTP codes, and credit cards are strictly blocked and never sent. You can switch providers or disable external AI processing entirely in Settings &amp; Privacy.</p>
+        <p><strong>4. Screen Agent Privacy & Ephemeral Vision:</strong> When using screen automation, screen captures are transmitted exclusively over encrypted TLS to the vision model to understand the UI. Screenshots are <em>NEVER</em> stored on the server or written to disk. Password managers, banking windows, OTPs, and credit card inputs are strictly blocked from capture and automated typing.</p>
+        <p><strong>5. Data Rights:</strong> You can download a complete JSON archive of all your data (Settings → Download My Data) or permanently delete your account and all associated data at any time.</p>
+      </div>
+      <div class="modal-sticky-footer" style="margin-top: 16px; text-align: right;">
+        <button id="confirmPrivacyCloseBtn" class="confirm-btn-secondary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TASK DELETE CONFIRMATION MODAL (Step 6) -->
+  <div class="confirm-modal-overlay" id="taskDeleteModal" style="display: none;">
+    <div class="confirm-modal-card">
+      <div class="confirm-icon-box">🗑️</div>
+      <h3>Delete this task?</h3>
+      <p id="taskDeleteModalMessage">Are you sure you want to remove this task? This cannot be undone.</p>
+      <div class="confirm-modal-actions">
+        <button id="cancelTaskDeleteBtn" class="confirm-btn-secondary">Cancel</button>
+        <button id="confirmTaskDeleteBtn" class="confirm-btn-danger">Yes, Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TASKS DRAWER (Step 6: Interactive Task List) -->
+  <aside class="side-drawer" id="taskDrawer" aria-hidden="true">
+    <div class="drawer-header">
+      <div class="drawer-title-group">
+        <span class="drawer-icon">📋</span>
+        <h2>My Tasks</h2>
+      </div>
+      <button id="closeTaskBtn" class="close-drawer-btn" aria-label="Close task drawer">&times;</button>
+    </div>
+    
+    <div class="drawer-content">
+      <div class="task-drawer-subheader">
+        <span>To-Do List</span>
+        <span id="pendingCountBadgeDrawer" class="count-tag">0 pending</span>
+      </div>
+
+      <div class="empty-task-state" id="emptyTaskState">
+        <div class="empty-icon-card">🌸</div>
+        <h3>No tasks yet</h3>
+        <p>When you talk about assignments or to-dos with SINBHA, she'll propose them with <strong>Confirm / Cancel</strong> buttons in chat before saving anything.</p>
+      </div>
+
+      <div class="task-list-container" id="taskListContainer" style="display: none;">
+        <!-- Pending Tasks List (Sorted: Overdue first, then by date, then no date) -->
+        <ul class="task-list" id="pendingTaskList">
+          <!-- Populated dynamically -->
+        </ul>
+
+        <!-- Completed Tasks Collapsible Section -->
+        <details class="completed-tasks-accordion" id="completedTasksAccordion" style="display: none;">
+          <summary class="completed-summary">
+            <div class="completed-summary-title">
+              <span class="completed-check-icon">✓</span>
+              <span>Completed</span>
+              <span id="completedCountBadge" class="count-tag completed-tag">0</span>
+            </div>
+            <span class="accordion-chevron">▾</span>
+          </summary>
+          <ul class="task-list completed-task-list" id="completedTaskList">
+            <!-- Populated dynamically -->
+          </ul>
+        </details>
+      </div>
+    </div>
+  </aside>
+
+  <!-- BIRD REMINDER OVERLAY (Step 6B) -->
+  <div id="birdReminderContainer" class="bird-reminder-container" style="display: none;" role="region" aria-label="Task Reminder Bird">
+    <div id="birdFlightWrapper" class="bird-flight-wrapper">
+      <div id="birdShadow" class="bird-shadow"></div>
+      <div id="birdActor" class="bird-actor" tabindex="0" role="button" aria-label="Task reminder bird. Tap for options.">
+        <img id="birdFrameWingsUp" class="bird-sprite bird-sprite-up" src="/static/bird/bird_wings_up.png" alt="Flying bird wings up" />
+        <img id="birdFrameWingsDown" class="bird-sprite bird-sprite-down" src="/static/bird/bird_wings_down.png" alt="Flying bird wings down" />
+        <img id="birdFrameLanded" class="bird-sprite bird-sprite-landed" src="/static/bird/bird_landed.png" alt="Landed bird perched on branch" />
+        
+        <!-- Note overlay drawn on top of the blank note in beak -->
+        <div id="birdNoteOverlay" class="bird-note-overlay">
+          <div id="birdNoteTitle" class="bird-note-title">Task Title</div>
+          <div id="birdNoteDue" class="bird-note-due">Due: 8:00 AM</div>
+          <div class="bird-note-tap">tap me 🌸</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- BIRD ACTION POPUP (When tapped) -->
+    <div id="birdActionPopup" class="bird-action-popup" style="display: none;">
+      <div class="bird-popup-header">
+        <span class="bird-popup-badge">🕊️ Gentle Reminder</span>
+        <button id="birdClosePopupBtn" class="bird-popup-close" aria-label="Close popup">&times;</button>
+      </div>
+      <div class="bird-popup-body">
+        <div id="birdPopupTaskTitle" class="bird-popup-task-title">Task Title</div>
+        <div id="birdPopupTaskDue" class="bird-popup-task-due">Due: Tomorrow at 8:00 AM</div>
+      </div>
+      <div class="bird-popup-actions">
+        <button id="birdDoneBtn" class="bird-action-btn bird-btn-done">✓ Mark Done</button>
+        
+        <div class="bird-snooze-wrapper">
+          <button id="birdSnoozeDropdownBtn" class="bird-action-btn bird-btn-snooze">⏰ Snooze ▾</button>
+          <div id="birdSnoozeMenu" class="bird-snooze-menu" style="display: none;">
+            <div class="snooze-custom-input-box">
+              <span class="snooze-label">Snooze for:</span>
+              <div class="snooze-input-row">
+                <input type="number" id="birdSnoozeMinsInput" class="snooze-number-input" min="1" max="10080" placeholder="2" value="2" />
+                <span class="snooze-unit">min</span>
+                <button id="birdSnoozeSubmitBtn" class="snooze-submit-btn">Set</button>
+              </div>
+            </div>
+            <div class="snooze-quick-chips">
+              <button class="bird-snooze-option" data-mins="1">1m</button>
+              <button class="bird-snooze-option" data-mins="2">2m</button>
+              <button class="bird-snooze-option" data-mins="5">5m</button>
+              <button class="bird-snooze-option" data-mins="15">15m</button>
+              <button class="bird-snooze-option" data-mins="30">30m</button>
+              <button class="bird-snooze-option" data-mins="60">1h</button>
+              <button class="bird-snooze-option" data-mins="1440">Tomorrow</button>
+            </div>
+          </div>
+        </div>
+
+        <button id="birdChatBtn" class="bird-action-btn bird-btn-chat">💬 Open Chat</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- APP UPDATE GATE MODAL (Requirement 5) -->
+  <div class="confirm-modal-overlay" id="appUpdateGateModal" style="display: none; z-index: 99999;">
+    <div class="confirm-modal-card" style="max-width: 440px; text-align: center;">
+      <div class="confirm-icon-box" style="background: #fdf2f8; color: #db2777; font-size: 2.2rem;">🌸</div>
+      <h3 id="appUpdateGateTitle" style="color: #0f172a; margin-bottom: 8px;">New Version Available!</h3>
+      <p id="appUpdateGateDesc" style="color: #64748b; font-size: 0.9rem; line-height: 1.5; margin-bottom: 20px;">
+        A new version of SINBHA is available with important companion enhancements and stability fixes.
+      </p>
+      <div style="display: flex; flex-direction: column; gap: 10px;">
+        <a id="appUpdateDownloadLink" href="https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA.apk" target="_blank" class="confirm-btn-primary" style="text-decoration: none; justify-content: center; padding: 12px; font-weight: 700; font-size: 0.95rem;">
+          Update Now ⚡
+        </a>
+        <button id="appUpdateLaterBtn" type="button" class="confirm-btn-secondary" style="justify-content: center; padding: 10px; font-size: 0.88rem; display: none;">
+          Maybe Later
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PAIR DEVICE MODAL (For approving a new device) -->
+  <div class="confirm-modal-overlay" id="pairDeviceModal" style="display: none; z-index: 9999;">
+    <div class="confirm-modal-card" style="max-width: 440px; text-align: left;">
+      <div class="modal-sticky-header">
+        <h3 style="margin: 0; color: #db2777;">🔗 Pair New Device</h3>
+        <button id="closePairModalBtn" class="popup-close-btn" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-scroll-body">
+        <p style="font-size: 0.85rem; color: #6b7280; margin-bottom: 12px;">
+          To approve a new device, you must type the 6-digit code displayed on its screen. Code locks after 5 wrong attempts.
+        </p>
+
+        <!-- Dynamic pending device info card (Step 16b Rule 3: Name, Platform, Time) -->
+        <div id="pendingDeviceCardContainer" style="margin-bottom: 14px;">
+          <!-- Populated dynamically -->
+        </div>
+
+        <div style="margin-bottom: 16px;">
+          <label for="pairCodeInput" style="display: block; font-size: 0.82rem; font-weight: 600; margin-bottom: 6px; color: #374151;">Type 6-Digit Pairing Code</label>
+          <input type="text" id="pairCodeInput" maxlength="6" placeholder="e.g. 481920" autocomplete="off" style="width: 100%; padding: 12px; text-align: center; font-size: 1.4rem; letter-spacing: 4px; font-weight: 700; border: 2px solid #fbcfe8; border-radius: 8px; font-family: monospace;" />
+          <div id="pairAttemptsWarning" style="display: none; font-size: 0.76rem; color: #dc2626; margin-top: 5px;"></div>
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 8px;">
+          <button type="button" id="cancelPairCodeBtn" class="confirm-btn-secondary">Cancel</button>
+          <button type="button" id="submitPairCodeBtn" class="confirm-btn-primary">Approve Device 🌸</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DEVICE SETTINGS / PERMISSIONS MODAL -->
+  <div class="confirm-modal-overlay" id="deviceDetailsModal" style="display: none; z-index: 9999;">
+    <div class="confirm-modal-card" style="max-width: 460px; text-align: left;">
+      <div class="modal-sticky-header">
+        <h3 id="devModalTitle" style="margin: 0; color: #db2777;">⚙️ Device Permissions</h3>
+        <button id="closeDeviceDetailsBtn" class="popup-close-btn" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-scroll-body">
+        <input type="hidden" id="editDeviceId" />
+        
+        <div style="margin-bottom: 14px;">
+          <label style="display: block; font-size: 0.82rem; font-weight: 600; margin-bottom: 4px; color: #374151;">Device Name</label>
+          <div style="display: flex; gap: 6px;">
+            <input type="text" id="editDeviceNameInput" style="flex: 1; padding: 8px 12px; border: 1.5px solid #e5e7eb; border-radius: 8px; font-size: 0.9rem;" />
+            <button type="button" id="saveDeviceNameBtn" class="confirm-btn-secondary" style="font-size: 0.8rem;">Rename</button>
+          </div>
+        </div>
+
+        <div style="margin-bottom: 14px;">
+          <label for="editDevicePermLevel" style="display: block; font-size: 0.82rem; font-weight: 600; margin-bottom: 4px; color: #374151;">Permission Level</label>
+          <select id="editDevicePermLevel" class="setting-select" style="width: 100%;">
+            <option value="0">Level 0: Read-only (Sync tasks only, blocks remote actions)</option>
+            <option value="1">Level 1: Safe (Allows notes, sync & notifications)</option>
+            <option value="2">Level 2: Confirm on target device (Recommended)</option>
+            <option value="3">Level 3: Sensitive (Requires confirmation on target device)</option>
+            <option value="4">Level 4: Never automatic (Explicit approval each time)</option>
+          </select>
+          <span style="font-size: 0.75rem; color: #6b7280; display: block; margin-top: 4px;">Levels above 1 show a confirmation alert on the target device before running.</span>
+        </div>
+
+        <div style="margin-bottom: 16px;">
+          <label style="display: block; font-size: 0.82rem; font-weight: 600; margin-bottom: 6px; color: #374151;">Capabilities</label>
+          <div style="display: flex; flex-direction: column; gap: 8px; background: #fdf2f8; padding: 10px; border-radius: 8px;">
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; cursor: pointer;">
+              <input type="checkbox" id="capNoteToggle" checked />
+              <span>📝 Send Note / Link</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; cursor: pointer;">
+              <input type="checkbox" id="capOpenLinkToggle" checked />
+              <span>🌐 Open Link (Browser tab)</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; cursor: pointer;">
+              <input type="checkbox" id="capRingToggle" checked />
+              <span>🔔 Ring Phone (Play sound)</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; cursor: pointer;">
+              <input type="checkbox" id="capSyncToggle" checked />
+              <span>🔄 Instant Task & Reminder Sync</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Elevate Permission Password Group (Step 16b Rule 4) -->
+        <div id="elevatePasswordGroup" style="display: none; margin-bottom: 16px; background: #fff1f2; border: 1.5px solid #fecdd3; border-radius: 8px; padding: 10px;">
+          <label for="elevatePasswordInput" style="display: block; font-size: 0.82rem; font-weight: 700; margin-bottom: 4px; color: #9f1239;">
+            🔑 Password Verification Required
+          </label>
+          <p style="font-size: 0.76rem; color: #be123c; margin: 0 0 6px 0;">
+            Raising permission to Level 2 or higher, or enabling "Open Link", requires re-entering your account password.
+          </p>
+          <input type="password" id="elevatePasswordInput" placeholder="Enter account password" style="width: 100%; padding: 8px 12px; border: 1.5px solid #fda4af; border-radius: 6px; font-size: 0.88rem;" />
+        </div>
+
+        <!-- Quick Remote Testing Actions -->
+        <div style="margin-bottom: 16px; border-top: 1px solid #fce7f3; padding-top: 12px;">
+          <label style="display: block; font-size: 0.82rem; font-weight: 600; margin-bottom: 6px; color: #374151;">Test Remote Action</label>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+            <button type="button" id="testRingDeviceBtn" class="confirm-btn-secondary" style="font-size: 0.8rem; padding: 6px 10px;">🔔 Ring Device</button>
+            <button type="button" id="testSendNoteBtn" class="confirm-btn-secondary" style="font-size: 0.8rem; padding: 6px 10px;">📝 Send Note</button>
+            <button type="button" id="testSyncDeviceBtn" class="confirm-btn-secondary" style="font-size: 0.8rem; padding: 6px 10px;">🔄 Sync Now</button>
+          </div>
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #f3f4f6; padding-top: 12px;">
+          <button type="button" id="revokeDeviceBtn" class="purge-trigger-btn" style="margin-top: 0; padding: 6px 12px; font-size: 0.82rem;">🗑️ Revoke Device</button>
+          <div style="display: flex; gap: 6px;">
+            <button type="button" id="cancelDeviceDetailsBtn" class="confirm-btn-secondary">Cancel</button>
+            <button type="button" id="saveDevicePermissionsBtn" class="confirm-btn-primary">Save Changes</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TARGET DEVICE CONFIRMATION MODAL (For commands above Level 1 or open link) -->
+  <div class="confirm-modal-overlay" id="remoteConfirmModal" style="display: none; z-index: 100000;">
+    <div class="confirm-modal-card" style="max-width: 420px; text-align: center;">
+      <div class="confirm-icon-box" style="background: #fdf2f8; color: #db2777; font-size: 2rem;">📱</div>
+      <h3 style="margin-bottom: 6px; color: #1f2937;">Incoming Remote Command</h3>
+      <p id="remoteConfirmDesc" style="font-size: 0.88rem; color: #4b5563; margin-bottom: 16px; line-height: 1.5;">
+        A paired device wants to run an action.
+      </p>
+      <div id="remoteConfirmDetails" style="background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; font-size: 0.82rem; color: #374151; margin-bottom: 16px; text-align: left; max-height: 120px; overflow-y: auto; word-break: break-all;">
+      </div>
+      <div style="display: flex; justify-content: center; gap: 10px;">
+        <button type="button" id="denyRemoteCmdBtn" class="confirm-btn-secondary" style="flex: 1; justify-content: center;">Deny</button>
+        <button type="button" id="allowRemoteCmdBtn" class="confirm-btn-primary" style="flex: 1; justify-content: center;">Allow 🌸</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- RINGING ALERT DIALOG (When phone is ringing) -->
+  <div class="confirm-modal-overlay" id="ringAlertModal" style="display: none; z-index: 100001;">
+    <div class="confirm-modal-card" style="max-width: 380px; text-align: center; border: 3px solid #db2777;">
+      <div class="confirm-icon-box" style="background: #ffe4e6; color: #e11d48; font-size: 2.4rem;">🔔</div>
+      <h3 style="color: #be123c; margin-bottom: 8px;">Ringing This Device!</h3>
+      <p id="ringAlertSender" style="font-size: 0.9rem; color: #4b5563; margin-bottom: 18px;">
+        Remote ring command from your paired companion.
+      </p>
+      <button type="button" id="dismissRingBtn" class="confirm-btn-primary" style="width: 100%; justify-content: center; padding: 12px; font-size: 1rem; font-weight: 700;">
+        🔕 Stop Ringing
+      </button>
+    </div>
+  </div>
+
+  <!-- FIRST DEVICE TRUST MODAL (Requirement 4: Full-screen Trust this device prompt with password) -->
+  <div class="confirm-modal-overlay" id="firstDeviceTrustModal" style="display: none; z-index: 100002; background: rgba(15, 23, 42, 0.88); backdrop-filter: blur(8px);">
+    <div class="confirm-modal-card" style="max-width: 440px; text-align: center; border: 2px solid #ec4899; box-shadow: 0 25px 50px -12px rgba(236, 72, 153, 0.35); padding: 28px 24px;">
+      <div class="confirm-icon-box" style="background: #fdf2f8; color: #db2777; font-size: 2.5rem; margin: 0 auto 16px auto; width: 68px; height: 68px; display: flex; align-items: center; justify-content: center; border-radius: 50%;">🔐</div>
+      <h2 style="color: #1e293b; font-size: 1.35rem; font-weight: 700; margin-bottom: 8px;">Trust this device</h2>
+      <p style="font-size: 0.88rem; color: #4b5563; line-height: 1.5; margin-bottom: 18px;">
+        To protect your account and personal memories, your first device requires password verification before it can be trusted.
+      </p>
+      <form id="firstDeviceTrustForm" onsubmit="return false;" style="display: flex; flex-direction: column; gap: 14px;">
+        <div style="text-align: left;">
+          <label for="firstDeviceModalPasswordInput" style="display: block; font-size: 0.82rem; font-weight: 600; color: #374151; margin-bottom: 6px;">Enter your account password</label>
+          <input type="password" id="firstDeviceModalPasswordInput" placeholder="Account password" required autocomplete="current-password" style="width: 100%; box-sizing: border-box; padding: 11px 14px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 0.95rem;" />
+        </div>
+        <div id="firstDeviceModalError" style="display: none; color: #dc2626; font-size: 0.82rem; font-weight: 600; text-align: left;"></div>
+        <button type="submit" id="firstDeviceModalSubmitBtn" class="confirm-btn-primary" style="width: 100%; justify-content: center; padding: 12px; font-size: 0.95rem; font-weight: 700;">
+          ✓ Verify & Trust Device 🌸
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Status Notification Toast -->
+  <div id="toast" class="toast"></div>
+
+  <!-- Immediate Inline App Update Gate (Guarantees update modal triggers on laptops and phones) -->
   <script>
-    const BACKEND_URL = 'https://sinbha-backend.onrender.com';
-    let secondsLeft = 4;
-    let timer = null;
+    (function() {
+      async function triggerVersionGateCheck() {
+        try {
+          const res = await fetch('/api/app/version-check?t=' + Date.now(), { cache: 'no-store' });
+          if (!res.ok) return;
+          const data = await res.json();
 
-    async function checkHealth() {
-      const statusText = document.getElementById('statusText');
-      statusText.innerHTML = 'Pinging cloud server...';
+          let isNative = false;
+          let current = '1.0.0';
+          let latest = '1.0.6';
+          let minRequired = '1.0.0';
+          let downloadUrl = '';
+          let platform = 'App';
 
-      try {
-        const res = await fetch(`${BACKEND_URL}/api/health`, { cache: 'no-store' });
-        if (res.ok) {
-          statusText.innerHTML = 'Connected! Loading SINBHA... 🌸';
-          window.location.replace(BACKEND_URL);
-          return;
+          if (window.electronAPI && typeof window.electronAPI.getAppStatus === 'function') {
+            isNative = true;
+            platform = 'Windows';
+            minRequired = data.min_version_desktop || '1.0.0';
+            latest = data.latest_version_desktop || '1.0.6';
+            downloadUrl = data.download_url_desktop || 'https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA-Setup.exe';
+            try {
+              const st = await window.electronAPI.getAppStatus();
+              current = (st && st.version) ? st.version : '1.0.0';
+            } catch (e) {
+              current = '1.0.0';
+            }
+          } else if (window.Capacitor && (window.Capacitor.isNativePlatform() || (typeof window.Capacitor.isPluginAvailable === 'function' && window.Capacitor.isPluginAvailable('SinbhaNative')))) {
+            isNative = true;
+            platform = 'Android';
+            minRequired = data.min_version_android || '1.0.0';
+            latest = data.latest_version_android || '1.0.6';
+            downloadUrl = data.download_url_android || 'https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA.apk';
+            try {
+              if (window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative && typeof window.Capacitor.Plugins.SinbhaNative.getAppVersion === 'function') {
+                const vInfo = await window.Capacitor.Plugins.SinbhaNative.getAppVersion();
+                current = (vInfo && vInfo.versionName) ? vInfo.versionName : '1.0.0';
+              } else {
+                current = '1.0.0';
+              }
+            } catch (e) {
+              current = '1.0.0';
+            }
+          }
+
+          function isSemverOlder(c, m) {
+            const cp = (c || '').split('.').map(n => parseInt(n, 10) || 0);
+            const mp = (m || '').split('.').map(n => parseInt(n, 10) || 0);
+            for (let i = 0; i < Math.max(cp.length, mp.length); i++) {
+              if ((cp[i] || 0) < (mp[i] || 0)) return true;
+              if ((cp[i] || 0) > (mp[i] || 0)) return false;
+            }
+            return false;
+          }
+
+          if (isNative && (isSemverOlder(current, minRequired) || isSemverOlder(current, latest))) {
+            const isMandatory = isSemverOlder(current, minRequired);
+            const modal = document.getElementById('appUpdateGateModal');
+            if (modal) {
+              modal.style.display = 'flex';
+              const title = document.getElementById('appUpdateGateTitle');
+              const desc = document.getElementById('appUpdateGateDesc');
+              const link = document.getElementById('appUpdateDownloadLink');
+              const laterBtn = document.getElementById('appUpdateLaterBtn');
+
+              if (title) {
+                title.textContent = isMandatory ? ('Update Required for ' + platform) : ('New ' + platform + ' Version Available! 🌸');
+              }
+              if (desc) {
+                desc.innerHTML = isMandatory
+                  ? ('SINBHA v' + minRequired + ' is required to continue.<br>Your installed app (v' + current + ') is outdated. Please update now.')
+                  : ('A newer version of SINBHA (v' + latest + ') is available.<br>You currently have v' + current + '. Tap "Update Now" to install the update!');
+              }
+              if (link) {
+                link.href = downloadUrl;
+                link.onclick = function(e) {
+                  if (window.electronAPI && typeof window.electronAPI.openExternal === 'function') {
+                    e.preventDefault();
+                    window.electronAPI.openExternal(downloadUrl);
+                  } else if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Browser) {
+                    e.preventDefault();
+                    window.Capacitor.Plugins.Browser.open({ url: downloadUrl });
+                  } else {
+                    window.open(downloadUrl, '_system');
+                  }
+                };
+              }
+              if (laterBtn) {
+                laterBtn.style.display = 'block';
+                laterBtn.onclick = function() {
+                  modal.style.display = 'none';
+                };
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('Inline update gate error:', err);
         }
-      } catch (err) {
-        // Cold start in progress or network glitch
       }
 
-      secondsLeft = 5;
-      startCountdown();
-    }
-
-    function startCountdown() {
-      clearInterval(timer);
-      const countdownEl = document.getElementById('countdown');
-      const statusText = document.getElementById('statusText');
-
-      timer = setInterval(() => {
-        secondsLeft--;
-        if (countdownEl) countdownEl.textContent = secondsLeft;
-        statusText.innerHTML = `Connecting in <b>${secondsLeft}</b>s...`;
-
-        if (secondsLeft <= 0) {
-          clearInterval(timer);
-          checkHealth();
-        }
-      }, 1000);
-    }
-
-    document.getElementById('retryBtn').addEventListener('click', () => {
-      clearInterval(timer);
-      checkHealth();
-    });
-
-    // Run first check right away
-    checkHealth();
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function() {
+          triggerVersionGateCheck();
+          setTimeout(triggerVersionGateCheck, 1000);
+          setTimeout(triggerVersionGateCheck, 3000);
+        });
+      } else {
+        triggerVersionGateCheck();
+        setTimeout(triggerVersionGateCheck, 1000);
+        setTimeout(triggerVersionGateCheck, 3000);
+      }
+    })();
   </script>
+
+  <script src="/static/script.js?v=1.4.0"></script>
 </body>
 </html>

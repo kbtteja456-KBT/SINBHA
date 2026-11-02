@@ -479,7 +479,7 @@ async function safeLaunchDesktopApp(appNameOrTarget) {
           return { success: true, app: 'Visual Studio Code', method: 'shortcut', path: vsLnk, pid: verify.pid };
         }
 
-        return { success: false, error: 'Visual Studio Code not found on this computer' };
+        return { success: false, status: 'not_installed', error: 'not_installed', message: 'Visual Studio Code not found on this computer' };
       }
     }
 
@@ -515,7 +515,7 @@ async function safeLaunchDesktopApp(appNameOrTarget) {
       return { success: true, app: target, method: 'start_menu_shortcut', path: foundLnk, pid: verify.pid };
     }
 
-    return { success: false, error: `App '${target}' not found in allowlist or Start Menu` };
+    return { success: false, status: 'not_installed', error: 'not_installed', message: `App '${target}' not found in allowlist or Start Menu` };
   } catch (e) {
     return { success: false, error: e.message };
   }
@@ -1048,6 +1048,8 @@ async function openAppWithFallback(appName, preferredBrowser = 'chrome', userCon
   // Never silently fall back to a website without asking first!
   return {
     success: false,
+    status: 'not_installed',
+    error: 'not_installed',
     app_not_found: true,
     offer_website: true,
     fallback_url: fallbackUrl,

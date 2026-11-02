@@ -152,6 +152,18 @@
       </div>
     </div>
 
+    <!-- Persistent New Version Available Banner (Step C2.10 Version Safety) -->
+    <div id="newVersionBanner" class="top-pairing-banner" style="display: none; background: #ecfdf5; border-bottom: 2px solid #10b981; padding: 10px 16px; align-items: center; justify-content: space-between; gap: 12px; font-size: 0.86rem; color: #065f46; z-index: 50;">
+      <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+        <span style="font-size: 1.2rem;">✨</span>
+        <strong id="newVersionBannerTitle">New version available:</strong>
+        <span id="newVersionBannerText">An updated version is ready to install.</span>
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <a id="newVersionBannerDownloadBtn" href="#" target="_blank" class="confirm-btn-primary" style="padding: 5px 12px; font-size: 0.8rem; text-decoration: none; display: inline-flex; align-items: center; background: #059669; color: #fff; border-radius: 6px; font-weight: 700;">Update Now</a>
+      </div>
+    </div>
+
     <!-- Prominent Device Pairing Banner (Requirement 4: Obvious in app, no hunting in settings) -->
     <div id="topPairingBanner" class="top-pairing-banner" style="display: none; background: #fffbeb; border-bottom: 2px solid #f59e0b; padding: 10px 16px; align-items: center; justify-content: space-between; gap: 12px; font-size: 0.86rem; color: #92400e; z-index: 50;">
       <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
@@ -629,21 +641,36 @@
               📋 Copy Diagnostics (Safe / No Personal Data)
             </button>
 
-            <!-- One-Button Real Device Check (Step C2.9 Item 3) -->
-            <button type="button" id="btnRealDeviceCheck" class="confirm-btn-primary" style="width: 100%; margin-top: 10px; justify-content: center; font-size: 0.88rem; font-weight: 700; background: linear-gradient(135deg, #2563eb, #1d4ed8); color: #fff; border: none; border-radius: 8px; padding: 10px; cursor: pointer;">
-              🔍 Run Real Device Check (Cross-Device 6-App Test)
-            </button>
-
-            <!-- Real Device Self-Test Button (Step C2.5 Item 7) -->
-            <button type="button" id="runDeviceSelfTestBtn" class="confirm-btn-primary" style="width: 100%; margin-top: 10px; justify-content: center; font-size: 0.88rem; font-weight: 700; background: linear-gradient(135deg, #ec4899, #be185d); color: #fff; border: none; border-radius: 8px; padding: 10px; cursor: pointer;">
-              🚀 Run Local Client Self-Test
-            </button>
-            <div id="selfTestResultsContainer" style="display: none; margin-top: 10px; background: #fff; border: 1.5px solid #fbcfe8; border-radius: 8px; padding: 12px;">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <strong style="font-size: 0.85rem; color: #831843;">Real Device Test Results:</strong>
-                <span id="selfTestSummaryBadge" style="font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 12px; background: #e5e7eb; color: #374151;">Running...</span>
+            <!-- One-Button Real Device Check (Step C2.10 Item 1) -->
+            <div style="margin-top: 14px; border-top: 1px solid #fbcfe8; padding-top: 12px;">
+              <div style="font-weight: 700; font-size: 0.85rem; color: #1e3a8a; margin-bottom: 4px;">📡 Remote Command Real Device Check</div>
+              <p style="font-size: 0.76rem; color: #6b7280; margin-bottom: 8px;">Tests end-to-end delivery through the identical chat path across all connected devices.</p>
+              <button type="button" id="btnRealDeviceCheck" class="confirm-btn-primary" style="width: 100%; justify-content: center; font-size: 0.88rem; font-weight: 700; background: linear-gradient(135deg, #2563eb, #1d4ed8); color: #fff; border: none; border-radius: 8px; padding: 10px; cursor: pointer;">
+                🔍 Run Real Device Check (Cross-Device 6-App Test)
+              </button>
+              <div id="realDeviceCheckResultsContainer" style="display: none; margin-top: 10px; background: #fff; border: 1.5px solid #bfdbfe; border-radius: 8px; padding: 12px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <strong style="font-size: 0.85rem; color: #1e3a8a;">Remote Path Verification:</strong>
+                  <span id="realDeviceSummaryBadge" style="font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 12px; background: #e5e7eb; color: #374151;">Ready</span>
+                </div>
+                <div id="realDeviceResultsList" style="display: flex; flex-direction: column; gap: 6px; font-size: 0.8rem;"></div>
               </div>
-              <div id="selfTestList" style="display: flex; flex-direction: column; gap: 6px; font-size: 0.8rem;"></div>
+            </div>
+
+            <!-- Local Launcher Test (Step C2.10 Item 1: Separate section, never mixed with remote check) -->
+            <div style="margin-top: 14px; border-top: 1px dashed #fbcfe8; padding-top: 12px;">
+              <div style="font-weight: 700; font-size: 0.85rem; color: #9d174d; margin-bottom: 4px;">⚙️ Local Launcher Test</div>
+              <p style="font-size: 0.76rem; color: #6b7280; margin-bottom: 8px;">Tests client OS-level app launcher mechanics directly on this computer/phone.</p>
+              <button type="button" id="runDeviceSelfTestBtn" class="confirm-btn-primary" style="width: 100%; justify-content: center; font-size: 0.88rem; font-weight: 700; background: linear-gradient(135deg, #ec4899, #be185d); color: #fff; border: none; border-radius: 8px; padding: 10px; cursor: pointer;">
+                🚀 Run Local Launcher Test
+              </button>
+              <div id="selfTestResultsContainer" style="display: none; margin-top: 10px; background: #fff; border: 1.5px solid #fbcfe8; border-radius: 8px; padding: 12px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <strong style="font-size: 0.85rem; color: #831843;">Local Launcher Results:</strong>
+                  <span id="selfTestSummaryBadge" style="font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 12px; background: #e5e7eb; color: #374151;">Ready</span>
+                </div>
+                <div id="selfTestList" style="display: flex; flex-direction: column; gap: 6px; font-size: 0.8rem;"></div>
+              </div>
             </div>
           </div>
         </div>

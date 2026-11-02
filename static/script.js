@@ -2765,10 +2765,20 @@ document.addEventListener("DOMContentLoaded", () => {
         const isMandatory = isOlderVersion(current, minRequired);
         const isUpdateAvailable = isOlderVersion(current, latestAvail);
 
+        const topBanner = document.getElementById("newVersionBanner");
+        const topBannerText = document.getElementById("newVersionBannerText");
+        const topBannerLink = document.getElementById("newVersionBannerDownloadBtn");
+
         if (isMandatory || isUpdateAvailable) {
           if (statusText) {
             statusText.textContent = `⚡ Update available: v${latestAvail}`;
             statusText.style.color = "#d97706";
+          }
+
+          if (topBanner) {
+            topBanner.style.display = "flex";
+            if (topBannerText) topBannerText.textContent = `v${latestAvail} is ready to install (current: v${current}).`;
+            if (topBannerLink) topBannerLink.href = downloadUrl;
           }
 
           const gateModal = document.getElementById("appUpdateGateModal");
@@ -2777,14 +2787,14 @@ document.addEventListener("DOMContentLoaded", () => {
           const gateLink = document.getElementById("appUpdateDownloadLink");
           const laterBtn = document.getElementById("appUpdateLaterBtn");
 
-          if (gateModal) {
+          if (gateModal && (isMandatory || isManual)) {
             gateModal.style.display = "flex";
             if (gateTitle) {
               gateTitle.textContent = isMandatory ? `Update Required for ${platformName}` : `New ${platformName} Version Available! 🌸`;
             }
             if (gateDesc) {
               gateDesc.innerHTML = isMandatory
-                ? `SINBHA v${minRequired} is required to continue.<br>Your installed app (v${current}) is outdated. Please update now.`
+                ? `SINBHA v${minRequired} is required to continue.<br>Your installed app (v${current}) is outdated. Please update now to continue using remote commands.`
                 : `A newer version of SINBHA (v${latestAvail}) is available.<br>You have v${current}. Tap "Update Now" to get the latest companion features!`;
             }
             if (gateLink) {
@@ -2801,6 +2811,7 @@ document.addEventListener("DOMContentLoaded", () => {
             showToast(`⚡ New version v${latestAvail} is available!`);
           }
         } else {
+          if (topBanner) topBanner.style.display = "none";
           if (statusText) {
             statusText.textContent = `● You're already up to date (v${current}) ✨`;
             statusText.style.color = "#16a34a";
@@ -2939,14 +2950,22 @@ document.addEventListener("DOMContentLoaded", () => {
         const isElectron = !!window.electronAPI;
         lines.push(`Platform: ${isCapacitor ? "Android Native (Capacitor)" : (isElectron ? "Windows Desktop (Electron)" : "Web Browser")}`);
 
+        // Step C2.10: Display Native App Version and Web Client Version separately
+        let nativeVer = "None (Pure Web Client)";
         if (isElectron && electronStatus) {
-          lines.push(`App Version: v${electronStatus.version || "1.4.21"}`);
+          nativeVer = `v${electronStatus.version || "1.4.22"} (Windows Electron)`;
+        } else if (diag) {
+          nativeVer = `v${diag.versionName || "1.4.22"} (Android Native, versionCode: ${diag.versionCode || 49})`;
+        }
+        lines.push(`Native App Version: ${nativeVer}`);
+        lines.push(`Web Client Version: v1.4.22`);
+
+        if (isElectron && electronStatus) {
           lines.push(`Backend URL: ${electronStatus.backendUrl || "Configured"}`);
           lines.push(`Reminders Paused: ${electronStatus.paused ? "Yes" : "No"}`);
           lines.push(`DND: ${electronStatus.dnd ? "Enabled" : "Disabled"}`);
           lines.push(`Start with Windows: ${electronStatus.startWithWindows ? "Enabled" : "Disabled"}`);
         } else if (diag) {
-          lines.push(`App Version: v${diag.versionName} (versionCode: ${diag.versionCode})`);
           if (diag.deviceInfo) {
             lines.push(`Device: ${diag.deviceInfo.manufacturer} ${diag.deviceInfo.brand} ${diag.deviceInfo.model} (SDK ${diag.deviceInfo.androidSdk})`);
           }
@@ -3079,51 +3098,55 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     }
 
-    // Step C2.9 Item 3: One-Button "Real device check"
+    // Step C2.10 Item 1: One-Button "Real device check"
     const btnRealDeviceCheck = document.getElementById("btnRealDeviceCheck");
+    const realDeviceResultsContainer = document.getElementById("realDeviceCheckResultsContainer");
+    const realDeviceSummaryBadge = document.getElementById("realDeviceSummaryBadge");
+    const realDeviceResultsList = document.getElementById("realDeviceResultsList");
+
     if (btnRealDeviceCheck) {
       btnRealDeviceCheck.addEventListener("click", async () => {
         btnRealDeviceCheck.disabled = true;
         btnRealDeviceCheck.textContent = "⏳ Running Real Device Check (6 Apps)...";
-        if (selfTestResultsContainer) selfTestResultsContainer.style.display = "block";
-        if (selfTestSummaryBadge) {
-          selfTestSummaryBadge.textContent = "Testing...";
-          selfTestSummaryBadge.style.background = "#dbeafe";
-          selfTestSummaryBadge.style.color = "#1e40af";
+        if (realDeviceResultsContainer) realDeviceResultsContainer.style.display = "block";
+        if (realDeviceSummaryBadge) {
+          realDeviceSummaryBadge.textContent = "Testing...";
+          realDeviceSummaryBadge.style.background = "#dbeafe";
+          realDeviceSummaryBadge.style.color = "#1e40af";
         }
-        if (selfTestList) {
-          selfTestList.innerHTML = '<div style="color: #6b7280; font-style: italic;">Sending 6 commands through chat path to all connected devices...</div>';
+        if (realDeviceResultsList) {
+          realDeviceResultsList.innerHTML = '<div style="color: #6b7280; font-style: italic;">Sending 6 commands through chat path to all connected devices...</div>';
         }
 
         try {
           const res = await fetch("/api/devices/real-device-check", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({})
+            body: JSON.stringify({ rounds: 1 })
           });
           const data = await res.json();
 
           if (!data.success) {
-            if (selfTestSummaryBadge) {
-              selfTestSummaryBadge.textContent = data.error || "Failed";
-              selfTestSummaryBadge.style.background = "#fee2e2";
-              selfTestSummaryBadge.style.color = "#991b1b";
+            if (realDeviceSummaryBadge) {
+              realDeviceSummaryBadge.textContent = data.error || "Failed";
+              realDeviceSummaryBadge.style.background = "#fee2e2";
+              realDeviceSummaryBadge.style.color = "#991b1b";
             }
-            if (selfTestList) {
-              selfTestList.innerHTML = `<div style="color: #ef4444; font-weight: 600;">${escapeHtml(data.message || data.error || "Device check failed")}</div>`;
+            if (realDeviceResultsList) {
+              realDeviceResultsList.innerHTML = `<div style="color: #ef4444; font-weight: 600;">${escapeHtml(data.message || data.error || "Device check failed")}</div>`;
             }
             return;
           }
 
           const devices = data.devices || [];
           if (devices.length === 0) {
-            if (selfTestSummaryBadge) {
-              selfTestSummaryBadge.textContent = "No Devices";
-              selfTestSummaryBadge.style.background = "#fee2e2";
-              selfTestSummaryBadge.style.color = "#991b1b";
+            if (realDeviceSummaryBadge) {
+              realDeviceSummaryBadge.textContent = "No Devices";
+              realDeviceSummaryBadge.style.background = "#fee2e2";
+              realDeviceSummaryBadge.style.color = "#991b1b";
             }
-            if (selfTestList) {
-              selfTestList.innerHTML = '<div style="color: #ef4444;">No trusted devices found. Please register or connect your laptop or phone first.</div>';
+            if (realDeviceResultsList) {
+              realDeviceResultsList.innerHTML = '<div style="color: #ef4444;">No trusted devices found. Please register or connect your laptop or phone first.</div>';
             }
             return;
           }
@@ -3135,11 +3158,52 @@ document.addEventListener("DOMContentLoaded", () => {
             const cmds = d.commands || [];
             totalCommands += cmds.length;
             const cmdRows = cmds.map(c => {
-              const isOk = c.result === "succeeded" || (c.app === "nonexistent_test_app_xyz" && c.result === "failed");
+              // Step C2.10 Item 2: Real apps pass ONLY on "succeeded". Nonexistent app passes ONLY on "not_installed".
+              // A timeout is ALWAYS a failure.
+              const isNonexistent = c.app === "nonexistent_test_app_xyz";
+              const isOk = c.passed === true || (isNonexistent ? c.result === "not_installed" : c.result === "succeeded");
               if (isOk) totalSuccess++;
-              const icon = isOk ? "✅" : "⚠️";
-              const badgeBg = isOk ? "#dcfce7" : "#fef3c7";
-              const badgeColor = isOk ? "#166534" : "#92400e";
+
+              const icon = isOk ? "✅" : "❌";
+              const badgeBg = isOk ? "#dcfce7" : "#fee2e2";
+              const badgeColor = isOk ? "#166534" : "#991b1b";
+
+              // Step C2.10 Item 3: Render stage table for failed commands
+              let stageTableHtml = "";
+              if (!isOk && c.stage_table && Array.isArray(c.stage_table)) {
+                const stageRows = c.stage_table.map(s => {
+                  const isFail = s.is_failure_point;
+                  const rowBg = isFail ? "#fef2f2" : "#ffffff";
+                  const textCol = isFail ? "#991b1b" : "#374151";
+                  const statusCol = s.status === "OK" ? "#166534" : "#dc2626";
+                  return `
+                    <tr style="background: ${rowBg}; border-bottom: 1px solid #e5e7eb;">
+                      <td style="padding: 2px 4px; font-weight: ${isFail ? '700' : 'normal'}; color: ${textCol};">${escapeHtml(s.description)}</td>
+                      <td style="padding: 2px 4px; font-weight: 700; color: ${statusCol};">${escapeHtml(s.status)}</td>
+                      <td style="padding: 2px 4px; font-family: monospace; font-size: 0.68rem; color: #6b7280;">${s.timestamp ? escapeHtml(s.timestamp) : '—'}</td>
+                    </tr>
+                  `;
+                }).join("");
+
+                stageTableHtml = `
+                  <div style="margin-top: 6px; padding: 6px; background: #fff5f5; border: 1px solid #fecaca; border-radius: 6px;">
+                    <div style="color: #991b1b; font-weight: 700; font-size: 0.72rem; margin-bottom: 3px;">
+                      ⚠️ Failure point: missing stage <code>${escapeHtml(c.first_missing_stage || 'unknown')}</code>
+                    </div>
+                    <table style="width: 100%; border-collapse: collapse; font-size: 0.70rem;">
+                      <thead>
+                        <tr style="text-align: left; background: #f3f4f6; border-bottom: 1px solid #d1d5db;">
+                          <th style="padding: 2px 4px;">Stage</th>
+                          <th style="padding: 2px 4px;">Status</th>
+                          <th style="padding: 2px 4px;">Timestamp</th>
+                        </tr>
+                      </thead>
+                      <tbody>${stageRows}</tbody>
+                    </table>
+                  </div>
+                `;
+              }
+
               return `
                 <div style="background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 10px; margin-bottom: 4px;">
                   <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -3152,6 +3216,7 @@ document.addEventListener("DOMContentLoaded", () => {
                   <div style="font-size: 0.70rem; color: #6b7280; font-family: monospace; margin-top: 2px;">
                     ${escapeHtml(c.message || '')}
                   </div>
+                  ${stageTableHtml}
                 </div>
               `;
             }).join("");
@@ -3166,25 +3231,26 @@ document.addEventListener("DOMContentLoaded", () => {
             `;
           }).join("");
 
-          if (selfTestList) {
-            selfTestList.innerHTML = deviceBlocksHtml;
+          if (realDeviceResultsList) {
+            realDeviceResultsList.innerHTML = deviceBlocksHtml;
           }
-          if (selfTestSummaryBadge) {
-            selfTestSummaryBadge.textContent = `${totalSuccess}/${totalCommands} Verified`;
-            selfTestSummaryBadge.style.background = totalSuccess === totalCommands ? "#dcfce7" : "#fef3c7";
-            selfTestSummaryBadge.style.color = totalSuccess === totalCommands ? "#166534" : "#92400e";
+          if (realDeviceSummaryBadge) {
+            const allPassed = (totalSuccess === totalCommands) && (totalCommands > 0);
+            realDeviceSummaryBadge.textContent = `${totalSuccess}/${totalCommands} Verified`;
+            realDeviceSummaryBadge.style.background = allPassed ? "#dcfce7" : "#fee2e2";
+            realDeviceSummaryBadge.style.color = allPassed ? "#166534" : "#991b1b";
           }
 
           // Refresh Diagnostics display with the updated trace
           await loadCompanionDiagnostics();
         } catch (err) {
-          if (selfTestSummaryBadge) {
-            selfTestSummaryBadge.textContent = "Error";
-            selfTestSummaryBadge.style.background = "#fee2e2";
-            selfTestSummaryBadge.style.color = "#991b1b";
+          if (realDeviceSummaryBadge) {
+            realDeviceSummaryBadge.textContent = "Error";
+            realDeviceSummaryBadge.style.background = "#fee2e2";
+            realDeviceSummaryBadge.style.color = "#991b1b";
           }
-          if (selfTestList) {
-            selfTestList.innerHTML = `<div style="color: #ef4444;">Real device check failed: ${escapeHtml(err.message)}</div>`;
+          if (realDeviceResultsList) {
+            realDeviceResultsList.innerHTML = `<div style="color: #ef4444;">Real device check failed: ${escapeHtml(err.message)}</div>`;
           }
         } finally {
           btnRealDeviceCheck.disabled = false;
@@ -3629,7 +3695,7 @@ document.addEventListener("DOMContentLoaded", () => {
             if (deviceWs && deviceWs.readyState === WebSocket.OPEN) {
               deviceWs.send(JSON.stringify({ type: "ping" }));
             }
-          }, 20000);
+          }, 15000); // 15s ping/pong beats Render 55s proxy idle timeout
         };
 
         deviceWs.onmessage = (event) => {
@@ -3642,7 +3708,8 @@ document.addEventListener("DOMContentLoaded", () => {
           }
         };
 
-        deviceWs.onclose = () => {
+        deviceWs.onclose = (evt) => {
+          console.warn(`[DeviceWS] Closed: code=${evt ? evt.code : 'unknown'}, reason=${evt ? (evt.reason || 'none') : 'none'}`);
           deviceWs = null;
           if (wsHeartbeatTimer) {
             clearInterval(wsHeartbeatTimer);
@@ -3654,6 +3721,10 @@ document.addEventListener("DOMContentLoaded", () => {
               connectDeviceWebSocket(deviceId);
             }
           }, 3000);
+        };
+
+        deviceWs.onerror = (err) => {
+          console.warn("[DeviceWS] Error encountered:", err);
         };
       } catch (e) {
         console.warn("WebSocket init error:", e);
@@ -3827,16 +3898,18 @@ document.addEventListener("DOMContentLoaded", () => {
       modal.style.display = "flex";
     }
 
-    // Reports command lifecycle transition (started, succeeded, failed) back to server (Step C2.5)
+    // Reports command lifecycle transition (started, succeeded, not_installed, failed) back to server (Step C2.5 & C2.10)
     async function reportCommandLifecycle(commandId, status, result = null, error = null) {
       if (!commandId) return;
+      const clientTs = new Date().toISOString();
       const packet = {
         type: "command_status",
         command_id: commandId,
         id: commandId,
         status: status,
         result: result,
-        error: error
+        error: error,
+        client_timestamp: clientTs
       };
       if (deviceWs && deviceWs.readyState === WebSocket.OPEN) {
         try {
@@ -4730,6 +4803,11 @@ document.addEventListener("DOMContentLoaded", () => {
     // Startup: Verify Authentication status first
     checkAuthStatus();
     checkAppVersionGate(false);
+
+    // Step C2.10: Check server versions every 3 hours
+    setInterval(() => {
+      checkAppVersionGate(false);
+    }, 3 * 60 * 60 * 1000);
 
 
 

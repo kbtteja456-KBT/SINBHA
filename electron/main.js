@@ -382,11 +382,11 @@ async function checkPendingDesktopCommandsLoop() {
           let handlerName = 'electron:unknown';
 
           if (cmdId) {
-            // Report started
+            // Report started with client timestamp
             await fetch(`${config.BACKEND_URL}/api/devices/command-status`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'Cookie': cookieHeader },
-              body: JSON.stringify({ command_id: cmdId, status: 'started' })
+              body: JSON.stringify({ command_id: cmdId, status: 'started', client_timestamp: timeReceived })
             }).catch(() => {});
           }
 
@@ -409,7 +409,8 @@ async function checkPendingDesktopCommandsLoop() {
           }
 
           const timeSent = new Date().toISOString();
-          const st = outcome && outcome.success ? (outcome.status || 'succeeded') : 'failed';
+          const isNotInstalled = outcome && (outcome.status === 'not_installed' || outcome.app_not_found || outcome.error === 'not_installed');
+          const st = outcome && outcome.success ? (outcome.status || 'succeeded') : (isNotInstalled ? 'not_installed' : 'failed');
           recordCommandTrace(cmdId, type, handlerName, outcome, timeReceived, timeSent);
 
           if (cmdId) {
@@ -420,14 +421,15 @@ async function checkPendingDesktopCommandsLoop() {
                 command_id: cmdId,
                 status: st,
                 result: outcome,
-                error: outcome && outcome.error ? outcome.error : undefined
+                error: outcome && outcome.error ? outcome.error : undefined,
+                client_timestamp: timeSent
               })
             }).catch(() => {});
 
             await fetch(`${config.BACKEND_URL}/api/devices/commands/${encodeURIComponent(cmdId)}/ack`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'Cookie': cookieHeader },
-              body: JSON.stringify({ status: 'executed', command_id: cmdId, result: outcome })
+              body: JSON.stringify({ status: st === 'not_installed' ? 'not_installed' : 'executed', command_id: cmdId, result: outcome, client_timestamp: timeSent })
             }).catch(() => {});
           }
         }
@@ -856,9 +858,9 @@ if (!gotTheLock) {
     setTimeout(checkDueRemindersLoop, 3000);
     setInterval(checkDueRemindersLoop, config.REMINDER_POLL_INTERVAL_SECONDS * 1000);
 
-    // Real-time remote command poller (2.5s loop for instant execution)
+    // Real-time remote command poller (2.0s loop for guaranteed sub-3s delivery)
     setTimeout(checkPendingDesktopCommandsLoop, 1500);
-    setInterval(checkPendingDesktopCommandsLoop, 2500);
+    setInterval(checkPendingDesktopCommandsLoop, 2000);
 
     // Auto-update & What's New checks
     setupAutoUpdater();

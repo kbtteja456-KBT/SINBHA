@@ -169,7 +169,7 @@ class SinbhaCompanionService : Service() {
 
     private fun initOkHttp() {
         okHttpClient = OkHttpClient.Builder()
-            .pingInterval(30, TimeUnit.SECONDS)
+            .pingInterval(15, TimeUnit.SECONDS)
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(0, TimeUnit.SECONDS) // Infinite read timeout for long-lived WebSocket
             .build()
@@ -309,14 +309,19 @@ class SinbhaCompanionService : Service() {
             override fun onClosed(ws: WebSocket, code: Int, reason: String) {
                 prefs.wsConnected = false
                 isWsConnecting = false
+                val msg = "WebSocket closed code=$code reason=$reason"
+                prefs.lastWsError = msg
+                android.util.Log.i("SinbhaWS", msg)
                 scheduleWsReconnect()
             }
 
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
                 prefs.wsConnected = false
                 isWsConnecting = false
-                val err = t.message ?: "WebSocket failure"
+                val code = response?.code ?: -1
+                val err = "WebSocket failure code=$code error=${t.message ?: "unknown"}"
                 prefs.lastWsError = err
+                android.util.Log.e("SinbhaWS", err, t)
                 scheduleWsReconnect()
             }
         })
@@ -338,10 +343,14 @@ class SinbhaCompanionService : Service() {
     private fun sendWsStatus(commandId: String, status: String, result: JSONObject? = null, error: String? = null) {
         try {
             if (prefs.wsConnected && webSocket != null) {
+                val nowIso = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).apply {
+                    timeZone = java.util.TimeZone.getTimeZone("UTC")
+                }.format(java.util.Date())
                 val payload = JSONObject().apply {
                     put("type", "command_status")
                     put("command_id", commandId)
                     put("status", status)
+                    put("client_timestamp", nowIso)
                     if (result != null) put("result", result)
                     if (!error.isNullOrBlank()) put("error", error)
                 }
@@ -461,10 +470,18 @@ class SinbhaCompanionService : Service() {
                         apiClient.reportCommandStatus(cmdId, "needs_tap", result = resObj, error = err)
                         sendWsStatus(cmdId, "needs_tap", result = resObj, error = err)
                     } else {
-                        finalOutcome = "failed"
+                        val isNotInstalled = launchResult.error?.contains("not installed", ignoreCase = true) == true ||
+                                              launchResult.error?.contains("not found", ignoreCase = true) == true ||
+                                              launchResult.error?.contains("No installed app", ignoreCase = true) == true
+                        finalOutcome = if (isNotInstalled) "not_installed" else "failed"
                         val err = launchResult.error ?: "App '${launchResult.app}' is not installed on this Android device."
-                        apiClient.reportCommandStatus(cmdId, "failed", error = err)
-                        sendWsStatus(cmdId, "failed", error = err)
+                        val resObj = JSONObject().apply {
+                            put("app", launchResult.app)
+                            put("status", finalOutcome)
+                            put("error", err)
+                        }
+                        apiClient.reportCommandStatus(cmdId, finalOutcome, result = resObj, error = err)
+                        sendWsStatus(cmdId, finalOutcome, result = resObj, error = err)
                     }
                 }
                 "open_url" -> {

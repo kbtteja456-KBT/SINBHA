@@ -52,12 +52,36 @@ def parse_semver(ver: str) -> tuple:
 
 MIN_COMPATIBLE_CLIENT_VERSION = "1.4.21"
 
-def is_client_version_supported(client_ver: str, min_ver: str = None) -> bool:
-    """Returns True if client_ver >= min_ver (Step C2.9 Item 8)."""
+
+def get_effective_min_version(platform: str = None) -> str:
+    """
+    Step C2.10 Version Safety: Returns the effective minimum compatible version.
+    Never allows the minimum version to be set above the latest published version.
+    """
+    latest = get_app_version()
+    env_min = os.getenv("MIN_CLIENT_VERSION")
+    if not env_min:
+        if platform and str(platform).lower() in ("android", "phone", "mobile"):
+            env_min = os.getenv("MIN_APP_VERSION_ANDROID", MIN_COMPATIBLE_CLIENT_VERSION)
+        else:
+            env_min = os.getenv("MIN_APP_VERSION_DESKTOP", MIN_COMPATIBLE_CLIENT_VERSION)
+
+    if parse_semver(env_min) > parse_semver(latest):
+        # Clamped to prevent accidental lockout
+        return latest
+    return env_min
+
+
+def is_client_version_supported(client_ver: str, min_ver: str = None, platform: str = None) -> bool:
+    """Returns True if client_ver >= min_ver (Step C2.9 & C2.10)."""
     if not client_ver:
         return True  # If unknown legacy or not reported yet, allow capability handshake to decide
     if min_ver is None:
-        min_ver = os.getenv("MIN_CLIENT_VERSION", MIN_COMPATIBLE_CLIENT_VERSION)
+        min_ver = get_effective_min_version(platform)
+    else:
+        latest = get_app_version()
+        if parse_semver(min_ver) > parse_semver(latest):
+            min_ver = latest
     return parse_semver(client_ver) >= parse_semver(min_ver)
 
 

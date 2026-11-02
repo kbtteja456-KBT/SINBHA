@@ -1976,7 +1976,8 @@ async def device_websocket_endpoint(websocket: WebSocket):
                 st = msg.get("status") or "succeeded"
                 res_data = msg.get("result")
                 err_data = msg.get("error")
-                relay_manager.update_command_status(user_id, cid, st, result=res_data, error=err_data)
+                client_ts = msg.get("timestamp") or msg.get("time")
+                relay_manager.update_command_status(user_id, cid, st, result=res_data, error=err_data, client_timestamp=client_ts)
             elif msg_type == "device_status":
                 platform = msg.get("platform", "unknown")
                 version = msg.get("version") or get_app_version()
@@ -1998,10 +1999,14 @@ async def device_websocket_endpoint(websocket: WebSocket):
                 notifs = msg.get("notifications") or []
                 relay_manager.store_user_notifications(user_id, notifs)
 
-    except WebSocketDisconnect:
-        pass
-    except Exception:
-        pass
+    except WebSocketDisconnect as e:
+        logger.info(f"WebSocket closed for user={user_id} dev={device_id} code={e.code} reason={e.reason or 'None'}")
+        if user_id and device_id:
+            db.update_device_presence(user_id, device_id, websocket_connected=False, last_error=f"WS closed code={e.code} reason={e.reason or 'None'}")
+    except Exception as ex:
+        logger.warning(f"WebSocket error for user={user_id} dev={device_id}: {ex}")
+        if user_id and device_id:
+            db.update_device_presence(user_id, device_id, websocket_connected=False, last_error=f"WS error: {ex}")
     finally:
         if user_id and device_id:
             relay_manager.unregister_websocket(user_id, device_id, websocket)
@@ -2010,8 +2015,8 @@ async def device_websocket_endpoint(websocket: WebSocket):
 @app.post("/api/devices/command-status")
 async def update_device_command_status_endpoint(payload: dict, user: dict = Depends(get_device_command_user)):
     """
-    Step C2.6 Item 2: Receives command lifecycle updates (received, started, succeeded, failed, needs_tap)
-    from companion devices. Resolves the server's confirmation wait.
+    Step C2.6 & C2.10: Receives command lifecycle updates (received, started, succeeded, failed, not_installed, needs_tap)
+    from companion devices. Resolves the server's confirmation wait and records lifecycle timestamps.
     """
     cid = payload.get("command_id") or payload.get("id")
     if not cid:
@@ -2019,7 +2024,10 @@ async def update_device_command_status_endpoint(payload: dict, user: dict = Depe
     st = payload.get("status", "succeeded")
     res_data = payload.get("result")
     err_data = payload.get("error")
-    updated = relay_manager.update_command_status(user["id"], cid, st, result=res_data, error=err_data)
+    client_ts = payload.get("timestamp") or payload.get("time")
+    updated = relay_manager.update_command_status(
+        user["id"], cid, st, result=res_data, error=err_data, client_timestamp=client_ts
+    )
     return {"success": True, "lifecycle": updated}
 
 
@@ -2056,6 +2064,7 @@ async def run_real_device_check_endpoint(
     device_results = []
     laptop_apps = ["notepad", "calculator", "vscode", "chrome", "whatsapp", "nonexistent_test_app_xyz"]
     phone_apps = ["settings", "camera", "files", "snapchat", "whatsapp", "nonexistent_test_app_xyz"]
+    num_rounds = min(3, max(1, int((payload or {}).get("rounds", 1))))
 
     for d in trusted:
         platform = (d.get("platform") or "").lower()
@@ -2065,26 +2074,72 @@ async def run_real_device_check_endpoint(
         app_list = laptop_apps if is_laptop else phone_apps
 
         results_for_dev = []
+        all_passed = True
+
         for app_name in app_list:
-            t0 = time.time()
-            try:
-                res = await handle_open_app(user_id, {"name": app_name, "target_device": dev_id}, ctx)
-            except Exception as e:
-                res = {"success": False, "status": "failed", "error": str(e), "message": f"Exception: {e}"}
-            elapsed_ms = int((time.time() - t0) * 1000)
+            round_runs = []
+            is_nonexistent = (app_name == "nonexistent_test_app_xyz")
+            app_all_passed = True
 
-            st = res.get("status") or ("succeeded" if res.get("success") else "failed")
-            received = st in ("succeeded", "started", "received", "not_installed", "needs_tap", "sent_not_verified")
-            started = st in ("succeeded", "started", "not_installed", "needs_tap", "sent_not_verified")
+            for r_idx in range(num_rounds):
+                t0 = time.time()
+                try:
+                    res = await handle_open_app(user_id, {"name": app_name, "target_device": dev_id}, ctx)
+                except Exception as e:
+                    res = {"success": False, "status": "failed", "error": str(e), "message": f"Exception: {e}"}
+                elapsed_ms = int((time.time() - t0) * 1000)
 
+                st = res.get("status") or ("succeeded" if res.get("success") else "failed")
+                received = st in ("succeeded", "started", "received", "not_installed", "needs_tap", "sent_not_verified")
+                started = st in ("succeeded", "started", "not_installed", "needs_tap", "sent_not_verified")
+
+                # Step C2.10 Item 2: Real apps pass ONLY on "succeeded". Nonexistent app passes ONLY on "not_installed".
+                # A timeout is ALWAYS a FAIL.
+                run_pass = False
+                if is_nonexistent:
+                    run_pass = (st == "not_installed")
+                else:
+                    run_pass = (st == "succeeded")
+
+                if not run_pass:
+                    app_all_passed = False
+                    all_passed = False
+
+                # Step C2.10 Item 3: Compile stage table with server and device timestamps
+                stages = res.get("stages") or {}
+                stage_table = res.get("stage_table")
+                first_missing = res.get("first_missing_stage")
+                if not stage_table:
+                    stage_table, first_missing = db.format_stage_table(stages)
+
+                round_runs.append({
+                    "round": r_idx + 1,
+                    "result": st,
+                    "passed": run_pass,
+                    "sent": True,
+                    "received": received,
+                    "started": started,
+                    "message": res.get("message") or res.get("error") or st,
+                    "time_taken_ms": elapsed_ms,
+                    "stages": stages,
+                    "stage_table": stage_table,
+                    "first_missing_stage": first_missing,
+                })
+
+            last_run = round_runs[-1]
             results_for_dev.append({
                 "app": app_name,
                 "sent": True,
-                "received": received,
-                "started": started,
-                "result": st,
-                "message": res.get("message") or res.get("error") or st,
-                "time_taken_ms": elapsed_ms
+                "received": last_run["received"],
+                "started": last_run["started"],
+                "result": last_run["result"],
+                "passed": app_all_passed,
+                "message": last_run["message"],
+                "time_taken_ms": last_run["time_taken_ms"],
+                "stages": last_run["stages"],
+                "stage_table": last_run["stage_table"],
+                "first_missing_stage": last_run["first_missing_stage"],
+                "rounds": round_runs,
             })
 
         device_results.append({
@@ -2092,13 +2147,15 @@ async def run_real_device_check_endpoint(
             "name": dev_name,
             "platform": platform,
             "client_version": d.get("client_version"),
-            "commands": results_for_dev
+            "all_passed": all_passed,
+            "commands": results_for_dev,
         })
 
     return {
         "success": True,
         "timestamp": time.time(),
-        "devices": device_results
+        "rounds": num_rounds,
+        "devices": device_results,
     }
 
 

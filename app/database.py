@@ -2553,8 +2553,46 @@ def set_active_ai_provider(user_id: int, provider: str) -> str:
 
 # ----------------- Persistent Device Commands & Multi-Worker Presence (Step C2.8) -----------------
 
+def format_stage_table(stages: dict) -> Tuple[List[dict], Optional[str]]:
+    """
+    Step C2.10 Item 3:
+    Builds the 6-stage lifecycle table for command execution:
+    1. created (Server)
+    2. delivered (Server -> Device via WS or Polled)
+    3. received (Device companion handler)
+    4. started (App launcher execution started)
+    5. result_sent (Device finished & sent result)
+    6. result_stored (Database commit)
+    Identifies the exact first missing stage as the point of failure.
+    """
+    stage_defs = [
+        ("created", "Server created command"),
+        ("delivered", "Delivered to device (WS / Polled)"),
+        ("received", "Received by companion handler"),
+        ("started", "App launcher execution started"),
+        ("result_sent", "Device finished & sent result"),
+        ("result_stored", "Result stored in database"),
+    ]
+    st_dict = stages or {}
+    table = []
+    first_missing = None
+    for key, desc in stage_defs:
+        ts = st_dict.get(key)
+        is_ok = bool(ts)
+        if not is_ok and first_missing is None:
+            first_missing = key
+        table.append({
+            "stage": key,
+            "description": desc,
+            "status": "OK" if is_ok else "MISSING",
+            "timestamp": ts,
+            "is_failure_point": (key == first_missing),
+        })
+    return table, first_missing
+
+
 def _device_command_to_dict(cmd: DeviceCommand, session: Optional[OrmSession] = None) -> dict:
-    """Serializes a DeviceCommand model into a client/relay dictionary."""
+    """Serializes a DeviceCommand model into a client/relay dictionary with execution stages."""
     decrypted_payload = {}
     if cmd.payload_encrypted:
         try:
@@ -2584,6 +2622,30 @@ def _device_command_to_dict(cmd: DeviceCommand, session: Optional[OrmSession] = 
     expires_ts = cmd.expires_at.timestamp() if cmd.expires_at else 0.0
     updated_ts = cmd.updated_at.timestamp() if cmd.updated_at else 0.0
 
+    stages = {
+        "created": cmd.created_at.isoformat() if cmd.created_at else None,
+        "delivered": None,
+        "received": None,
+        "started": None,
+        "result_sent": None,
+        "result_stored": None,
+    }
+    if isinstance(res_data, dict) and "_stages" in res_data:
+        for k, v in res_data["_stages"].items():
+            if v:
+                stages[k] = v
+    elif cmd.status in ("ws_sent", "delivered", "started", "succeeded", "failed", "not_installed", "executed") and not stages["delivered"]:
+        stages["delivered"] = cmd.updated_at.isoformat() if cmd.updated_at else (cmd.created_at.isoformat() if cmd.created_at else None)
+    if cmd.status in ("started", "succeeded", "failed", "not_installed", "executed") and not stages["started"]:
+        stages["started"] = cmd.updated_at.isoformat() if cmd.updated_at else None
+    if cmd.status in ("succeeded", "failed", "not_installed", "executed"):
+        if not stages["result_sent"]:
+            stages["result_sent"] = cmd.updated_at.isoformat() if cmd.updated_at else None
+        if not stages["result_stored"]:
+            stages["result_stored"] = cmd.updated_at.isoformat() if cmd.updated_at else None
+
+    stage_table, first_missing = format_stage_table(stages)
+
     return {
         "id": cmd.id,
         "command_id": cmd.id,
@@ -2601,6 +2663,9 @@ def _device_command_to_dict(cmd: DeviceCommand, session: Optional[OrmSession] = 
         "expires_at": expires_ts,
         "updated_at": updated_ts,
         "expiry": expiry_seconds,
+        "stages": stages,
+        "stage_table": stage_table,
+        "first_missing_stage": first_missing,
     }
 
 def create_device_command(
@@ -2614,8 +2679,8 @@ def create_device_command(
     status: str = "queued",
 ) -> dict:
     """
-    Step C2.8: Inserts persistent command into device_commands table.
-    Payload is encrypted at rest using Fernet encryption.
+    Step C2.8 & C2.10: Inserts persistent command into device_commands table.
+    Initializes lifecycle stage timestamps for truth verification.
     """
     now = utc_now()
     expires_at = now + timedelta(seconds=max(10, int(expiry_seconds)))
@@ -2650,6 +2715,16 @@ def create_device_command(
                 o.status = "expired"
                 o.error = "Pruned due to queue overflow"
 
+        init_stages = {
+            "created": now.isoformat(),
+            "delivered": now.isoformat() if status in ("delivered", "ws_sent") else None,
+            "received": None,
+            "started": None,
+            "result_sent": None,
+            "result_stored": None,
+        }
+        res_init = {"_stages": init_stages}
+
         cmd = DeviceCommand(
             id=cmd_id,
             user_id=user_id,
@@ -2658,6 +2733,7 @@ def create_device_command(
             type=cmd_type,
             payload_encrypted=encrypted_payload,
             status=status,
+            result=json.dumps(res_init),
             created_at=now,
             expires_at=expires_at,
             updated_at=now,
@@ -2681,26 +2757,72 @@ def update_device_command_status(
     cmd_id: str,
     status: str,
     result: Optional[Any] = None,
-    error: Optional[str] = None
+    error: Optional[str] = None,
+    client_timestamp: Optional[str] = None
 ) -> Optional[dict]:
-    """Updates status and result/error of a command in database."""
+    """
+    Step C2.8 & C2.10: Updates status and result/error of a command in database,
+    recording exact lifecycle stage timestamps (created, delivered, received, started, result_sent, result_stored).
+    """
     now = utc_now()
-    result_str = None
-    if result is not None:
-        if isinstance(result, (dict, list)):
-            result_str = json.dumps(result)
-        else:
-            result_str = str(result)
     with get_db_session() as session:
         cmd = session.scalar(
             select(DeviceCommand).where(and_(DeviceCommand.user_id == user_id, DeviceCommand.id == cmd_id))
         )
         if not cmd:
             return None
+
+        # Parse existing result stages
+        res_data = {}
+        if cmd.result:
+            try:
+                parsed = json.loads(cmd.result)
+                if isinstance(parsed, dict):
+                    res_data = parsed
+            except Exception:
+                res_data = {"raw": cmd.result}
+
+        stages = res_data.get("_stages") or {
+            "created": cmd.created_at.isoformat() if cmd.created_at else now.isoformat(),
+            "delivered": None,
+            "received": None,
+            "started": None,
+            "result_sent": None,
+            "result_stored": None,
+        }
+
+        ts = client_timestamp or now.isoformat()
+        if status == "delivered" and not stages.get("delivered"):
+            stages["delivered"] = ts
+        elif status == "received":
+            if not stages.get("delivered"):
+                stages["delivered"] = ts
+            stages["received"] = ts
+        elif status == "started":
+            if not stages.get("delivered"):
+                stages["delivered"] = ts
+            if not stages.get("received"):
+                stages["received"] = ts
+            stages["started"] = ts
+        elif status in ("succeeded", "failed", "not_installed", "executed", "needs_tap"):
+            if not stages.get("delivered"):
+                stages["delivered"] = ts
+            if not stages.get("received"):
+                stages["received"] = ts
+            if not stages.get("started"):
+                stages["started"] = ts
+            stages["result_sent"] = ts
+            stages["result_stored"] = now.isoformat()
+
+        if isinstance(result, dict):
+            res_data.update(result)
+        elif result is not None:
+            res_data["outcome"] = result
+        res_data["_stages"] = stages
+
         cmd.status = status
         cmd.updated_at = now
-        if result_str is not None:
-            cmd.result = result_str
+        cmd.result = json.dumps(res_data)
         if error is not None:
             cmd.error = error
         session.commit()
@@ -2708,8 +2830,10 @@ def update_device_command_status(
 
 def get_pending_device_commands(user_id: int, device_id: str) -> List[dict]:
     """
-    Step C2.8: Retrieves all unexpired pending commands for a device from the database.
-    Marks retrieved queued commands as 'delivered' in the database so duplicate execution is prevented.
+    Step C2.8 & C2.10: Retrieves all unexpired pending commands for a device from the database.
+    Includes both 'queued' commands AND 'delivered' commands that have NOT been started/acknowledged yet
+    (so dropped WebSockets do not cause command timeouts).
+    Marks retrieved commands as 'delivered' in the database and updates stage timestamp.
     """
     now = utc_now()
     with get_db_session() as session:
@@ -2719,7 +2843,7 @@ def get_pending_device_commands(user_id: int, device_id: str) -> List[dict]:
                 and_(
                     DeviceCommand.user_id == user_id,
                     DeviceCommand.target_device == device_id,
-                    DeviceCommand.status == "queued",
+                    DeviceCommand.status.in_(["queued", "ws_sent"]),
                     DeviceCommand.expires_at > now,
                 )
             )
@@ -2729,7 +2853,14 @@ def get_pending_device_commands(user_id: int, device_id: str) -> List[dict]:
         commands = session.scalars(stmt).all()
         results = []
         for cmd in commands:
-            results.append(_device_command_to_dict(cmd, session))
+            cmd_dict = _device_command_to_dict(cmd, session)
+            stages = cmd_dict.get("stages", {})
+            if not stages.get("delivered"):
+                stages["delivered"] = now.isoformat()
+            if isinstance(cmd_dict.get("result"), dict):
+                cmd_dict["result"]["_stages"] = stages
+                cmd.result = json.dumps(cmd_dict["result"])
+            results.append(cmd_dict)
             cmd.status = "delivered"
             cmd.updated_at = now
         session.commit()
