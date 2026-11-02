@@ -2953,12 +2953,12 @@ document.addEventListener("DOMContentLoaded", () => {
         // Step C2.10: Display Native App Version and Web Client Version separately
         let nativeVer = "None (Pure Web Client)";
         if (isElectron && electronStatus) {
-          nativeVer = `v${electronStatus.version || "1.4.22"} (Windows Electron)`;
+          nativeVer = `v${electronStatus.version || "1.4.23"} (Windows Electron)`;
         } else if (diag) {
-          nativeVer = `v${diag.versionName || "1.4.22"} (Android Native, versionCode: ${diag.versionCode || 49})`;
+          nativeVer = `v${diag.versionName || "1.4.23"} (Android Native, versionCode: ${diag.versionCode || 50})`;
         }
         lines.push(`Native App Version: ${nativeVer}`);
-        lines.push(`Web Client Version: v1.4.22`);
+        lines.push(`Web Client Version: v1.4.23`);
 
         if (isElectron && electronStatus) {
           lines.push(`Backend URL: ${electronStatus.backendUrl || "Configured"}`);
