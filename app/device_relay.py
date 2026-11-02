@@ -848,6 +848,12 @@ class CommandRelayManager:
         # 7. Target Capabilities & Permission Level gating (Rule 4)
         # Step C2.9 & C2.10: Refuse remote commands from a client older than minimum supported version
         client_ver = target_dev.get("client_version")
+        live_tel = self.get_device_telemetry(user_id, target_id)
+        if live_tel and live_tel.get("version"):
+            live_v = live_tel.get("version")
+            if live_v and (not client_ver or live_v != client_ver):
+                client_ver = live_v
+                db.update_device_presence(user_id, target_id, client_version=live_v)
         target_platform = (target_dev.get("platform") or "").lower()
         dev_type = "phone" if target_platform in ("android", "phone", "mobile") else "laptop"
         from app.version import is_client_version_supported, get_effective_min_version

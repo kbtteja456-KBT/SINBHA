@@ -1911,6 +1911,7 @@ def create_or_register_device(
     is_signup: bool = False,
     password: Optional[str] = None,
     require_email_confirm: bool = False,
+    client_version: Optional[str] = None,
 ) -> dict:
     """
     Registers a device for the user.
@@ -1960,6 +1961,8 @@ def create_or_register_device(
             dev.last_seen_at = utc_now()
             dev.name = n
             dev.platform = plat
+            if client_version and str(client_version).strip():
+                dev.client_version = str(client_version).strip()
 
             trusted_count = session.scalar(
                 select(func.count(Device.id))
@@ -2126,6 +2129,7 @@ def create_or_register_device(
             pairing_attempts=0,
             first_device_token=first_token,
             first_device_token_expires_at=first_exp,
+            client_version=str(client_version).strip() if (client_version and str(client_version).strip()) else None,
             created_at=now,
             last_seen_at=now,
         )
@@ -2135,12 +2139,13 @@ def create_or_register_device(
         ret["requires_first_device_trust"] = (trusted_count == 0 and status == "pending")
         return ret
 
-def get_user_devices(user_id: int) -> List[dict]:
-    """Lists all devices belonging to the user."""
+def get_user_devices(user_id: int, include_revoked: bool = False) -> List[dict]:
+    """Lists devices belonging to the user. By default filters out revoked devices."""
     with get_db_session() as session:
-        devices = session.scalars(
-            select(Device).where(Device.user_id == user_id).order_by(Device.created_at.asc())
-        ).all()
+        stmt = select(Device).where(Device.user_id == user_id)
+        if not include_revoked:
+            stmt = stmt.where(Device.status != "revoked")
+        devices = session.scalars(stmt.order_by(Device.created_at.asc())).all()
         return [_device_to_dict(d) for d in devices]
 
 def get_device_by_id(user_id: int, device_id: str) -> Optional[dict]:
@@ -2369,6 +2374,29 @@ def revoke_device(user_id: int, device_id: str) -> dict:
             session=session
         )
         return _device_to_dict(dev)
+
+def delete_device(user_id: int, device_id: str) -> bool:
+    """Permanently deletes a device and its tokens from the database."""
+    with get_db_session() as session:
+        dev = session.scalar(
+            select(Device).where(and_(Device.user_id == user_id, Device.device_id == device_id))
+        )
+        if not dev:
+            return False
+        name = dev.name
+        session.execute(
+            delete(DeviceToken).where(
+                and_(DeviceToken.user_id == user_id, DeviceToken.device_id == device_id)
+            )
+        )
+        session.delete(dev)
+        log_audit(
+            user_id,
+            "DEVICE_DELETED",
+            f"Device '{name}' ({device_id}) permanently deleted.",
+            session=session
+        )
+        return True
 
 def disconnect_all_devices(user_id: int) -> int:
     """Revokes access for all devices belonging to the user."""

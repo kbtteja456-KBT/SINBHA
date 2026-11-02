@@ -268,8 +268,12 @@ class TestStep16DeviceChannel(unittest.TestCase):
         res = self.client.post("/api/devices/disconnect-all", cookies={"sinbha_session": token})
         self.assertEqual(res.status_code, 200)
 
-        # Both devices must now be revoked
-        devices = db.get_user_devices(user["id"])
+        # Active devices must now be empty
+        self.assertEqual(len(db.get_user_devices(user["id"])), 0)
+
+        # Both devices must now be revoked when including revoked
+        devices = db.get_user_devices(user["id"], include_revoked=True)
+        self.assertEqual(len(devices), 2)
         for d in devices:
             self.assertEqual(d["status"], "revoked")
 

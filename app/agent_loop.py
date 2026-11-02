@@ -202,17 +202,18 @@ def _build_agent_system_prompt(
         system_content += "\n\nSAVED FACTS ABOUT YOUR FRIEND (MEMORIES):\nNone saved yet. If they ask what you remember, let them know your memory is a clean slate right now 🌸"
 
     if user_devices is not None:
-        if len(user_devices) == 0:
+        active_devices = [d for d in user_devices if d.get("status") not in ("revoked", "removed")]
+        if len(active_devices) == 0:
             dev_text = "No companion devices currently paired or connected."
         else:
             dev_lines = []
-            for d in user_devices:
+            for d in active_devices:
                 status = d.get("status", "trusted")
                 online_str = "🟢 Online" if d.get("is_online") else "⚪ Offline"
                 bat_str = f", 🔋 {d['battery']}%" if d.get("battery") is not None else ""
                 icon = "📱" if d.get("platform") == "android" else ("💻" if d.get("platform") == "windows" else "🌐")
                 dev_lines.append(f"- {icon} {d.get('name', 'Device')} ({d.get('platform')}, {status}, {online_str}{bat_str})")
-            dev_text = f"Connected device count: {len(user_devices)}\n" + "\n".join(dev_lines)
+            dev_text = f"Connected device count: {len(active_devices)}\n" + "\n".join(dev_lines)
         system_content += (
             f"\n\nUSER'S CONNECTED DEVICES & COMPANION NETWORK:\n{dev_text}\n"
             f"(Use the list_devices tool if asked about devices, battery, or status. You KNOW these details!)"

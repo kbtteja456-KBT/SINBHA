@@ -269,13 +269,15 @@ class SinbhaApiClient(private val context: Context) {
         prefs.lastPollTime = nowStr
         try {
             val encodedId = java.net.URLEncoder.encode(deviceId, "UTF-8")
-            val url = URL("${prefs.backendUrl}/api/devices/commands/pending?device_id=$encodedId")
+            val encodedVer = java.net.URLEncoder.encode(BuildConfig.VERSION_NAME, "UTF-8")
+            val url = URL("${prefs.backendUrl}/api/devices/commands/pending?device_id=$encodedId&version=$encodedVer")
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 setRequestProperty("Authorization", "Bearer $token")
                 setRequestProperty("X-Command-Token", token)
                 setRequestProperty("Cookie", "sinbha_session=$token")
                 setRequestProperty("X-Requested-With", "XMLHttpRequest")
+                setRequestProperty("X-Client-Version", BuildConfig.VERSION_NAME)
                 connectTimeout = 6000
                 readTimeout = 6000
             }
@@ -374,6 +376,7 @@ class SinbhaApiClient(private val context: Context) {
                 setRequestProperty("X-Command-Token", token)
                 setRequestProperty("Cookie", "sinbha_session=$token")
                 setRequestProperty("X-Requested-With", "XMLHttpRequest")
+                setRequestProperty("X-Client-Version", BuildConfig.VERSION_NAME)
                 connectTimeout = 8000
                 readTimeout = 8000
                 doOutput = true
@@ -383,6 +386,8 @@ class SinbhaApiClient(private val context: Context) {
                 put("device_id", deviceId)
                 put("name", name)
                 put("platform", platform)
+                put("client_version", BuildConfig.VERSION_NAME)
+                put("version", BuildConfig.VERSION_NAME)
             }.toString()
 
             OutputStreamWriter(conn.outputStream).use { it.write(body) }
@@ -410,6 +415,7 @@ class SinbhaApiClient(private val context: Context) {
                 setRequestProperty("X-Command-Token", token)
                 setRequestProperty("Cookie", "sinbha_session=$token")
                 setRequestProperty("X-Requested-With", "XMLHttpRequest")
+                setRequestProperty("X-Client-Version", BuildConfig.VERSION_NAME)
                 connectTimeout = 8000
                 readTimeout = 8000
                 doOutput = true
@@ -419,6 +425,7 @@ class SinbhaApiClient(private val context: Context) {
                 put("device_id", deviceId)
                 put("platform", "android")
                 put("version", BuildConfig.VERSION_NAME)
+                put("client_version", BuildConfig.VERSION_NAME)
                 if (battery != null) put("battery", battery)
                 put("is_charging", isCharging)
                 if (installedApps != null && installedApps.length() > 0) {

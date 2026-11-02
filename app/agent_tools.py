@@ -481,9 +481,9 @@ async def handle_list_devices(user_id: int, args: dict, ctx: dict) -> dict:
     db = ctx["db"]
     relay = ctx["relay_manager"]
 
-    devs = db.get_user_devices(user_id)
+    devs = [d for d in db.get_user_devices(user_id) if d.get("status") not in ("revoked", "removed")]
     if not devs:
-        return {"success": True, "devices": [], "message": "No devices connected yet."}
+        return {"success": True, "devices": [], "count": 0, "message": "No devices connected yet."}
 
     result = []
     for d in devs:
@@ -814,49 +814,93 @@ _LAPTOP_PLATFORMS = ("windows", "desktop", "laptop")
 def _resolve_target_device(trusted: list, target_hint: str, relay, user_id: int) -> dict:
     """
     Resolves the best matching trusted device from a platform or name hint.
-    Detects ambiguity (e.g. user has 2 phones and says 'my phone') and prompts for clarification.
+    Prioritizes actively connected/online devices over offline duplicates.
+    Never prompts for disambiguation between identical device names or between an online and offline device.
     Returns: {"status": "ok"|"ambiguous"|"none"|"not_found", "device": dict|None, "message": str|None}
     """
     if not trusted:
         return {"status": "none", "device": None, "message": "No companion devices currently connected."}
 
+    # Filter out any revoked or non-trusted devices
+    active_trusted = [d for d in trusted if d.get("status") not in ("revoked", "removed")]
+    if not active_trusted:
+        return {"status": "none", "device": None, "message": "No active companion devices currently paired."}
+
     req = (target_hint or "").strip().lower()
 
-    if not req or req in ("default", "any", "auto"):
-        if len(trusted) == 1:
-            return {"status": "ok", "device": trusted[0]}
-        # Prefer online desktop, then online phone
-        for d in trusted:
-            if relay and relay.is_device_connected(user_id, d.get("device_id")):
-                return {"status": "ok", "device": d}
-        return {"status": "ok", "device": trusted[0]}
+    def _sort_by_online_and_recency(dev_list):
+        def _score(d):
+            is_on = 1 if (relay and relay.is_device_connected(user_id, d.get("device_id"))) else 0
+            last_seen = d.get("last_seen_at") or d.get("last_ping_at") or ""
+            return (is_on, str(last_seen))
+        return sorted(dev_list, key=_score, reverse=True)
 
-    # Direct match by name or id
-    for d in trusted:
-        if d.get("device_id", "").lower() == req or d.get("name", "").lower() == req:
+    if not req or req in ("default", "any", "auto"):
+        sorted_devs = _sort_by_online_and_recency(active_trusted)
+        return {"status": "ok", "device": sorted_devs[0]}
+
+    # Direct match by exact device_id
+    for d in active_trusted:
+        if d.get("device_id", "").lower() == req:
             return {"status": "ok", "device": d}
+
+    # Direct match by device name
+    name_matched = [d for d in active_trusted if d.get("name", "").strip().lower() == req]
+    if len(name_matched) == 1:
+        return {"status": "ok", "device": name_matched[0]}
+    elif len(name_matched) > 1:
+        # Multiple devices with exact same name! Prioritize online device, then most recent
+        online_matches = [d for d in name_matched if relay and relay.is_device_connected(user_id, d.get("device_id"))]
+        if len(online_matches) == 1:
+            return {"status": "ok", "device": online_matches[0]}
+        elif len(online_matches) > 1:
+            return {"status": "ok", "device": _sort_by_online_and_recency(online_matches)[0]}
+        else:
+            return {"status": "ok", "device": _sort_by_online_and_recency(name_matched)[0]}
 
     want_phone = any(k in req for k in ("phone", "mobile", "android", "cell", "second phone"))
     want_laptop = any(k in req for k in ("laptop", "pc", "desktop", "windows", "computer", "my laptop"))
 
     matched = []
     if want_laptop:
-        matched = [d for d in trusted if d.get("platform", "").lower() in _LAPTOP_PLATFORMS]
+        matched = [d for d in active_trusted if d.get("platform", "").lower() in _LAPTOP_PLATFORMS]
     elif want_phone:
-        matched = [d for d in trusted if d.get("platform", "").lower() in _PHONE_PLATFORMS]
+        matched = [d for d in active_trusted if d.get("platform", "").lower() in _PHONE_PLATFORMS]
     else:
-        matched = [d for d in trusted if req in d.get("name", "").lower()]
+        matched = [d for d in active_trusted if req in d.get("name", "").lower()]
 
     if len(matched) == 1:
         return {"status": "ok", "device": matched[0]}
     elif len(matched) > 1:
-        names = [f"'{d.get('name', 'Device')}'" for d in matched]
-        return {
-            "status": "ambiguous",
-            "device": None,
-            "candidates": matched,
-            "message": f"Which device would you like to use? I see {', '.join(names)} connected."
-        }
+        # Check online status of candidates
+        online_candidates = [d for d in matched if relay and relay.is_device_connected(user_id, d.get("device_id"))]
+        if len(online_candidates) == 1:
+            # Exactly one candidate is online! Pick it seamlessly
+            return {"status": "ok", "device": online_candidates[0]}
+        elif len(online_candidates) > 1:
+            # Check if all online candidates share the same name (duplicate pairings)
+            unique_names = {d.get("name", "").strip().lower() for d in online_candidates}
+            if len(unique_names) == 1:
+                return {"status": "ok", "device": _sort_by_online_and_recency(online_candidates)[0]}
+            names = [f"'{d.get('name', 'Device')}'" for d in online_candidates]
+            return {
+                "status": "ambiguous",
+                "device": None,
+                "candidates": online_candidates,
+                "message": f"Which device would you like to use? I see {', '.join(names)} connected and online."
+            }
+        else:
+            # All candidates are offline
+            unique_names = {d.get("name", "").strip().lower() for d in matched}
+            if len(unique_names) == 1:
+                return {"status": "ok", "device": _sort_by_online_and_recency(matched)[0]}
+            names = [f"'{d.get('name', 'Device')}'" for d in matched]
+            return {
+                "status": "ambiguous",
+                "device": None,
+                "candidates": matched,
+                "message": f"Which device would you like to use? I see {', '.join(names)} paired."
+            }
 
     return {"status": "not_found", "device": None, "message": f"Could not find companion device matching '{target_hint}'."}
 

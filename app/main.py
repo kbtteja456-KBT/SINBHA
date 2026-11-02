@@ -169,6 +169,7 @@ class DeviceRegisterRequest(BaseModel):
     platform: Optional[str] = None
     password: Optional[str] = None
     is_signup: Optional[bool] = False
+    client_version: Optional[str] = None
 
 class DeviceRenameRequest(BaseModel):
     name: str
@@ -854,8 +855,8 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
         except Exception:
             pass
 
-    # Build annotated device list for agent context
-    user_devices_list = db.get_user_devices(user_id)
+    # Build annotated device list for agent context (strictly active devices only)
+    user_devices_list = [d for d in db.get_user_devices(user_id) if d.get("status") not in ("revoked", "removed")]
     annotated_devs = []
     for d in user_devices_list:
         is_onl = relay_manager.is_device_connected(user_id, d.get("device_id"))
@@ -1621,7 +1622,7 @@ async def get_audit_endpoint(user: dict = Depends(get_current_user)):
 # ----------------- Step 16: Device Pairing & Secure Command Channel -----------------
 
 @app.post("/api/devices/register")
-async def register_device_endpoint(payload: DeviceRegisterRequest, user: dict = Depends(get_current_user)):
+async def register_device_endpoint(payload: DeviceRegisterRequest, request: Request, user: dict = Depends(get_current_user)):
     """
     Registers or handshakes a device for the logged-in user.
     - Step 17 Item 2: Unverified accounts cannot pair new devices.
@@ -1652,6 +1653,8 @@ async def register_device_endpoint(payload: DeviceRegisterRequest, user: dict = 
         )
 
     try:
+        raw_ver = payload.client_version or request.headers.get("x-client-version") or request.headers.get("X-Client-Version")
+        c_ver = str(raw_ver).strip() if (raw_ver and str(raw_ver).strip()) else None
         device = db.create_or_register_device(
             user_id=user["id"],
             device_id=payload.device_id.strip(),
@@ -1660,6 +1663,7 @@ async def register_device_endpoint(payload: DeviceRegisterRequest, user: dict = 
             password=payload.password,
             is_signup=payload.is_signup or False,
             require_email_confirm=True,
+            client_version=c_ver,
         )
         if device.get("status") == "pending":
             await relay_manager.notify_pairing_requested(user["id"], device)
@@ -1687,9 +1691,9 @@ async def confirm_first_device_endpoint(token: Optional[str] = None):
     }
 
 @app.get("/api/devices")
-async def list_devices_endpoint(user: dict = Depends(get_current_user)):
-    """Lists all registered devices for the user."""
-    devices = db.get_user_devices(user["id"])
+async def list_devices_endpoint(include_revoked: bool = False, user: dict = Depends(get_current_user)):
+    """Lists registered devices for the user (excludes revoked unless include_revoked=True)."""
+    devices = db.get_user_devices(user["id"], include_revoked=include_revoked)
     return {"devices": devices}
 
 @app.get("/api/devices/status")
@@ -1768,13 +1772,24 @@ async def rename_device_endpoint(device_id: str, payload: DeviceRenameRequest, u
         raise HTTPException(status_code=500, detail=f"Failed to update device: {e}")
 
 @app.delete("/api/devices/{device_id}")
-async def revoke_device_endpoint(device_id: str, user: dict = Depends(get_current_user)):
-    """Immediately revokes access for a device."""
+async def revoke_device_endpoint(device_id: str, permanent: bool = False, user: dict = Depends(get_current_user)):
+    """Immediately revokes access for a device, or permanently deletes it if requested or already revoked."""
     clean_id = device_id.strip()
     try:
-        revoked = db.revoke_device(user["id"], clean_id)
+        existing = db.get_device_by_id(user["id"], clean_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Device not found.")
+
         relay_manager.unregister_websocket(user["id"], clean_id)
+
+        if permanent or existing.get("status") == "revoked":
+            db.delete_device(user["id"], clean_id)
+            return {"success": True, "message": f"Device '{existing['name']}' deleted permanently."}
+
+        revoked = db.revoke_device(user["id"], clean_id)
         return {"success": True, "message": f"Device '{revoked['name']}' revoked immediately.", "device": revoked}
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -1819,13 +1834,17 @@ async def send_device_command_endpoint(payload: DeviceCommandRequest, user: dict
     return res
 
 @app.get("/api/devices/commands/pending")
-async def get_pending_commands_endpoint(device_id: str, user: dict = Depends(get_device_command_user)):
+async def get_pending_commands_endpoint(device_id: str, request: Request, user: dict = Depends(get_device_command_user)):
     """
     Retrieves and drains pending offline commands for a device.
     Stale commands (> 60s) are pruned and never returned.
     Scoped to device command token or full user session.
     """
     clean_id = device_id.strip()
+    q_ver = request.query_params.get("version") or request.headers.get("x-client-version") or request.headers.get("X-Client-Version")
+    if q_ver and str(q_ver).strip():
+        db.update_device_presence(user["id"], clean_id, client_version=str(q_ver).strip())
+
     dev = db.get_device_by_id(user["id"], clean_id)
     if dev and dev["status"] == "pending":
         strict_pairing = os.getenv("STRICT_DEVICE_PAIRING", "false").lower() == "true"
@@ -1941,6 +1960,14 @@ async def device_websocket_endpoint(websocket: WebSocket):
                 return
 
         relay_manager.register_websocket(user_id, device_id, websocket)
+        q_ver = websocket.query_params.get("version") or websocket.headers.get("x-client-version") or websocket.headers.get("X-Client-Version")
+        db.update_device_presence(
+            user_id=user_id,
+            device_id=device_id,
+            client_version=str(q_ver).strip() if (q_ver and str(q_ver).strip()) else None,
+            websocket_connected=True,
+            last_ping=True
+        )
         await websocket.send_text(json.dumps({
             "type": "ready",
             "device_id": device_id,
@@ -1980,7 +2007,7 @@ async def device_websocket_endpoint(websocket: WebSocket):
                 relay_manager.update_command_status(user_id, cid, st, result=res_data, error=err_data, client_timestamp=client_ts)
             elif msg_type == "device_status":
                 platform = msg.get("platform", "unknown")
-                version = msg.get("version") or get_app_version()
+                version = msg.get("version") or msg.get("client_version") or get_app_version()
                 tools = msg.get("supported_tools")
                 installed_apps = msg.get("installed_apps")
                 relay_manager.record_device_capabilities(
@@ -1995,6 +2022,16 @@ async def device_websocket_endpoint(websocket: WebSocket):
                     "installed_apps": installed_apps,
                     "updated_at": time.time()
                 })
+                db.update_device_presence(
+                    user_id=user_id,
+                    device_id=device_id,
+                    client_version=str(version).strip() if version else None,
+                    battery=msg.get("battery"),
+                    is_charging=msg.get("is_charging", False),
+                    supported_tools=tools,
+                    installed_apps=installed_apps,
+                    platform=platform,
+                )
             elif msg_type == "sync_notifications":
                 notifs = msg.get("notifications") or []
                 relay_manager.store_user_notifications(user_id, notifs)

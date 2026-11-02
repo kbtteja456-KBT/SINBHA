@@ -3518,11 +3518,34 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
 
+    async function getActiveClientVersion() {
+      try {
+        if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative && typeof window.Capacitor.Plugins.SinbhaNative.getAppVersion === "function") {
+          const vInfo = await window.Capacitor.Plugins.SinbhaNative.getAppVersion();
+          if (vInfo && (vInfo.versionName || vInfo.version)) {
+            return vInfo.versionName || vInfo.version;
+          }
+        }
+      } catch (e) {}
+
+      try {
+        if (window.electronAPI && typeof window.electronAPI.getDiagnostics === "function") {
+          const diag = await window.electronAPI.getDiagnostics();
+          if (diag && diag.version) {
+            return diag.version;
+          }
+        }
+      } catch (e) {}
+
+      return "1.4.24";
+    }
+
     // Register or handshake this device on server
     async function initDeviceChannel() {
       if (!currentUser) return;
       const deviceId = await initNativeDeviceId();
       const { platform, name } = await getDevicePlatformAndName();
+      const appVer = await getActiveClientVersion();
 
       const nameEl = document.getElementById("currentDeviceName");
       if (nameEl && (!currentDeviceData || nameEl.textContent === "Detecting...")) {
@@ -3532,11 +3555,15 @@ document.addEventListener("DOMContentLoaded", () => {
       try {
         const res = await fetch("/api/devices/register", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "X-Client-Version": appVer
+          },
           body: JSON.stringify({
             device_id: deviceId,
             name: name,
-            platform: platform
+            platform: platform,
+            client_version: appVer
           })
         });
         const data = await res.json();
@@ -3659,7 +3686,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let wsHeartbeatTimer = null;
     let commandPollInterval = null;
 
-    function connectDeviceWebSocket(deviceId) {
+    async function connectDeviceWebSocket(deviceId) {
       if (!deviceId) deviceId = getOrCreateDeviceId();
       if (deviceWs && (deviceWs.readyState === WebSocket.OPEN || deviceWs.readyState === WebSocket.CONNECTING)) {
         return;
@@ -3670,7 +3697,8 @@ document.addEventListener("DOMContentLoaded", () => {
       if (currentUser && currentUser.token) {
         tokenParam = `&token=${encodeURIComponent(currentUser.token)}`;
       }
-      const wsUrl = `${protocol}//${window.location.host}/api/ws/devices?device_id=${encodeURIComponent(deviceId)}${tokenParam}`;
+      const clientVer = await getActiveClientVersion();
+      const wsUrl = `${protocol}//${window.location.host}/api/ws/devices?device_id=${encodeURIComponent(deviceId)}${tokenParam}&version=${encodeURIComponent(clientVer)}`;
 
       try {
         deviceWs = new WebSocket(wsUrl);
@@ -3682,7 +3710,9 @@ document.addEventListener("DOMContentLoaded", () => {
               deviceWs.send(JSON.stringify({
                 type: "auth",
                 token: currentUser.token,
-                device_id: deviceId
+                device_id: deviceId,
+                version: clientVer,
+                client_version: clientVer
               }));
             }
             deviceWs.send(JSON.stringify({ type: "ping" }));
@@ -3778,12 +3808,13 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         if (deviceWs && deviceWs.readyState === WebSocket.OPEN) {
+          const clientVer = await getActiveClientVersion();
           deviceWs.send(JSON.stringify({
             type: "device_status",
             battery: batteryPct,
             is_charging: isCharging,
             platform: platform,
-            version: "1.4.6",
+            version: clientVer,
             supported_tools: supportedTools
           }));
         }
@@ -3816,7 +3847,10 @@ document.addEventListener("DOMContentLoaded", () => {
     async function pollPendingCommands(deviceId) {
       if (!deviceId) deviceId = getOrCreateDeviceId();
       try {
-        const res = await fetch(`/api/devices/commands/pending?device_id=${encodeURIComponent(deviceId)}`);
+        const clientVer = await getActiveClientVersion();
+        const res = await fetch(`/api/devices/commands/pending?device_id=${encodeURIComponent(deviceId)}&version=${encodeURIComponent(clientVer)}`, {
+          headers: { "X-Client-Version": clientVer }
+        });
         if (!res.ok) return;
         const data = await res.json();
         if (data.commands && Array.isArray(data.commands)) {
@@ -4286,12 +4320,16 @@ document.addEventListener("DOMContentLoaded", () => {
             });
           }
 
-          // Hook revoke button
+          // Hook revoke / delete button
           const rBtn = card.querySelector(".revoke-dev-btn");
           if (rBtn) {
             rBtn.addEventListener("click", async () => {
-              if (confirm(`Revoke access for '${d.name}' immediately?`)) {
-                await revokeDevice(d.device_id);
+              const isRevoked = (d.status === "revoked");
+              const promptMsg = isRevoked
+                ? `Permanently delete '${d.name}'? This removes it completely.`
+                : `Revoke access for '${d.name}' immediately?`;
+              if (confirm(promptMsg)) {
+                await revokeDevice(d.device_id, isRevoked);
               }
             });
           }
@@ -4355,20 +4393,21 @@ document.addEventListener("DOMContentLoaded", () => {
       modal.style.display = "flex";
     }
 
-    async function revokeDevice(deviceId) {
+    async function revokeDevice(deviceId, permanent = false) {
       try {
-        const res = await fetch(`/api/devices/${encodeURIComponent(deviceId)}`, {
+        const url = `/api/devices/${encodeURIComponent(deviceId)}${permanent ? "?permanent=true" : ""}`;
+        const res = await fetch(url, {
           method: "DELETE"
         });
         const data = await res.json();
         if (data.success) {
-          showToast("🗑️ Device revoked immediately.");
+          showToast(permanent ? "🗑️ Device permanently deleted." : "🗑️ Device revoked immediately.");
           await loadDevices();
         } else {
-          showToast(data.detail || "Failed to revoke device.");
+          showToast(data.detail || "Failed to remove device.");
         }
       } catch (e) {
-        showToast("Error revoking device: " + e.message);
+        showToast("Error removing device: " + e.message);
       }
     }
 

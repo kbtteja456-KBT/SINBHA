@@ -215,11 +215,13 @@ class SinbhaCompanionService : Service() {
 
         val backend = prefs.backendUrl
         val wsBase = backend.replace("https://", "wss://").replace("http://", "ws://")
-        val wsUrl = "$wsBase/api/ws/devices?token=$token&device_id=$deviceId&platform=android"
+        val encodedVer = java.net.URLEncoder.encode(BuildConfig.VERSION_NAME, "UTF-8")
+        val wsUrl = "$wsBase/api/ws/devices?token=$token&device_id=$deviceId&platform=android&version=$encodedVer"
 
         val request = Request.Builder()
             .url(wsUrl)
             .addHeader("Cookie", "sinbha_session=$token")
+            .addHeader("X-Client-Version", BuildConfig.VERSION_NAME)
             .build()
 
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
@@ -235,6 +237,8 @@ class SinbhaCompanionService : Service() {
                         put("type", "auth")
                         put("token", token)
                         put("device_id", deviceId)
+                        put("version", BuildConfig.VERSION_NAME)
+                        put("client_version", BuildConfig.VERSION_NAME)
                     }
                     ws.send(authPayload.toString())
                 } catch (e: Exception) {}
@@ -362,6 +366,7 @@ class SinbhaCompanionService : Service() {
     private fun startPollingLoop() {
         serviceScope.launch {
             var lastAlarmSyncTime = 0L
+            var lastHeartbeatTime = 0L
 
             while (isActive) {
                 try {
@@ -375,8 +380,17 @@ class SinbhaCompanionService : Service() {
                             executeAndReportCommand(cmd)
                         }
 
-                        // Periodically sync alarms (every 60s)
                         val now = System.currentTimeMillis()
+
+                        // Periodically report heartbeat and presence (every 60s)
+                        if (now - lastHeartbeatTime > 60_000L) {
+                            lastHeartbeatTime = now
+                            try {
+                                apiClient.sendHeartbeat(deviceId)
+                            } catch (e: Exception) {}
+                        }
+
+                        // Periodically sync alarms (every 60s)
                         if (now - lastAlarmSyncTime > 60_000L) {
                             lastAlarmSyncTime = now
                             try {
