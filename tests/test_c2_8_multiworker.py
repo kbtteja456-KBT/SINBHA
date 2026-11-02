@@ -75,7 +75,7 @@ def test_multiworker_command_relay_and_resolution():
         last_ping=True,
         battery=88,
         is_charging=True,
-        client_version="1.4.12",
+        client_version="1.4.21",
         supported_tools=["open_app", "open_url"]
     )
 

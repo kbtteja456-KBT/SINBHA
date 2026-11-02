@@ -2923,13 +2923,29 @@ document.addEventListener("DOMContentLoaded", () => {
         if (window.Capacitor && window.Capacitor.isNativePlatform() && window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative) {
           diag = await window.Capacitor.Plugins.SinbhaNative.getDiagnostics();
         }
+        let electronStatus = null;
+        if (window.electronAPI && typeof window.electronAPI.getAppStatus === "function") {
+          try {
+            electronStatus = await window.electronAPI.getAppStatus();
+          } catch (e) {
+            console.warn("Could not fetch electron status:", e);
+          }
+        }
 
         const lines = [];
         lines.push("=== SINBHA COMPANION DIAGNOSTICS ===");
         lines.push(`Generated: ${new Date().toISOString()}`);
-        lines.push(`Platform: ${window.Capacitor?.isNativePlatform() ? "Android Native (Capacitor)" : "Web / Desktop"}`);
+        const isCapacitor = !!(window.Capacitor && window.Capacitor.isNativePlatform());
+        const isElectron = !!window.electronAPI;
+        lines.push(`Platform: ${isCapacitor ? "Android Native (Capacitor)" : (isElectron ? "Windows Desktop (Electron)" : "Web Browser")}`);
 
-        if (diag) {
+        if (isElectron && electronStatus) {
+          lines.push(`App Version: v${electronStatus.version || "1.4.21"}`);
+          lines.push(`Backend URL: ${electronStatus.backendUrl || "Configured"}`);
+          lines.push(`Reminders Paused: ${electronStatus.paused ? "Yes" : "No"}`);
+          lines.push(`DND: ${electronStatus.dnd ? "Enabled" : "Disabled"}`);
+          lines.push(`Start with Windows: ${electronStatus.startWithWindows ? "Enabled" : "Disabled"}`);
+        } else if (diag) {
           lines.push(`App Version: v${diag.versionName} (versionCode: ${diag.versionCode})`);
           if (diag.deviceInfo) {
             lines.push(`Device: ${diag.deviceInfo.manufacturer} ${diag.deviceInfo.brand} ${diag.deviceInfo.model} (SDK ${diag.deviceInfo.androidSdk})`);
@@ -2984,10 +3000,46 @@ document.addEventListener("DOMContentLoaded", () => {
         } else {
           // Web / Desktop fallback
           lines.push(`Client: Browser / Desktop Webview`);
+          lines.push(`App Version: v1.4.21`);
           lines.push(`Online: ${navigator.onLine ? "Yes" : "No"}`);
           lines.push(`Timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`);
           lines.push(`User Agent: ${navigator.userAgent}`);
           lines.push(`Auth: ${currentUser ? "Logged in" : "Not logged in"}`);
+        }
+
+        // Step C2.9 Item 1: Command Trace (local only, no private text)
+        let commandTraces = [];
+        if (window.electronAPI && typeof window.electronAPI.getCommandTrace === "function") {
+          try {
+            commandTraces = (await window.electronAPI.getCommandTrace()) || [];
+          } catch (e) {
+            console.warn("Failed to get Electron command trace:", e);
+          }
+        } else if (window.Capacitor && window.Capacitor.isPluginAvailable && window.Capacitor.isPluginAvailable("SinbhaNative")) {
+          try {
+            const trRes = await window.Capacitor.Plugins.SinbhaNative.getCommandTrace();
+            commandTraces = (trRes && trRes.traces) ? trRes.traces : [];
+          } catch (e) {
+            console.warn("Failed to get Android command trace:", e);
+          }
+        }
+
+        lines.push("\n--- RECENT COMMAND TRACE (LOCAL ONLY, STEP C2.9) ---");
+        if (commandTraces && commandTraces.length > 0) {
+          commandTraces.forEach((t, i) => {
+            const cmdId = t.command_id || t.id || "N/A";
+            const cmdType = t.type || "unknown";
+            const rxTime = t.time_received || "unknown";
+            const handler = t.handler || "unknown";
+            const resOrErr = typeof t.result_or_error === "object" ? JSON.stringify(t.result_or_error) : (t.result_or_error || "none");
+            const sentTime = t.time_sent || "in_progress";
+            lines.push(`${i + 1}. [${rxTime}] id=${cmdId} type=${cmdType}`);
+            lines.push(`   handler: ${handler}`);
+            lines.push(`   result: ${resOrErr}`);
+            lines.push(`   sent_at: ${sentTime}`);
+          });
+        } else {
+          lines.push("No remote commands processed on this local device yet.");
         }
 
         cachedDiagnosticsText = lines.join("\n");
@@ -3023,6 +3075,120 @@ document.addEventListener("DOMContentLoaded", () => {
           showToast("📋 Diagnostics copied to clipboard (safe / no personal data)");
         } catch (e) {
           showToast("Could not copy diagnostics: " + e.message);
+        }
+      });
+    }
+
+    // Step C2.9 Item 3: One-Button "Real device check"
+    const btnRealDeviceCheck = document.getElementById("btnRealDeviceCheck");
+    if (btnRealDeviceCheck) {
+      btnRealDeviceCheck.addEventListener("click", async () => {
+        btnRealDeviceCheck.disabled = true;
+        btnRealDeviceCheck.textContent = "⏳ Running Real Device Check (6 Apps)...";
+        if (selfTestResultsContainer) selfTestResultsContainer.style.display = "block";
+        if (selfTestSummaryBadge) {
+          selfTestSummaryBadge.textContent = "Testing...";
+          selfTestSummaryBadge.style.background = "#dbeafe";
+          selfTestSummaryBadge.style.color = "#1e40af";
+        }
+        if (selfTestList) {
+          selfTestList.innerHTML = '<div style="color: #6b7280; font-style: italic;">Sending 6 commands through chat path to all connected devices...</div>';
+        }
+
+        try {
+          const res = await fetch("/api/devices/real-device-check", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({})
+          });
+          const data = await res.json();
+
+          if (!data.success) {
+            if (selfTestSummaryBadge) {
+              selfTestSummaryBadge.textContent = data.error || "Failed";
+              selfTestSummaryBadge.style.background = "#fee2e2";
+              selfTestSummaryBadge.style.color = "#991b1b";
+            }
+            if (selfTestList) {
+              selfTestList.innerHTML = `<div style="color: #ef4444; font-weight: 600;">${escapeHtml(data.message || data.error || "Device check failed")}</div>`;
+            }
+            return;
+          }
+
+          const devices = data.devices || [];
+          if (devices.length === 0) {
+            if (selfTestSummaryBadge) {
+              selfTestSummaryBadge.textContent = "No Devices";
+              selfTestSummaryBadge.style.background = "#fee2e2";
+              selfTestSummaryBadge.style.color = "#991b1b";
+            }
+            if (selfTestList) {
+              selfTestList.innerHTML = '<div style="color: #ef4444;">No trusted devices found. Please register or connect your laptop or phone first.</div>';
+            }
+            return;
+          }
+
+          let totalCommands = 0;
+          let totalSuccess = 0;
+
+          const deviceBlocksHtml = devices.map(d => {
+            const cmds = d.commands || [];
+            totalCommands += cmds.length;
+            const cmdRows = cmds.map(c => {
+              const isOk = c.result === "succeeded" || (c.app === "nonexistent_test_app_xyz" && c.result === "failed");
+              if (isOk) totalSuccess++;
+              const icon = isOk ? "✅" : "⚠️";
+              const badgeBg = isOk ? "#dcfce7" : "#fef3c7";
+              const badgeColor = isOk ? "#166534" : "#92400e";
+              return `
+                <div style="background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 10px; margin-bottom: 4px;">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <strong style="color: #1f2937;">${icon} ${escapeHtml(c.app)}</strong>
+                    <span style="font-size: 0.72rem; font-weight: 700; padding: 2px 6px; border-radius: 4px; background: ${badgeBg}; color: ${badgeColor};">${escapeHtml(c.result.toUpperCase())} (${c.time_taken_ms}ms)</span>
+                  </div>
+                  <div style="font-size: 0.72rem; color: #4b5563; margin-top: 2px;">
+                    Sent: ${c.sent ? "Yes" : "No"} | Received: ${c.received ? "Yes" : "No"} | Started: ${c.started ? "Yes" : "No"}
+                  </div>
+                  <div style="font-size: 0.70rem; color: #6b7280; font-family: monospace; margin-top: 2px;">
+                    ${escapeHtml(c.message || '')}
+                  </div>
+                </div>
+              `;
+            }).join("");
+
+            return `
+              <div style="margin-bottom: 12px; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; background: #f9fafb;">
+                <div style="font-weight: 700; color: #1e3a8a; margin-bottom: 6px;">
+                  📱 ${escapeHtml(d.name)} (${escapeHtml(d.platform)}) [v${escapeHtml(d.client_version || 'unknown')}]
+                </div>
+                ${cmdRows}
+              </div>
+            `;
+          }).join("");
+
+          if (selfTestList) {
+            selfTestList.innerHTML = deviceBlocksHtml;
+          }
+          if (selfTestSummaryBadge) {
+            selfTestSummaryBadge.textContent = `${totalSuccess}/${totalCommands} Verified`;
+            selfTestSummaryBadge.style.background = totalSuccess === totalCommands ? "#dcfce7" : "#fef3c7";
+            selfTestSummaryBadge.style.color = totalSuccess === totalCommands ? "#166534" : "#92400e";
+          }
+
+          // Refresh Diagnostics display with the updated trace
+          await loadCompanionDiagnostics();
+        } catch (err) {
+          if (selfTestSummaryBadge) {
+            selfTestSummaryBadge.textContent = "Error";
+            selfTestSummaryBadge.style.background = "#fee2e2";
+            selfTestSummaryBadge.style.color = "#991b1b";
+          }
+          if (selfTestList) {
+            selfTestList.innerHTML = `<div style="color: #ef4444;">Real device check failed: ${escapeHtml(err.message)}</div>`;
+          }
+        } finally {
+          btnRealDeviceCheck.disabled = false;
+          btnRealDeviceCheck.textContent = "🔍 Run Real Device Check (Cross-Device 6-App Test)";
         }
       });
     }
@@ -3118,7 +3284,38 @@ document.addEventListener("DOMContentLoaded", () => {
     let ringInterval = null;
     let activePendingRemoteCmd = null;
 
+    let cachedNativeDeviceId = null;
+
+    async function initNativeDeviceId() {
+      if (cachedNativeDeviceId) return cachedNativeDeviceId;
+      // 1. Electron Desktop
+      if (window.electronAPI && typeof window.electronAPI.getDeviceId === "function") {
+        try {
+          const nativeId = await window.electronAPI.getDeviceId();
+          if (nativeId && nativeId.trim()) {
+            cachedNativeDeviceId = nativeId.trim();
+            localStorage.setItem("sinbha_device_id", cachedNativeDeviceId);
+            return cachedNativeDeviceId;
+          }
+        } catch (e) {}
+      }
+      // 2. Android Capacitor Native Companion
+      if (window.Capacitor && window.Capacitor.isPluginAvailable && window.Capacitor.isPluginAvailable("SinbhaNative")) {
+        try {
+          const res = await window.Capacitor.Plugins.SinbhaNative.getDeviceId();
+          if (res && res.deviceId && res.deviceId.trim()) {
+            cachedNativeDeviceId = res.deviceId.trim();
+            localStorage.setItem("sinbha_device_id", cachedNativeDeviceId);
+            return cachedNativeDeviceId;
+          }
+        } catch (e) {}
+      }
+      cachedNativeDeviceId = getOrCreateDeviceId();
+      return cachedNativeDeviceId;
+    }
+
     function getOrCreateDeviceId() {
+      if (cachedNativeDeviceId) return cachedNativeDeviceId;
       let devId = localStorage.getItem("sinbha_device_id");
       if (!devId) {
         devId = "dev_" + Math.random().toString(36).substring(2, 9) + "_" + Date.now().toString(36);
@@ -3258,7 +3455,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Register or handshake this device on server
     async function initDeviceChannel() {
       if (!currentUser) return;
-      const deviceId = getOrCreateDeviceId();
+      const deviceId = await initNativeDeviceId();
       const { platform, name } = await getDevicePlatformAndName();
 
       const nameEl = document.getElementById("currentDeviceName");

@@ -278,7 +278,8 @@ class SinbhaAccessibilityService : AccessibilityService() {
                 put("success", clicked)
                 put("action", "tap_element")
                 put("target", target)
-                put("message", if (clicked) "Tapped '$target'" else "Failed to click node for '$target'")
+                put("status", if (clicked) "tap_sent" else "failed")
+                put("message", if (clicked) "tap sent" else "Failed to click node for '$target'")
             }
         }
 
@@ -351,7 +352,8 @@ class SinbhaAccessibilityService : AccessibilityService() {
             put("action", "tap_coordinates")
             put("x", x)
             put("y", y)
-            put("message", if (success) "Tapped at ($x, $y)" else "Gesture tap failed")
+            put("status", if (success) "tap_sent" else "failed")
+            put("message", if (success) "tap sent" else "Gesture tap failed")
         }
     }
 
@@ -526,8 +528,9 @@ class SinbhaAccessibilityService : AccessibilityService() {
         return result.apply {
             put("success", scrolled)
             put("action", "scroll")
+            put("movement", scrolled)
             put("direction", if (forward) "forward" else "backward")
-            put("message", if (scrolled) "Scrolled successfully" else "No scrollable container found")
+            put("message", if (scrolled) "Scrolled successfully" else "no movement")
         }
     }
 
@@ -582,11 +585,40 @@ class SinbhaAccessibilityService : AccessibilityService() {
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
         try {
             startActivity(launchIntent)
-            return result.apply {
-                put("success", true)
-                put("action", "open_app")
-                put("package", packageName)
-                put("message", "Opened $packageName")
+
+            // Step C2.9 Item 6: Wait for window-state change that confirms package is in foreground
+            val cleanPkg = packageName.trim()
+            var confirmed = false
+            val startMs = System.currentTimeMillis()
+            while (System.currentTimeMillis() - startMs < 3000L) {
+                if (cleanPkg.equals(getCurrentPackageName(), ignoreCase = true)) {
+                    confirmed = true
+                    break
+                }
+                try {
+                    Thread.sleep(150L)
+                } catch (ignored: InterruptedException) {
+                    break
+                }
+            }
+
+            if (confirmed) {
+                return result.apply {
+                    put("success", true)
+                    put("verified", true)
+                    put("action", "open_app")
+                    put("package", packageName)
+                    put("message", "Opened $packageName")
+                }
+            } else {
+                return result.apply {
+                    put("success", false)
+                    put("verified", false)
+                    put("status", "sent_not_verified")
+                    put("action", "open_app")
+                    put("package", packageName)
+                    put("message", "sent, not verified: window state did not confirm foreground within 3s")
+                }
             }
         } catch (e: Exception) {
             return result.apply {

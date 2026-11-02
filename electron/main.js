@@ -321,18 +321,47 @@ async function checkDueRemindersLoop() {
   }
 }
 
+// ----------------- Desktop Device ID & Command Trace Buffer (Step C2.9 Items 1 & 2) -----------------
+const commandTraceBuffer = [];
+
+function getOrCreateDesktopDeviceId() {
+  try {
+    const configPath = path.join(app.getPath('userData'), 'sinbha_device_id.txt');
+    if (fs.existsSync(configPath)) {
+      const existing = fs.readFileSync(configPath, 'utf8').trim();
+      if (existing) return existing;
+    }
+    const cleanHost = os.hostname().toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8);
+    const newId = `win_${cleanHost}_${Date.now().toString(36)}`;
+    fs.writeFileSync(configPath, newId, 'utf8');
+    return newId;
+  } catch (e) {
+    return 'windows_desktop';
+  }
+}
+
+function recordCommandTrace(cmdId, type, handler, resultOrError, timeReceived, timeSent) {
+  const trace = {
+    command_id: cmdId || 'unknown',
+    type: type || 'unknown',
+    time_received: timeReceived || new Date().toISOString(),
+    handler: handler || 'electron:unknown',
+    result: typeof resultOrError === 'object' ? JSON.stringify(resultOrError) : String(resultOrError || 'completed'),
+    time_sent: timeSent || new Date().toISOString()
+  };
+  commandTraceBuffer.unshift(trace);
+  if (commandTraceBuffer.length > 50) commandTraceBuffer.pop();
+  return trace;
+}
+
 // ----------------- Desktop Remote Command Poller Loop -----------------
 async function checkPendingDesktopCommandsLoop() {
   try {
     const cookieHeader = await getSessionCookieHeader();
     if (!cookieHeader) return;
 
-    // Get device ID from local storage config or default
-    const configPath = path.join(app.getPath('userData'), 'sinbha_device_id.txt');
-    let devId = 'windows_desktop';
-    if (fs.existsSync(configPath)) {
-      try { devId = fs.readFileSync(configPath, 'utf8').trim() || devId; } catch(e) {}
-    }
+    // Get stable unified device ID (Step C2.9 Item 2)
+    const devId = getOrCreateDesktopDeviceId();
 
     const url = `${config.BACKEND_URL}/api/devices/commands/pending?device_id=${encodeURIComponent(devId)}`;
     const res = await fetch(url, {
@@ -349,6 +378,9 @@ async function checkPendingDesktopCommandsLoop() {
           const type = cmd.command_type || cmd.type;
           const payload = cmd.payload || {};
           const cmdId = cmd.id || cmd.command_id;
+          const timeReceived = new Date().toISOString();
+          let handlerName = 'electron:unknown';
+
           if (cmdId) {
             // Report started
             await fetch(`${config.BACKEND_URL}/api/devices/command-status`, {
@@ -360,19 +392,27 @@ async function checkPendingDesktopCommandsLoop() {
 
           let outcome = { success: false };
           if (type === 'open_app') {
+            handlerName = 'electron:safeLaunchDesktopApp';
             outcome = await safeLaunchDesktopApp(payload);
           } else if (type === 'open_url') {
+            handlerName = 'electron:openUrlWithBrowser';
             outcome = await openUrlWithBrowser(payload.url || '', payload.browser || 'default');
           } else if (type === 'type_input') {
+            handlerName = 'electron:safeTypeInput';
             outcome = await safeTypeInput(payload);
           } else if (type === 'press_keys') {
+            handlerName = 'electron:safePressKeys';
             outcome = await safePressKeys(payload.keys || payload);
           } else if (type === 'lock_workstation') {
+            handlerName = 'electron:safeLockWorkstation';
             outcome = await safeLockWorkstation();
           }
 
+          const timeSent = new Date().toISOString();
+          const st = outcome && outcome.success ? (outcome.status || 'succeeded') : 'failed';
+          recordCommandTrace(cmdId, type, handlerName, outcome, timeReceived, timeSent);
+
           if (cmdId) {
-            const st = outcome && outcome.success ? 'succeeded' : 'failed';
             await fetch(`${config.BACKEND_URL}/api/devices/command-status`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'Cookie': cookieHeader },
@@ -740,13 +780,30 @@ function setupIpcHandlers() {
     }
   });
 
-  // Step 16c: Full Cross-Device App Launcher & Control (Hardened Zero-Shell Process Execution)
+  // Step 16c & C2.9: Cross-Device App Launcher, Trace & Hardware Control
+  ipcMain.handle('get-device-id', () => {
+    return getOrCreateDesktopDeviceId();
+  });
+
+  ipcMain.handle('get-command-trace', () => {
+    return commandTraceBuffer;
+  });
+
   ipcMain.handle('launch-desktop-app', async (_event, appNameOrTarget) => {
-    return safeLaunchDesktopApp(appNameOrTarget);
+    const t0 = new Date().toISOString();
+    const outcome = await safeLaunchDesktopApp(appNameOrTarget);
+    const t1 = new Date().toISOString();
+    const cmdId = 'local_' + Date.now();
+    recordCommandTrace(cmdId, 'open_app', 'electron:safeLaunchDesktopApp', outcome, t0, t1);
+    return outcome;
   });
 
   ipcMain.handle('type-input', async (_event, payload) => {
-    return safeTypeInput(payload);
+    const t0 = new Date().toISOString();
+    const outcome = await safeTypeInput(payload);
+    const t1 = new Date().toISOString();
+    recordCommandTrace('local_' + Date.now(), 'type_input', 'electron:safeTypeInput', outcome, t0, t1);
+    return outcome;
   });
 
   ipcMain.handle('lock-workstation', async () => {

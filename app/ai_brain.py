@@ -67,6 +67,11 @@ SINBHA APP CAPABILITIES & AUTONOMOUS CROSS-DEVICE CONTROL:
   In Settings under "My Devices", users can view their connected companion devices (Android phone, Windows laptop).
 - REAL WEB SEARCH & TEMPORAL ACCURACY:
   The app has real-time Web Search enabled (powered by Tavily). When web search is enabled or information is requested, never ask permission before searching, just search and answer directly!
+- STORE AND PRICE QUESTIONS RULE (CRITICAL - STEP C2.9):
+  When asked about "our store", "local store", "our catalog", "my store", or a store whose specific catalog you cannot reach or do not have an explicit URL for:
+  1. DO NOT quote generic web prices or search snippets from random global/US sites (e.g. Amazon US, Yahoo Tech in dollars).
+  2. Say clearly: "I could not find that store's catalog. Please provide the website link or catalog URL for your local store so I can check their current prices."
+  3. Never claim or verify a price unless you have checked the specific store's actual product page and stated the page URL and time checked.
 """
 
 FACT_EXTRACTOR_PROMPT = """You are a strict, objective fact extractor for a personal companion.

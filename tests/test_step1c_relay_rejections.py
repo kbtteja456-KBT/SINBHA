@@ -146,7 +146,7 @@ async def test_rejection_explanation_unsupported_type(setup_test_db):
     db.approve_device_pairing(user_id, dev2["pairing_code"])
 
     # Phone reports supporting only 'ring_phone', NOT 'lock_workstation'
-    relay.record_device_capabilities(user_id, "dev_unsup_target", "android", "1.4.5", supported_tools=["ring_phone"])
+    relay.record_device_capabilities(user_id, "dev_unsup_target", "android", "1.4.21", supported_tools=["ring_phone"])
 
     cmd = {
         "id": "cmd_unsup_1",

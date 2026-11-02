@@ -400,6 +400,15 @@ async def handle_search_web(user_id: int, args: dict, ctx: dict) -> dict:
     if not query:
         return {"success": False, "error": "Search query is required."}
 
+    # Step C2.9 Item 7: Store and price questions rule
+    # If asked about "our store", "local store", or a store whose catalog is unreachable, never quote generic web prices.
+    if re.search(r"\b(?:our\s+store|local\s+store|my\s+store|our\s+shop|our\s+catalog)\b", query, re.I):
+        return {
+            "success": False,
+            "error": "STORE_CATALOG_UNAVAILABLE",
+            "message": "I could not find that store's catalog. Please provide the website link or catalog URL for your local store so I can check their current prices."
+        }
+
     db = ctx["db"]
     web_search_setting = db.get_setting(user_id, "web_search_enabled", "true")
     if web_search_setting != "true":
@@ -587,9 +596,10 @@ async def handle_send_note(user_id: int, args: dict, ctx: dict) -> dict:
                 }
 
     return {
-        "success": True,
+        "success": False,
+        "status": "unconfirmed",
         "target_device": target_dev.get("name"),
-        "message": f"Note sent to {target_dev.get('name')}.",
+        "message": f"I sent the note to your {target_dev.get('name')}, but could not confirm receipt.",
     }
 
 
@@ -683,9 +693,10 @@ async def handle_ring_phone(user_id: int, args: dict, ctx: dict) -> dict:
                 }
 
     return {
-        "success": True,
+        "success": False,
+        "status": "unconfirmed",
         "target_device": target_dev.get("name"),
-        "message": f"Ringing {target_dev.get('name')}!",
+        "message": f"I sent the ring request to your {target_dev.get('name')}, but could not confirm.",
     }
 
 
@@ -787,10 +798,11 @@ async def handle_open_url(user_id: int, args: dict, ctx: dict) -> dict:
                 }
 
     return {
-        "success": True,
+        "success": False,
+        "status": "unconfirmed",
         "target_device": target_dev.get("name"),
         "url": url,
-        "message": f"URL opened on {target_dev.get('name')}.",
+        "message": f"I sent the URL to your {target_dev.get('name')}, but could not confirm receipt.",
     }
 
 
@@ -1240,11 +1252,12 @@ async def handle_open_app(user_id: int, args: dict, ctx: dict) -> dict:
                 }
 
     return {
-        "success": True,
+        "success": False,
+        "status": "unconfirmed",
         "app": app_name,
         "browser": browser,
         "target_device": target_dev.get("name"),
-        "message": f"Opened {app_name} on {target_dev.get('name')} (using {browser}).",
+        "message": f"I sent the request to open {app_name} on your {target_dev.get('name')}, but could not confirm receipt.",
     }
 
 
@@ -1355,18 +1368,22 @@ async def handle_type_text(user_id: int, args: dict, ctx: dict) -> dict:
                 }
 
     return {
-        "success": True,
+        "success": False,
+        "status": "unconfirmed",
         "target_device": target_dev.get("name"),
         "text": text,
         "press_enter": press_enter,
-        "needs_user_confirmation": True,
-        "message": f"Typed text into active window on {target_dev.get('name')}.",
+        "message": f"I sent typing to your {target_dev.get('name')}, but could not confirm receipt.",
     }
 
 
 async def handle_press_keys(user_id: int, args: dict, ctx: dict) -> dict:
     """Presses allowlisted keys safely."""
-    keys = args.get("keys", "").strip().lower()
+    raw_keys = args.get("keys", "")
+    if isinstance(raw_keys, list):
+        keys = "+".join(str(k).strip().lower() for k in raw_keys)
+    else:
+        keys = str(raw_keys).strip().lower()
     target_hint = args.get("target_device", "laptop")
 
     if keys not in ALLOWED_KEY_COMBINATIONS:
@@ -1468,11 +1485,11 @@ async def handle_press_keys(user_id: int, args: dict, ctx: dict) -> dict:
                 }
 
     return {
-        "success": True,
+        "success": False,
+        "status": "unconfirmed",
         "keys": keys,
         "target_device": target_dev.get("name"),
-        "needs_user_confirmation": True,
-        "message": f"Pressed key '{keys}' on {target_dev.get('name')}.",
+        "message": f"I sent key press to your {target_dev.get('name')}, but could not confirm receipt.",
     }
 
 

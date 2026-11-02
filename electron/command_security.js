@@ -103,6 +103,27 @@ function validateAppTarget(rawApp) {
 }
 
 /**
+ * Step C2.9 Item 5: Retrieves active foreground window title via zero-shell Windows API call.
+ */
+function getActiveWindowInfo() {
+  return new Promise((resolve) => {
+    const ps = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; using System.Text; public class WinUtil { [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count); public static string GetActiveTitle() { StringBuilder sb = new StringBuilder(256); IntPtr h = GetForegroundWindow(); if (h == IntPtr.Zero) return ""; GetWindowText(h, sb, 256); return sb.ToString(); } }'; [WinUtil]::GetActiveTitle()`;
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', ps],
+      { shell: false, windowsHide: true, timeout: 2500 },
+      (err, stdout) => {
+        if (err || !stdout) {
+          return resolve(null);
+        }
+        const title = stdout.trim();
+        resolve(title ? { title } : null);
+      }
+    );
+  });
+}
+
+/**
  * Validates payload for type-input IPC call.
  */
 function validateTypeInputPayload(payload) {
@@ -511,6 +532,11 @@ async function safeTypeInput(payload) {
   }
 
   const { text, pressEnter } = validation;
+  const previousClipboard = clipboard.readText();
+
+  // Step C2.9 Item 5: Verify intended foreground window
+  const activeWin = await getActiveWindowInfo();
+  const isForegroundVerified = Boolean(activeWin && activeWin.title);
 
   if (text) {
     clipboard.writeText(text);
@@ -523,12 +549,12 @@ async function safeTypeInput(payload) {
   const sendKeysKeys = `${pasteToken}${enterToken}`;
 
   if (!sendKeysKeys) {
-    return { success: true, text, enter: pressEnter };
+    return { success: true, text, enter: pressEnter, verified: isForegroundVerified };
   }
 
-  const psScript = `$ws = New-Object -ComObject WScript.Shell; Start-Sleep -Milliseconds 300; $ws.SendKeys('${sendKeysKeys}')`;
+  const psScript = `$ws = New-Object -ComObject WScript.Shell; Start-Sleep -Milliseconds 250; $ws.SendKeys('${sendKeysKeys}')`;
 
-  return new Promise((resolve) => {
+  const execRes = await new Promise((resolve) => {
     // Uses execFile directly pointing to powershell.exe with argument array and NO shell
     execFile(
       'powershell.exe',
@@ -543,6 +569,35 @@ async function safeTypeInput(payload) {
       }
     );
   });
+
+  // Step C2.9 Item 5: Restore the previous clipboard after pasting
+  try {
+    await new Promise(r => setTimeout(r, 200));
+    clipboard.writeText(previousClipboard || '');
+  } catch (e) {}
+
+  if (!execRes.success) {
+    return execRes;
+  }
+
+  if (!isForegroundVerified) {
+    return {
+      success: true,
+      verified: false,
+      status: 'sent_not_verified',
+      message: 'sent, not verified (could not verify active window title in foreground)',
+      text,
+      enter: pressEnter
+    };
+  }
+
+  return {
+    success: true,
+    verified: true,
+    text,
+    enter: pressEnter,
+    foreground_window: activeWin.title
+  };
 }
 
 /**
@@ -904,12 +959,22 @@ async function openAppWithFallback(appName, preferredBrowser = 'chrome', userCon
     if (topCandidate.path && topCandidate.type === 'start_menu_shortcut') {
       try {
         await shell.openPath(topCandidate.path);
+        const expectedExe = topCandidate.name ? `${topCandidate.name}.exe` : path.basename(topCandidate.path);
+        const verify = await verifyProcessAppeared([expectedExe, `${topCandidate.name}.exe`], 8000);
+        if (!verify.verified) {
+          return {
+            success: false,
+            error: verify.error || `Process or window for '${topCandidate.displayName}' did not appear within 8 seconds`,
+            app: topCandidate.name
+          };
+        }
         return {
           success: true,
           method: 'start_menu_shortcut',
           app: topCandidate.name,
           displayName: topCandidate.displayName,
-          path: topCandidate.path
+          path: topCandidate.path,
+          pid: verify.pid
         };
       } catch (e) {}
     }
@@ -920,13 +985,22 @@ async function openAppWithFallback(appName, preferredBrowser = 'chrome', userCon
         const child = spawn(topCandidate.path, [], { shell: false, detached: true, stdio: 'ignore' });
         const pid = child.pid;
         child.unref();
+        const expectedExe = path.basename(topCandidate.path);
+        const verify = await verifyProcessAppeared([expectedExe, `${topCandidate.name}.exe`], 8000);
+        if (!verify.verified) {
+          return {
+            success: false,
+            error: verify.error || `Process or window for '${topCandidate.displayName}' did not appear within 8 seconds`,
+            app: topCandidate.name
+          };
+        }
         return {
           success: true,
           method: 'registered_exe',
           app: topCandidate.name,
           displayName: topCandidate.displayName,
           path: topCandidate.path,
-          pid
+          pid: verify.pid || pid
         };
       } catch (e) {}
     }
@@ -1004,6 +1078,10 @@ async function safePressKeys(keys) {
 
   const psScript = `$ws = New-Object -ComObject WScript.Shell; Start-Sleep -Milliseconds 150; $ws.SendKeys('${sendKeysToken}')`;
 
+  // Step C2.9 Item 5: Verify intended foreground window
+  const activeWin = await getActiveWindowInfo();
+  const isForegroundVerified = Boolean(activeWin && activeWin.title);
+
   return new Promise((resolve) => {
     execFile(
       'powershell.exe',
@@ -1013,7 +1091,22 @@ async function safePressKeys(keys) {
         if (err) {
           resolve({ success: false, error: err.message });
         } else {
-          resolve({ success: true, key: cleanKey });
+          if (!isForegroundVerified) {
+            resolve({
+              success: true,
+              verified: false,
+              status: 'sent_not_verified',
+              message: 'sent, not verified (could not verify active window title in foreground)',
+              key: cleanKey
+            });
+          } else {
+            resolve({
+              success: true,
+              verified: true,
+              key: cleanKey,
+              foreground_window: activeWin.title
+            });
+          }
         }
       }
     );

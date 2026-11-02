@@ -895,4 +895,37 @@ class SinbhaPlugin : Plugin() {
         }
         call.resolve(res)
     }
+
+    /**
+     * Step C2.9 Items 1 & 2: Expose unified native device ID to WebView so frontend and background service share device identity.
+     */
+    @PluginMethod
+    fun getDeviceId(call: PluginCall) {
+        var devId = prefs.deviceId
+        if (devId.isNullOrEmpty()) {
+            val androidId = android.provider.Settings.Secure.getString(context.contentResolver, android.provider.Settings.Secure.ANDROID_ID)
+            devId = "android_" + (androidId ?: java.util.UUID.randomUUID().toString().substring(0, 8))
+            prefs.deviceId = devId
+        }
+        call.resolve(JSObject().put("deviceId", devId))
+    }
+
+    /**
+     * Step C2.9 Item 1: Expose native command execution trace for Diagnostics.
+     */
+    @PluginMethod
+    fun getCommandTrace(call: PluginCall) {
+        val traces = SinbhaCompanionService.getCommandTrace()
+        val arr = JSArray()
+        for (t in traces) {
+            val obj = JSObject()
+            val keys = t.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                obj.put(k, t.get(k))
+            }
+            arr.put(obj)
+        }
+        call.resolve(JSObject().put("traces", arr))
+    }
 }

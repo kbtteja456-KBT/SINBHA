@@ -461,6 +461,17 @@ async def execute_web_search(
                 error="fetch_failed"
             )
 
+    # Step C2.9 Item 7: Never quote generic web search prices for "our store" or unreachable local store catalog
+    raw_str = raw_query or ""
+    if re.search(r"\b(?:our\s+store|local\s+store|my\s+store|our\s+shop|our\s+catalog)\b", raw_str, re.I):
+        return SearchResponse(
+            searched=False,
+            query=raw_str,
+            sources=[],
+            context_text="I could not find that store's catalog. Please provide the website link or catalog URL for your local store so I can check their current prices.",
+            error="STORE_CATALOG_UNAVAILABLE"
+        )
+
     # 2. Sanitize search query
     clean_query = sanitize_search_query(raw_query or "", user_facts=user_facts, user_email=user_email)
     if not clean_query or len(clean_query) < 2:
@@ -470,6 +481,15 @@ async def execute_web_search(
             sources=[],
             context_text="",
             error="empty_sanitized_query"
+        )
+
+    if re.search(r"\b(?:our\s+store|local\s+store|my\s+store|our\s+shop|our\s+catalog)\b", clean_query, re.I):
+        return SearchResponse(
+            searched=False,
+            query=clean_query,
+            sources=[],
+            context_text="I could not find that store's catalog. Please provide the website link or catalog URL for your local store so I can check their current prices.",
+            error="STORE_CATALOG_UNAVAILABLE"
         )
 
     # Normalized query hash for caching

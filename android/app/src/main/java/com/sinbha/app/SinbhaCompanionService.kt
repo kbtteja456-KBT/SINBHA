@@ -58,6 +58,26 @@ class SinbhaCompanionService : Service() {
         const val PERSISTENT_CHANNEL_ID = "sinbha_companion_persistent_channel"
         const val PERSISTENT_NOTIF_ID = 2002
 
+        // Step C2.9 Item 1: Command trace buffer (max 50 items)
+        private val commandTraceBuffer = java.util.concurrent.CopyOnWriteArrayList<JSONObject>()
+
+        fun recordCommandTrace(cmdId: String, type: String, handler: String, resultOrError: String, timeReceived: String, timeSent: String) {
+            val trace = JSONObject().apply {
+                put("command_id", cmdId)
+                put("type", type)
+                put("handler", handler)
+                put("result", resultOrError)
+                put("time_received", timeReceived)
+                put("time_sent", timeSent)
+            }
+            commandTraceBuffer.add(0, trace)
+            while (commandTraceBuffer.size > 50) {
+                commandTraceBuffer.removeAt(commandTraceBuffer.size - 1)
+            }
+        }
+
+        fun getCommandTrace(): List<JSONObject> = commandTraceBuffer.toList()
+
         fun start(context: Context) {
             val intent = Intent(context, SinbhaCompanionService::class.java)
             try {
@@ -394,6 +414,10 @@ class SinbhaCompanionService : Service() {
         val payload = cmd.optJSONObject("payload") ?: JSONObject()
         val sender = cmd.optString("sender_name", "Paired Companion")
 
+        val timeReceived = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.format(java.util.Date())
+        var handlerRan = "android:SinbhaCompanionService"
+        var finalOutcome = "started"
+
         // Step C2.7 Item 1: Short WakeLock so execution survives when another app takes the screen
         val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
         val wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "sinbha:command_execution")
@@ -414,8 +438,10 @@ class SinbhaCompanionService : Service() {
             // 3. Execute command and report result
             when (type) {
                 "open_app" -> {
+                    handlerRan = "android:SinbhaAppLauncher"
                     val launchResult = SinbhaAppLauncher.launchFromPayload(applicationContext, payload)
                     if (launchResult.success) {
+                        finalOutcome = "succeeded"
                         val resObj = JSONObject().apply {
                             put("app", launchResult.app)
                             put("package", launchResult.packageName ?: "")
@@ -424,6 +450,7 @@ class SinbhaCompanionService : Service() {
                         apiClient.reportCommandStatus(cmdId, "succeeded", result = resObj)
                         sendWsStatus(cmdId, "succeeded", result = resObj)
                     } else if (launchResult.needsTap) {
+                        finalOutcome = "needs_tap"
                         val resObj = JSONObject().apply {
                             put("app", launchResult.app)
                             put("package", launchResult.packageName ?: "")
@@ -434,17 +461,20 @@ class SinbhaCompanionService : Service() {
                         apiClient.reportCommandStatus(cmdId, "needs_tap", result = resObj, error = err)
                         sendWsStatus(cmdId, "needs_tap", result = resObj, error = err)
                     } else {
+                        finalOutcome = "failed"
                         val err = launchResult.error ?: "App '${launchResult.app}' is not installed on this Android device."
                         apiClient.reportCommandStatus(cmdId, "failed", error = err)
                         sendWsStatus(cmdId, "failed", error = err)
                     }
                 }
                 "open_url" -> {
+                    handlerRan = "android:SinbhaAppLauncher"
                     val urlStr = payload.optString("url")
                     val launchResult = SinbhaAppLauncher.launchFromPayload(applicationContext, JSONObject().apply {
                         put("url", urlStr)
                     })
                     if (launchResult.success) {
+                        finalOutcome = "succeeded"
                         val resObj = JSONObject().apply {
                             put("url", urlStr)
                             put("method", launchResult.method ?: "browser_launch")
@@ -452,39 +482,48 @@ class SinbhaCompanionService : Service() {
                         apiClient.reportCommandStatus(cmdId, "succeeded", result = resObj)
                         sendWsStatus(cmdId, "succeeded", result = resObj)
                     } else {
+                        finalOutcome = "failed"
                         val err = launchResult.error ?: "Failed to open URL"
                         apiClient.reportCommandStatus(cmdId, "failed", error = err)
                         sendWsStatus(cmdId, "failed", error = err)
                     }
                 }
                 "ring_phone" -> {
+                    handlerRan = "android:SinbhaPlugin.startAlarmRing"
                     val ok = SinbhaPlugin.startAlarmRing(applicationContext, sender)
                     if (ok) {
+                        finalOutcome = "succeeded"
                         val resObj = JSONObject().put("status", "ringing")
                         apiClient.reportCommandStatus(cmdId, "succeeded", result = resObj)
                         sendWsStatus(cmdId, "succeeded", result = resObj)
                     } else {
+                        finalOutcome = "failed"
                         val err = "Failed to start phone ring"
                         apiClient.reportCommandStatus(cmdId, "failed", error = err)
                         sendWsStatus(cmdId, "failed", error = err)
                     }
                 }
                 "send_note" -> {
+                    handlerRan = "android:showNoteHeadsUp"
                     showNoteHeadsUp(
                         payload.optString("title", "Note from Paired Device"),
                         payload.optString("text", "")
                     )
+                    finalOutcome = "succeeded"
                     val resObj = JSONObject().put("delivered", true)
                     apiClient.reportCommandStatus(cmdId, "succeeded", result = resObj)
                     sendWsStatus(cmdId, "succeeded", result = resObj)
                 }
                 "emergency_stop" -> {
+                    handlerRan = "android:emergency_stop"
                     prefs.isEmergencyStopped = true
+                    finalOutcome = "succeeded"
                     val resObj = JSONObject().put("emergency_stopped", true)
                     apiClient.reportCommandStatus(cmdId, "succeeded", result = resObj)
                     sendWsStatus(cmdId, "succeeded", result = resObj)
                 }
                 "get_notifications", "get_inbox" -> {
+                    handlerRan = "android:SinbhaNotificationListener"
                     val recent = SinbhaNotificationListener.getRecent()
                     val arr = org.json.JSONArray()
                     for (item in recent) {
@@ -496,6 +535,7 @@ class SinbhaCompanionService : Service() {
                         }
                         arr.put(obj)
                     }
+                    finalOutcome = "succeeded"
                     val resObj = JSONObject().apply {
                         put("notifications", arr)
                         put("count", arr.length())
@@ -504,8 +544,10 @@ class SinbhaCompanionService : Service() {
                     sendWsStatus(cmdId, "succeeded", result = resObj)
                 }
                 "accessibility_action", "android_screen_task" -> {
+                    handlerRan = "android:SinbhaAccessibilityService"
                     val s = SinbhaAccessibilityService.instance
                     if (s == null) {
+                        finalOutcome = "failed"
                         val err = "SINBHA Accessibility Service is not active. Please enable it in Settings."
                         apiClient.reportCommandStatus(cmdId, "failed", error = err)
                         sendWsStatus(cmdId, "failed", error = err)
@@ -536,19 +578,24 @@ class SinbhaCompanionService : Service() {
                         }
 
                         val success = outcome.optBoolean("success", false)
-                        val st = if (success) "succeeded" else "failed"
+                        val st = if (success) "succeeded" else (outcome.optString("status", "failed"))
+                        finalOutcome = st
                         val err = outcome.optString("error", null)
                         apiClient.reportCommandStatus(cmdId, st, result = outcome, error = err)
                         sendWsStatus(cmdId, st, result = outcome, error = err)
                     }
                 }
                 else -> {
+                    finalOutcome = "failed"
                     val err = "Unsupported command type: $type"
                     apiClient.reportCommandStatus(cmdId, "failed", error = err)
                     sendWsStatus(cmdId, "failed", error = err)
                 }
             }
         } finally {
+            val timeSent = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.format(java.util.Date())
+            recordCommandTrace(cmdId, type, handlerRan, finalOutcome, timeReceived, timeSent)
+
             if (wakeLock != null && wakeLock.isHeld) {
                 try {
                     wakeLock.release()

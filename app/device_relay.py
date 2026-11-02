@@ -836,6 +836,29 @@ class CommandRelayManager:
             }
 
         # 7. Target Capabilities & Permission Level gating (Rule 4)
+        # Step C2.9 Item 8: Refuse remote commands from a client older than the server expects
+        client_ver = target_dev.get("client_version")
+        from app.version import is_client_version_supported
+        if client_ver and not is_client_version_supported(client_ver):
+            db.log_audit(
+                user_id,
+                "DEVICE_COMMAND_RELAY",
+                json.dumps({
+                    "command_id": cmd_id,
+                    "type": cmd_type,
+                    "sender_device": sender_id,
+                    "target_device": target_id,
+                    "client_version": client_ver,
+                    "result": "client_outdated"
+                })
+            )
+            return {
+                "success": False,
+                "error": "CLIENT_OUTDATED",
+                "message": f"Your {target_dev.get('name', 'device')} is running v{client_ver}. please update your app.",
+                "needs_update": True
+            }
+
         # Step C2.7 Item 3: Check if target client supports this command type
         supported_tools = self.get_device_supported_tools(user_id, target_id, target_dev.get("platform"))
         if not is_command_supported_by_device(cmd_type, target_dev.get("platform"), supported_tools):

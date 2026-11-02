@@ -142,6 +142,7 @@ class TestC2ToolExecution:
             {"device_id": "lap_1", "name": "Dell Laptop", "platform": "windows", "status": "trusted"}
         ]
         mock_relay = AsyncMock()
+        mock_relay.wait_for_command_completion.return_value = {"status": "succeeded", "result": {"app": "claude"}}
 
         ctx = {"db": mock_db, "relay_manager": mock_relay}
         res = await handle_open_app(1, {"name": "claude", "target_device": "laptop"}, ctx)
@@ -157,6 +158,7 @@ class TestC2ToolExecution:
             {"device_id": "lap_1", "name": "Dell Laptop", "platform": "windows", "status": "trusted"}
         ]
         mock_relay = AsyncMock()
+        mock_relay.wait_for_command_completion.return_value = {"status": "succeeded", "result": {"app": "claude"}}
 
         ctx = {"db": mock_db, "relay_manager": mock_relay}
         res = await handle_open_app(1, {"name": "youtube", "browser": "firefox"}, ctx)

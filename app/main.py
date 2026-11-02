@@ -2023,6 +2023,85 @@ async def update_device_command_status_endpoint(payload: dict, user: dict = Depe
     return {"success": True, "lifecycle": updated}
 
 
+@app.post("/api/devices/real-device-check")
+async def run_real_device_check_endpoint(
+    payload: dict = None,
+    user: dict = Depends(get_current_user)
+):
+    """
+    Step C2.9 Item 3: Real Device Check.
+    Sends 6 commands to each connected device through the SAME path as chat:
+      Laptop: Notepad, Calculator, VS Code, Chrome, WhatsApp, a nonexistent app
+      Phone: Settings, Camera, Files, Snapchat, WhatsApp, a nonexistent app
+    Prints for each: sent, received by the device, started, result, and time taken.
+    """
+    from app.agent_tools import handle_open_app
+    ctx = {"db": db, "relay_manager": relay_manager, "user_email": user.get("email")}
+    user_id = user["id"]
+
+    target_filter = (payload or {}).get("device_id") if isinstance(payload, dict) else None
+    devices = db.get_user_devices(user_id)
+    trusted = [d for d in devices if d.get("status") == "trusted"]
+    if target_filter:
+        trusted = [d for d in trusted if d.get("device_id") == target_filter]
+
+    if not trusted:
+        return {
+            "success": False,
+            "error": "NO_TRUSTED_DEVICES",
+            "message": "No trusted companion devices connected.",
+            "devices": []
+        }
+
+    device_results = []
+    laptop_apps = ["notepad", "calculator", "vscode", "chrome", "whatsapp", "nonexistent_test_app_xyz"]
+    phone_apps = ["settings", "camera", "files", "snapchat", "whatsapp", "nonexistent_test_app_xyz"]
+
+    for d in trusted:
+        platform = (d.get("platform") or "").lower()
+        dev_id = d.get("device_id")
+        dev_name = d.get("name") or "Device"
+        is_laptop = platform in ("windows", "desktop", "laptop")
+        app_list = laptop_apps if is_laptop else phone_apps
+
+        results_for_dev = []
+        for app_name in app_list:
+            t0 = time.time()
+            try:
+                res = await handle_open_app(user_id, {"name": app_name, "target_device": dev_id}, ctx)
+            except Exception as e:
+                res = {"success": False, "status": "failed", "error": str(e), "message": f"Exception: {e}"}
+            elapsed_ms = int((time.time() - t0) * 1000)
+
+            st = res.get("status") or ("succeeded" if res.get("success") else "failed")
+            received = st in ("succeeded", "started", "received", "not_installed", "needs_tap", "sent_not_verified")
+            started = st in ("succeeded", "started", "not_installed", "needs_tap", "sent_not_verified")
+
+            results_for_dev.append({
+                "app": app_name,
+                "sent": True,
+                "received": received,
+                "started": started,
+                "result": st,
+                "message": res.get("message") or res.get("error") or st,
+                "time_taken_ms": elapsed_ms
+            })
+
+        device_results.append({
+            "device_id": dev_id,
+            "name": dev_name,
+            "platform": platform,
+            "client_version": d.get("client_version"),
+            "commands": results_for_dev
+        })
+
+    return {
+        "success": True,
+        "timestamp": time.time(),
+        "devices": device_results
+    }
+
+
 @app.post("/api/devices/heartbeat")
 @app.get("/api/devices/heartbeat")
 async def device_heartbeat_endpoint(request: Request, user: dict = Depends(get_device_command_user)):
