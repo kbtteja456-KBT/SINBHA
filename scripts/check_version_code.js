@@ -63,8 +63,20 @@ function main() {
     }).trim();
 
     const currentRef = process.env.GITHUB_REF_NAME || '';
+    let headTags = [];
+    try {
+      headTags = execSync('git tag --points-at HEAD', {
+        cwd: rootDir,
+        stdio: ['pipe', 'pipe', 'ignore'],
+        encoding: 'utf8'
+      }).split('\n').map(t => t.trim()).filter(Boolean);
+    } catch (e) {}
+
     const tags = rawTags
-      ? rawTags.split('\n').map(t => t.trim()).filter(t => t && t !== currentRef)
+      ? rawTags
+          .split('\n')
+          .map(t => t.trim())
+          .filter(t => t && t !== currentRef && !headTags.includes(t) && t !== `v${targetVersion}` && t !== `android-v${targetVersion}`)
       : [];
 
     for (const tag of tags) {
