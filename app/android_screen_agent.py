@@ -310,7 +310,17 @@ async def run_android_screen_task(
                     "step_log": step_log,
                 }
             completion = await relay_manager.wait_for_command_completion(user_id, cmd_id, timeout=10.0)
-            tree_data = completion.get("result") or {}
+            res_obj = completion.get("result") or {}
+            if completion.get("status") == "failed" or not completion.get("success", True):
+                guidance = res_obj.get("guidance") or completion.get("error") or "Accessibility service is not active on your phone."
+                return {
+                    "success": False,
+                    "status": "accessibility_inactive",
+                    "error": "ACCESSIBILITY_DISABLED",
+                    "message": guidance,
+                    "step_log": step_log,
+                }
+            tree_data = res_obj
         else:
             tree_data = {"package": "com.android.settings", "visible_text": "Settings\nNetwork & internet\nConnected devices"}
 

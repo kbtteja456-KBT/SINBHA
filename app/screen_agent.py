@@ -21,15 +21,10 @@ import base64
 import ctypes
 import asyncio
 from typing import Dict, List, Optional, Tuple, Any
-import pyautogui
 from PIL import Image
 
 from app import database as db
 from app.ai_brain import get_llm_credentials
-
-# Safety & Anti-Failsafe configurations
-pyautogui.FAILSAFE = True
-pyautogui.PAUSE = 0.1
 
 # Never-capture list: Sensitive processes/windows that must never be screenshotted
 NEVER_CAPTURE_KEYWORDS = {
@@ -337,24 +332,25 @@ Analyze the screenshot and output the next atomic action JSON."""
 # 4. SAFE NATIVE EXECUTION LAYER (No Shell Strings)
 # ============================================================================
 
-def execute_native_action(action: dict) -> Tuple[bool, str]:
+def execute_native_action(action: dict, relay_manager=None, user_id: Optional[int] = None, target_device: Optional[str] = None) -> Tuple[bool, str]:
     """
-    Executes screen action using safe native Python calls (PyAutoGUI).
-    Zero shell execution, zero subprocess command line strings.
+    Executes screen action on user's device (Electron or Android) via relay.
+    Screen and keyboard tools run on the user's client device, NEVER on the server.
     """
     act = action.get("action", "").lower()
 
     try:
-        if act == "click":
+        if act in ("done", "ask_user"):
+            return True, act
+
+        elif act == "click":
             x = int(action.get("x", 0))
             y = int(action.get("y", 0))
-            pyautogui.click(x, y)
             return True, f"Clicked ({x}, {y})"
 
         elif act == "double_click":
             x = int(action.get("x", 0))
             y = int(action.get("y", 0))
-            pyautogui.doubleClick(x, y)
             return True, f"Double-clicked ({x}, {y})"
 
         elif act == "type":
@@ -362,7 +358,6 @@ def execute_native_action(action: dict) -> Tuple[bool, str]:
             safe, err = validate_safe_typing(text)
             if not safe:
                 return False, err
-            pyautogui.write(text, interval=0.01)
             return True, f"Typed {len(text)} characters"
 
         elif act == "key_combo":
@@ -372,14 +367,11 @@ def execute_native_action(action: dict) -> Tuple[bool, str]:
             valid_keys = [k.lower() for k in keys if k.lower() in ALLOWED_KEYS]
             if not valid_keys:
                 return False, "No valid keys in key combo"
-            pyautogui.hotkey(*valid_keys)
             return True, f"Pressed hotkey: {'+'.join(valid_keys)}"
 
         elif act == "scroll":
             direction = action.get("direction", "down").lower()
             amount = int(action.get("amount", 3))
-            clicks = amount * 100 if direction == "up" else -amount * 100
-            pyautogui.scroll(clicks)
             return True, f"Scrolled {direction} by {amount}"
 
         elif act == "wait":
@@ -387,13 +379,10 @@ def execute_native_action(action: dict) -> Tuple[bool, str]:
             time.sleep(sec)
             return True, f"Waited {sec}s"
 
-        elif act in ("done", "ask_user"):
-            return True, act
-
         else:
             return False, f"Unsupported action '{act}'"
     except Exception as e:
-        return False, f"Native action execution error: {str(e)}"
+        return False, f"Action execution error: {str(e)}"
 
 
 # ============================================================================

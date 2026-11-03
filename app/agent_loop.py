@@ -273,10 +273,11 @@ async def _call_llm_with_tools(
         headers["HTTP-Referer"] = "http://localhost:8080"
         headers["X-Title"] = "SINBHA Agent"
 
+    actual_max_tokens = min(max_tokens, 300) if provider == "openrouter" else max_tokens
     payload = {
         "model": model,
         "messages": messages,
-        "max_tokens": max_tokens,
+        "max_tokens": actual_max_tokens,
         "temperature": 0.7,
     }
 
@@ -339,17 +340,8 @@ async def _call_llm_with_tools(
             elif response.status_code == 429:
                 log_llm_reliability("rate_limit", provider, model, attempt=attempt+1, status_code=429, latency_ms=latency_ms)
                 if attempt < max_retries:
-                    wait_time = 1.0 * (2 ** attempt)
-                    try:
-                        if "retry-after" in response.headers:
-                            wait_time = max(wait_time, float(response.headers["retry-after"]))
-                        elif response.text:
-                            m_wait = re.search(r"try again in (\d+(\.\d+)?)s", response.text)
-                            if m_wait:
-                                wait_time = max(wait_time, float(m_wait.group(1)) + 0.2)
-                    except Exception:
-                        pass
-                    await asyncio.sleep(min(wait_time, 5.0))
+                    # Briefly queue/backoff before retrying
+                    await asyncio.sleep(1.5)
                     continue
                 return {"success": False, "error": "rate_limit", "status": 429, "provider": provider, "model": model}
 
@@ -435,7 +427,7 @@ def _get_fallback_candidates(creds: dict) -> List[dict]:
 
     # 2. Secondary models on current provider
     if provider == "groq":
-        for sec_model in ("openai/gpt-oss-20b", "qwen/qwen3.8-27b", "openai/gpt-oss-120b"):
+        for sec_model in ("llama-3.3-70b-versatile", "llama-3.1-8b-instant", "openai/gpt-oss-120b"):
             if sec_model != model:
                 fb = dict(creds)
                 fb["model"] = sec_model
@@ -533,7 +525,7 @@ async def run_agent_loop(
     base_tools = {
         "create_task", "complete_task", "delete_task",
         "remember_fact", "forget_fact", "search_web",
-        "fetch_page", "list_devices",
+        "fetch_page", "list_devices", "open_settings",
         "read_whatsapp_messages", "draft_whatsapp_reply", "get_inbox_notifications",
         "get_youtube_channel_stats", "read_gmail_messages", "draft_gmail_message", "get_google_testing_info"
     }
@@ -550,9 +542,9 @@ async def run_agent_loop(
                 if isinstance(tools, (list, set, tuple)):
                     supported_device_tools.update(tools)
                 else:
-                    supported_device_tools.update(["open_app", "open_url", "find_installed_app", "type_text", "press_keys", "send_note", "ring_phone"])
+                    supported_device_tools.update(["open_app", "open_url", "open_settings", "find_installed_app", "type_text", "press_keys", "send_note", "ring_phone"])
     else:
-        supported_device_tools = {"open_app", "open_url", "find_installed_app", "type_text", "press_keys", "send_note", "ring_phone"}
+        supported_device_tools = {"open_app", "open_url", "open_settings", "find_installed_app", "type_text", "press_keys", "send_note", "ring_phone"}
 
     allowed_tool_names = base_tools | supported_device_tools
     tools_list = [t for t in registry.openai_tools_list() if t.get("function", {}).get("name") in allowed_tool_names]
@@ -842,7 +834,11 @@ async def run_agent_loop(
                     **result,
                 }
                 tool_calls_log.append({"tool": tool_name, "args": args, "result": result, "step": step, "risk_level": tool.risk_level, "untrusted": untrusted_content_read})
-                reply_text = warning_msg or result.get("message") or f"Please confirm if you'd like me to run {tool_name}."
+                if untrusted_content_read:
+                    action_label = tool_name.replace('_', ' ')
+                    reply_text = f"This action was triggered after reading external content. Please review and confirm below if you would like me to proceed with {action_label}:"
+                else:
+                    reply_text = result.get("message") or f"Please confirm if you'd like me to run {tool_name.replace('_', ' ')}:"
                 return AgentResult(
                     reply=reply_text,
                     tool_calls_log=tool_calls_log,

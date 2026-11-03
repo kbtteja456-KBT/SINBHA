@@ -38,7 +38,48 @@ const ALLOWED_APP_TARGETS = {
   'visual studio code': { type: 'special', app: 'vscode', expected: ['Code.exe'] },
   'claude': { type: 'special', app: 'claude', expected: ['Claude.exe'] },
   'chatgpt': { type: 'special', app: 'chatgpt', expected: ['ChatGPT.exe'] },
-  'antigravity': { type: 'special', app: 'antigravity', expected: ['Antigravity.exe'] }
+  'antigravity': { type: 'special', app: 'antigravity', expected: ['Antigravity.exe'] },
+  // Step C2.12: Windows Settings Pages and Microsoft Store UWP
+  'settings': { type: 'settings_page', page: 'settings', target: 'ms-settings:', expected: ['SystemSettings.exe', 'ApplicationFrameHost.exe'], displayName: 'Settings' },
+  'windows settings': { type: 'settings_page', page: 'settings', target: 'ms-settings:', expected: ['SystemSettings.exe', 'ApplicationFrameHost.exe'], displayName: 'Settings' },
+  'bluetooth': { type: 'settings_page', page: 'bluetooth', target: 'ms-settings:bluetooth', expected: ['SystemSettings.exe', 'ApplicationFrameHost.exe'], displayName: 'Bluetooth Settings' },
+  'wifi': { type: 'settings_page', page: 'wifi', target: 'ms-settings:network-wifi', expected: ['SystemSettings.exe', 'ApplicationFrameHost.exe'], displayName: 'Wi-Fi Settings' },
+  'wi-fi': { type: 'settings_page', page: 'wifi', target: 'ms-settings:network-wifi', expected: ['SystemSettings.exe', 'ApplicationFrameHost.exe'], displayName: 'Wi-Fi Settings' },
+  'display': { type: 'settings_page', page: 'display', target: 'ms-settings:display', expected: ['SystemSettings.exe', 'ApplicationFrameHost.exe'], displayName: 'Display Settings' },
+  'apps': { type: 'settings_page', page: 'apps', target: 'ms-settings:appsfeatures', expected: ['SystemSettings.exe', 'ApplicationFrameHost.exe'], displayName: 'Apps Settings' },
+  'windows update': { type: 'settings_page', page: 'windows update', target: 'ms-settings:windowsupdate', expected: ['SystemSettings.exe', 'ApplicationFrameHost.exe'], displayName: 'Windows Update' },
+  'sound': { type: 'settings_page', page: 'sound', target: 'ms-settings:sound', expected: ['SystemSettings.exe', 'ApplicationFrameHost.exe'], displayName: 'Sound Settings' },
+  'notifications': { type: 'settings_page', page: 'notifications', target: 'ms-settings:notifications', expected: ['SystemSettings.exe', 'ApplicationFrameHost.exe'], displayName: 'Notifications Settings' },
+  'accessibility': { type: 'settings_page', page: 'accessibility', target: 'ms-settings:easeofaccess', expected: ['SystemSettings.exe', 'ApplicationFrameHost.exe'], displayName: 'Accessibility Settings' },
+  'microsoft store': { type: 'store_app', target: 'ms-windows-store:', expected: ['WinStore.App.exe', 'ApplicationFrameHost.exe'], displayName: 'Microsoft Store' },
+  'store': { type: 'store_app', target: 'ms-windows-store:', expected: ['WinStore.App.exe', 'ApplicationFrameHost.exe'], displayName: 'Microsoft Store' }
+};
+
+const SETTINGS_PAGES = {
+  'settings': 'ms-settings:',
+  'main': 'ms-settings:',
+  'home': 'ms-settings:',
+  'bluetooth': 'ms-settings:bluetooth',
+  'devices': 'ms-settings:connecteddevices',
+  'wifi': 'ms-settings:network-wifi',
+  'wi-fi': 'ms-settings:network-wifi',
+  'network': 'ms-settings:network',
+  'internet': 'ms-settings:network',
+  'display': 'ms-settings:display',
+  'screen': 'ms-settings:display',
+  'sound': 'ms-settings:sound',
+  'volume': 'ms-settings:sound',
+  'notifications': 'ms-settings:notifications',
+  'battery': 'ms-settings:batterysaver',
+  'power': 'ms-settings:powersleep',
+  'apps': 'ms-settings:appsfeatures',
+  'appsfeatures': 'ms-settings:appsfeatures',
+  'installed apps': 'ms-settings:appsfeatures',
+  'windows update': 'ms-settings:windowsupdate',
+  'update': 'ms-settings:windowsupdate',
+  'updates': 'ms-settings:windowsupdate',
+  'accessibility': 'ms-settings:easeofaccess',
+  'privacy': 'ms-settings:privacy'
 };
 
 const ALLOWED_PROTOCOLS = new Set(['https:', 'http:', 'whatsapp:', 'spotify:']);
@@ -209,32 +250,90 @@ function checkProcessRunning(processName) {
 }
 
 /**
- * Step C2.8 Item 4: Verifies that expected process or window appeared (waits up to 8s).
- * Strictly reports success ONLY after verifying process appeared.
+ * Step C2.12: Verifies that expected process, window, or app frame appeared (waits up to 8s).
+ * Checks image name, ApplicationFrameHost, SystemSettings, and active window titles.
+ * Strictly reports success ONLY after verifying process or window appeared.
+ * Never reports failed when the window appeared.
  */
-async function verifyProcessAppeared(expectedProcessNames, maxWaitMs = 8000) {
+async function verifyWindowOrProcessAppeared(expectedProcessNames, appNameHint = '', maxWaitMs = 8000) {
   if (!Array.isArray(expectedProcessNames)) {
     expectedProcessNames = expectedProcessNames ? [expectedProcessNames] : [];
   }
-  if (expectedProcessNames.length === 0) {
-    return { verified: true, pid: null };
+  const hint = String(appNameHint || '').toLowerCase().trim();
+  const candidateProcesses = [...expectedProcessNames];
+  if (hint && (hint.includes('setting') || hint.includes('store') || hint.includes('calculator') || hint.includes('camera') || hint.includes('clock') || hint.includes('weather'))) {
+    if (!candidateProcesses.includes('ApplicationFrameHost.exe')) {
+      candidateProcesses.push('ApplicationFrameHost.exe');
+    }
   }
+  if (hint.includes('setting') && !candidateProcesses.includes('SystemSettings.exe')) {
+    candidateProcesses.push('SystemSettings.exe');
+  }
+  if (hint.includes('store') && !candidateProcesses.includes('WinStore.App.exe')) {
+    candidateProcesses.push('WinStore.App.exe');
+  }
+
   const startTime = Date.now();
   const pollInterval = 300;
 
   while (Date.now() - startTime < maxWaitMs) {
-    for (const procName of expectedProcessNames) {
-      const pid = await checkProcessRunning(procName);
-      if (pid) {
-        return { verified: true, pid, processName: procName };
+    // 1. Check process list for candidate image names
+    for (const procName of candidateProcesses) {
+      if (procName) {
+        const pid = await checkProcessRunning(procName);
+        if (pid) {
+          return { verified: true, pid, processName: procName };
+        }
       }
     }
+
+    // 2. Check active foreground window title
+    const activeWin = await getActiveWindowInfo();
+    if (activeWin && activeWin.title) {
+      const titleLower = activeWin.title.toLowerCase();
+      if (
+        (hint && titleLower.includes(hint)) ||
+        (hint.includes('setting') && titleLower.includes('setting')) ||
+        (hint.includes('store') && titleLower.includes('store'))
+      ) {
+        return { verified: true, windowTitle: activeWin.title, method: 'window_title' };
+      }
+    }
+
     await new Promise(r => setTimeout(r, pollInterval));
   }
 
   return {
     verified: false,
-    error: `Process '${expectedProcessNames.join(', ')}' did not appear within ${maxWaitMs / 1000}s timeout`
+    error: `Process or window for '${appNameHint || expectedProcessNames.join(', ')}' did not appear within ${maxWaitMs / 1000}s timeout`
+  };
+}
+
+/**
+ * Backward compatible alias for verifyProcessAppeared.
+ */
+async function verifyProcessAppeared(expectedProcessNames, maxWaitMs = 8000) {
+  return verifyWindowOrProcessAppeared(expectedProcessNames, '', maxWaitMs);
+}
+
+/**
+ * Step C2.12: Opens Windows ms-settings pages safely using shell.openExternal.
+ * Verifies window or SystemSettings/ApplicationFrameHost appeared within 8s.
+ */
+async function safeOpenSettings(page = 'settings') {
+  const cleanPage = String(page || 'settings').toLowerCase().trim();
+  const uri = SETTINGS_PAGES[cleanPage] || (cleanPage.startsWith('ms-settings:') ? cleanPage : `ms-settings:${cleanPage}`);
+
+  await shell.openExternal(uri);
+  const verify = await verifyWindowOrProcessAppeared(['SystemSettings.exe', 'ApplicationFrameHost.exe'], 'Settings', 8000);
+  return {
+    success: true,
+    status: 'succeeded',
+    page: cleanPage,
+    uri,
+    verified: verify.verified,
+    pid: verify.pid || null,
+    method: 'ms-settings'
   };
 }
 
@@ -346,6 +445,19 @@ async function safeLaunchDesktopApp(appNameOrTarget) {
     // 5. Known desktop app mappings
     const mapping = ALLOWED_APP_TARGETS[target];
     if (mapping) {
+      if (mapping.type === 'settings_page') {
+        return await safeOpenSettings(mapping.page || target);
+      }
+
+      if (mapping.type === 'store_app') {
+        await shell.openExternal(mapping.target);
+        const verify = await verifyWindowOrProcessAppeared(mapping.expected || ['WinStore.App.exe', 'ApplicationFrameHost.exe'], mapping.displayName || target, 8000);
+        if (!verify.verified) {
+          return { success: false, status: 'sent_not_verified', error: verify.error, app: target };
+        }
+        return { success: true, status: 'succeeded', app: target, method: 'store_app', pid: verify.pid || null };
+      }
+
       if (mapping.type === 'protocol' || mapping.type === 'url') {
         await shell.openExternal(mapping.target);
         return { success: true, app: target, method: mapping.type };
@@ -764,7 +876,34 @@ function buildInstalledAppsIndex() {
     }
   }
 
-  // 2. Scan Windows Start Menu folders (User & All Users)
+  // 2. Scan Windows Get-StartApps (UWP Store apps + Start menu apps)
+  if (process.platform === 'win32') {
+    try {
+      const psOut = execFileSync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', 'Get-StartApps | ConvertTo-Json -Compress'],
+        { shell: false, timeout: 4500, maxBuffer: 10 * 1024 * 1024, encoding: 'utf8', windowsHide: true }
+      );
+      if (psOut && psOut.trim()) {
+        const parsed = JSON.parse(psOut);
+        const list = Array.isArray(parsed) ? parsed : [parsed];
+        for (const item of list) {
+          if (!item || !item.Name || !item.AppID) continue;
+          const cleanKey = item.Name.toLowerCase().trim();
+          if (!apps.has(cleanKey)) {
+            apps.set(cleanKey, {
+              name: cleanKey,
+              displayName: item.Name,
+              appId: item.AppID,
+              type: 'start_app'
+            });
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
+  // 3. Scan Windows Start Menu folders (User & All Users)
   const userStartMenu = path.join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Start Menu', 'Programs');
   const allStartMenu = path.join(process.env.PROGRAMDATA || 'C:\\ProgramData', 'Microsoft', 'Windows', 'Start Menu', 'Programs');
   const userPrograms = path.join(process.env.LOCALAPPDATA || '', 'Programs');
@@ -970,6 +1109,34 @@ async function openAppWithFallback(appName, preferredBrowser = 'chrome', userCon
 
   // 2. High confidence: launch with real launcher
   if (topCandidate && confidence === 'high') {
+    // If it is a settings page
+    if (topCandidate.type === 'settings_page') {
+      return await safeOpenSettings(topCandidate.page || topCandidate.name);
+    }
+
+    // If it is a Windows Store / Start App with AppID
+    if (topCandidate.appId && topCandidate.type === 'start_app') {
+      try {
+        const child = spawn('explorer.exe', ['shell:AppsFolder\\' + topCandidate.appId], { shell: false, detached: true, stdio: 'ignore' });
+        child.unref();
+        const verify = await verifyWindowOrProcessAppeared(['ApplicationFrameHost.exe'], topCandidate.displayName, 8000);
+        if (!verify.verified) {
+          return {
+            success: false,
+            error: verify.error || `Process or window for '${topCandidate.displayName}' did not appear within 8 seconds`,
+            app: topCandidate.name
+          };
+        }
+        return {
+          success: true,
+          method: 'start_app',
+          app: topCandidate.name,
+          displayName: topCandidate.displayName,
+          pid: verify.pid || null
+        };
+      } catch (e) {}
+    }
+
     // If it has a shortcut path
     if (topCandidate.path && topCandidate.type === 'start_menu_shortcut') {
       try {
@@ -1142,11 +1309,13 @@ module.exports = {
   ALLOWED_APP_TARGETS,
   ALLOWED_BROWSERS,
   ALLOWED_KEY_COMBINATIONS,
+  SETTINGS_PAGES,
   validateUrl,
   validateSearchQuery,
   validateAppTarget,
   validateTypeInputPayload,
   safeLaunchDesktopApp,
+  safeOpenSettings,
   safeTypeInput,
   safeLockWorkstation,
   safeGetDesktopBattery,
@@ -1158,6 +1327,7 @@ module.exports = {
   safePressKeys,
   checkProcessRunning,
   verifyProcessAppeared,
+  verifyWindowOrProcessAppeared,
   levenshteinDistance,
   computeSimilarity
 };

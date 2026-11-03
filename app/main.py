@@ -938,11 +938,18 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
                 "fact_text": card.get("fact_text"),
                 "prompt": card.get("message", f"Forget '{card.get('fact_text')}'?"),
             }
-        elif tool_name in ("send_note", "ring_phone", "open_url"):
+        else:
+            action_label = tool_name.replace("_", " ").title()
             task_proposal_obj = {
                 "type": f"confirm_{tool_name}",
-                "message": card.get("message"),
+                "tool_name": tool_name,
+                "action_title": f"Confirm {action_label}",
+                "prompt": card.get("warning") or f"Confirm {action_label}?",
+                "message": card.get("message") or f"Run {action_label} with: {json.dumps(card.get('args', {}))}",
                 "details": card,
+                "args": card.get("args", {}),
+                "untrusted_source": card.get("untrusted_source", False),
+                "warning": card.get("warning")
             }
 
     # Check sound mode intent from chat message for task proposals

@@ -257,22 +257,23 @@ class SinbhaCompanionService : Service() {
                         val toolsArr = JSONArray().apply {
                             put("open_app")
                             put("open_url")
+                            put("open_settings")
                             put("send_note")
                             put("ring_phone")
                             put("sync_tasks")
                             put("emergency_stop")
                             put("get_device_status")
-                            if (SinbhaAccessibilityService.isRunning()) {
-                                put("android_screen_task")
-                                put("accessibility_action")
-                            }
+                            put("android_screen_task")
+                            put("accessibility_action")
                         }
+                        val accStatus = getAccessibilityStatus(applicationContext)
                         val handshake = JSONObject().apply {
                             put("type", "device_status")
                             put("platform", "android")
                             put("version", BuildConfig.VERSION_NAME)
                             put("supported_tools", toolsArr)
                             put("installed_apps", appsArr)
+                            put("accessibility_status", accStatus)
                         }
                         ws.send(handshake.toString())
                     } catch (e: Exception) {
@@ -296,7 +297,7 @@ class SinbhaCompanionService : Service() {
                     val msg = JSONObject(text)
                     val rawType = msg.optString("type")
                     val type = if (rawType == "remote_command") msg.optString("command_type", rawType) else rawType
-                    if (type in listOf("open_app", "open_url", "ring_phone", "send_note", "emergency_stop", "get_device_status", "accessibility_action", "android_screen_task")) {
+                    if (type in listOf("open_app", "open_url", "open_settings", "ring_phone", "send_note", "emergency_stop", "get_device_status", "accessibility_action", "android_screen_task")) {
                         serviceScope.launch {
                             executeAndReportCommand(msg)
                         }
@@ -527,6 +528,26 @@ class SinbhaCompanionService : Service() {
                         sendWsStatus(cmdId, "failed", error = err)
                     }
                 }
+                "open_settings" -> {
+                    handlerRan = "android:SinbhaAppLauncher.openSettingsPage"
+                    val pageStr = payload.optString("page", payload.optString("target", payload.optString("app", "settings")))
+                    val launchResult = SinbhaAppLauncher.openSettingsPage(applicationContext, pageStr)
+                    if (launchResult.success) {
+                        finalOutcome = "succeeded"
+                        val resObj = JSONObject().apply {
+                            put("page", pageStr)
+                            put("app", launchResult.app)
+                            put("method", launchResult.method ?: "settings_intent")
+                        }
+                        apiClient.reportCommandStatus(cmdId, "succeeded", result = resObj)
+                        sendWsStatus(cmdId, "succeeded", result = resObj)
+                    } else {
+                        finalOutcome = "failed"
+                        val err = launchResult.error ?: "Failed to open Settings page: $pageStr"
+                        apiClient.reportCommandStatus(cmdId, "failed", error = err)
+                        sendWsStatus(cmdId, "failed", error = err)
+                    }
+                }
                 "ring_phone" -> {
                     handlerRan = "android:SinbhaPlugin.startAlarmRing"
                     val ok = SinbhaPlugin.startAlarmRing(applicationContext, sender)
@@ -587,9 +608,16 @@ class SinbhaCompanionService : Service() {
                     val s = SinbhaAccessibilityService.instance
                     if (s == null) {
                         finalOutcome = "failed"
-                        val err = "SINBHA Accessibility Service is not active. Please enable it in Settings."
-                        apiClient.reportCommandStatus(cmdId, "failed", error = err)
-                        sendWsStatus(cmdId, "failed", error = err)
+                        val accStatus = getAccessibilityStatus(applicationContext)
+                        val guidance = getAccessibilityGuidance(accStatus)
+                        val resObj = JSONObject().apply {
+                            put("success", false)
+                            put("accessibility_status", accStatus)
+                            put("guidance", guidance)
+                            put("error", guidance)
+                        }
+                        apiClient.reportCommandStatus(cmdId, "failed", error = guidance, result = resObj)
+                        sendWsStatus(cmdId, "failed", error = guidance, result = resObj)
                     } else {
                         val act = payload.optString("action", "dump_tree")
                         val target = payload.optString("target")
@@ -666,5 +694,59 @@ class SinbhaCompanionService : Service() {
             .build()
 
         nm.notify((System.currentTimeMillis() % 10000).toInt() + 1000, notif)
+    }
+
+    companion object {
+        /**
+         * Step C2.12: Truthfully checks Android accessibility service state:
+         * - "enabled": service is connected and running.
+         * - "blocked_by_restricted_settings": blocked by Android 13+ sideload restrictions.
+         * - "disabled": installed but not turned on in Accessibility settings.
+         * - "missing": service component not found in manifest/package.
+         */
+        fun getAccessibilityStatus(context: Context): String {
+            if (SinbhaAccessibilityService.isRunning()) {
+                return "enabled"
+            }
+
+            // Check if blocked by Android 13+ restricted settings (API >= 33)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                try {
+                    val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? android.app.AppOpsManager
+                    if (appOps != null) {
+                        val mode = appOps.unsafeCheckOpNoThrow(
+                            "android:access_restricted_settings",
+                            android.os.Process.myUid(),
+                            context.packageName
+                        )
+                        if (mode == android.app.AppOpsManager.MODE_IGNORED) {
+                            return "blocked_by_restricted_settings"
+                        }
+                    }
+                } catch (ignored: Exception) {}
+            }
+
+            val intent = Intent("android.accessibilityservice.AccessibilityService")
+            intent.setPackage(context.packageName)
+            val services = context.packageManager.queryIntentServices(intent, 0)
+            if (services.isEmpty()) {
+                return "missing"
+            }
+
+            return "disabled"
+        }
+
+        fun getAccessibilityGuidance(status: String): String {
+            return when (status) {
+                "blocked_by_restricted_settings" ->
+                    "Accessibility is blocked by Android restricted settings. Go to Settings -> Apps -> SINBHA -> tap ⋮ (top-right) -> tap 'Allow restricted settings', then turn on SINBHA in Settings -> Accessibility."
+                "disabled" ->
+                    "SINBHA Screen Agent is turned off. Open Phone Settings -> Accessibility -> Installed apps -> SINBHA Screen Agent and turn it on."
+                "missing" ->
+                    "The screen accessibility service is not available on this phone build."
+                else ->
+                    "Accessibility service is ready."
+            }
+        }
     }
 }

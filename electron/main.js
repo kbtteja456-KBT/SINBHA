@@ -11,6 +11,7 @@ const fs = require('fs');
 const os = require('os');
 const {
   safeLaunchDesktopApp,
+  safeOpenSettings,
   safeTypeInput,
   safeLockWorkstation,
   safeGetDesktopBattery,
@@ -378,7 +379,7 @@ async function sendDesktopHeartbeat(cookieHeader) {
         battery: battery ? battery.percentage : 100,
         is_charging: battery ? battery.isPlugged : true,
         installed_apps: installed,
-        supported_tools: ['open_app', 'open_url', 'find_installed_app', 'type_text', 'press_keys', 'send_note', 'ring_phone']
+        supported_tools: ['open_app', 'open_url', 'open_settings', 'find_installed_app', 'type_text', 'press_keys', 'send_note', 'ring_phone']
       })
     }).catch(() => {});
   } catch (e) {}
@@ -431,6 +432,9 @@ async function checkPendingDesktopCommandsLoop() {
           if (type === 'open_app') {
             handlerName = 'electron:safeLaunchDesktopApp';
             outcome = await safeLaunchDesktopApp(payload);
+          } else if (type === 'open_settings') {
+            handlerName = 'electron:safeOpenSettings';
+            outcome = await safeOpenSettings(payload.page || payload.target || payload.app || 'settings');
           } else if (type === 'open_url') {
             handlerName = 'electron:openUrlWithBrowser';
             outcome = await openUrlWithBrowser(payload.url || '', payload.browser || 'default');

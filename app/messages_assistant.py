@@ -154,7 +154,15 @@ async def read_whatsapp_messages(
                 "message": f"Could not communicate with Android phone: {relay_res.get('message')}"
             }
         completion = await relay_manager.wait_for_command_completion(user_id, cmd_id, timeout=12.0)
-        tree_data = completion.get("result") or {}
+        res_obj = completion.get("result") or {}
+        if completion.get("status") == "failed" or not completion.get("success", True):
+            guidance = res_obj.get("guidance") or completion.get("error") or "Accessibility service is not active on your phone."
+            return {
+                "success": False,
+                "error": "ACCESSIBILITY_DISABLED",
+                "message": guidance
+            }
+        tree_data = res_obj
     else:
         # Default fallback structure for testing/offline
         tree_data = {

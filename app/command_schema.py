@@ -14,6 +14,7 @@ from typing import Dict, Any, List, Optional, Tuple
 SUPPORTED_COMMAND_TYPES = [
     "open_app",
     "open_url",
+    "open_settings",
     "send_note",
     "ring_phone",
     "sync_tasks",
@@ -29,6 +30,7 @@ DEFAULT_PLATFORM_SUPPORTED_TOOLS = {
     "android": [
         "open_app",
         "open_url",
+        "open_settings",
         "send_note",
         "ring_phone",
         "sync_tasks",
@@ -42,6 +44,7 @@ DEFAULT_PLATFORM_SUPPORTED_TOOLS = {
     "phone": [
         "open_app",
         "open_url",
+        "open_settings",
         "send_note",
         "ring_phone",
         "sync_tasks",
@@ -55,6 +58,7 @@ DEFAULT_PLATFORM_SUPPORTED_TOOLS = {
     "windows": [
         "open_app",
         "open_url",
+        "open_settings",
         "find_installed_app",
         "type_text",
         "press_keys",
@@ -65,6 +69,7 @@ DEFAULT_PLATFORM_SUPPORTED_TOOLS = {
     "laptop": [
         "open_app",
         "open_url",
+        "open_settings",
         "find_installed_app",
         "type_text",
         "press_keys",
@@ -75,6 +80,7 @@ DEFAULT_PLATFORM_SUPPORTED_TOOLS = {
     "desktop": [
         "open_app",
         "open_url",
+        "open_settings",
         "find_installed_app",
         "type_text",
         "press_keys",
@@ -89,6 +95,11 @@ COMMAND_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "description": "Launches an application by name or package on the target device.",
         "required_fields": ["app"],
         "optional_fields": ["search_query", "url", "type_text", "browser", "preferred_browser"],
+    },
+    "open_settings": {
+        "description": "Opens system settings or specific settings subpages on the target device.",
+        "required_fields": [],
+        "optional_fields": ["page", "target", "app"],
     },
     "open_url": {
         "description": "Opens a web URL in the default or preferred browser.",

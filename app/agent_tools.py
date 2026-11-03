@@ -549,11 +549,12 @@ async def handle_send_note(user_id: int, args: dict, ctx: dict) -> dict:
     is_online = relay.is_device_connected(user_id, target_dev["device_id"]) if (relay and hasattr(relay, "is_device_connected")) else True
     if not is_online:
         await relay.relay_command(user_id, cmd_data)
+        last_seen = _format_device_last_seen(target_dev, user_id, db)
         return {
             "success": False,
             "status": "queued",
             "target_device": target_dev.get("name"),
-            "message": f"I queued the note for {target_dev.get('name')}, but the device is currently offline.",
+            "message": f"I queued the note for {target_dev.get('name')}. The device is currently offline (last seen {last_seen}).",
         }
 
     relay_res = await relay.relay_command(user_id, cmd_data)
@@ -646,11 +647,12 @@ async def handle_ring_phone(user_id: int, args: dict, ctx: dict) -> dict:
     is_online = relay.is_device_connected(user_id, target_dev["device_id"]) if (relay and hasattr(relay, "is_device_connected")) else True
     if not is_online:
         await relay.relay_command(user_id, cmd_data)
+        last_seen = _format_device_last_seen(target_dev, user_id, db)
         return {
             "success": False,
             "status": "queued",
             "target_device": target_dev.get("name"),
-            "message": f"I queued the ring alert for {target_dev.get('name')}, but the device is currently offline.",
+            "message": f"I queued the ring alert for {target_dev.get('name')}. The device is currently offline (last seen {last_seen}).",
         }
 
     relay_res = await relay.relay_command(user_id, cmd_data)
@@ -747,12 +749,13 @@ async def handle_open_url(user_id: int, args: dict, ctx: dict) -> dict:
     is_online = relay.is_device_connected(user_id, target_dev["device_id"]) if (relay and hasattr(relay, "is_device_connected")) else True
     if not is_online:
         await relay.relay_command(user_id, cmd_data)
+        last_seen = _format_device_last_seen(target_dev, user_id, db)
         return {
             "success": False,
             "status": "queued",
             "target_device": target_dev.get("name"),
             "url": url,
-            "message": f"I queued the URL for {target_dev.get('name')}, but the device is currently offline.",
+            "message": f"I queued the URL for {target_dev.get('name')}. The device is currently offline (last seen {last_seen}).",
         }
 
     relay_res = await relay.relay_command(user_id, cmd_data)
@@ -810,6 +813,34 @@ async def handle_open_url(user_id: int, args: dict, ctx: dict) -> dict:
 
 _PHONE_PLATFORMS = ("android", "mobile", "ios")
 _LAPTOP_PLATFORMS = ("windows", "desktop", "laptop")
+
+def _format_device_last_seen(dev: dict, user_id: int, db) -> str:
+    """Step C2.12 Item 7: Returns precise human-readable last-seen duration without guessing."""
+    if not dev:
+        return "an unknown time ago"
+    dev_id = dev.get("device_id")
+    presence = (db.get_device_presence(user_id, dev_id) if (db and dev_id and hasattr(db, "get_device_presence")) else None) or dev
+    for col in ("last_seen_at", "last_ping_at", "last_active_at"):
+        val = presence.get(col)
+        if val:
+            try:
+                from datetime import datetime, timezone
+                s = str(val)
+                if s.endswith("Z"):
+                    s = s[:-1] + "+00:00"
+                dt = datetime.fromisoformat(s)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                diff_s = int((datetime.now(timezone.utc) - dt).total_seconds())
+                if diff_s < 60:
+                    return f"{diff_s}s ago"
+                elif diff_s < 3600:
+                    return f"{diff_s // 60}m ago"
+                else:
+                    return f"{diff_s // 3600}h ago"
+            except Exception:
+                pass
+    return "an unknown time ago"
 
 def _resolve_target_device(trusted: list, target_hint: str, relay, user_id: int) -> dict:
     """
@@ -1128,6 +1159,90 @@ async def handle_get_device_status(user_id: int, args: dict, ctx: dict) -> dict:
     }
 
 
+async def handle_open_settings(user_id: int, args: dict, ctx: dict) -> dict:
+    """
+    Step C2.12 Item 1 & 2: Opens system settings or specific settings subpages on laptop or phone.
+    Laptop uses ms-settings: pages (bluetooth, wifi, display, apps, windows update, etc.).
+    Phone uses Android Settings Intents (bluetooth, wifi, display, battery, apps, notifications, accessibility).
+    """
+    page = sanitize_text_arg(args.get("page", args.get("name", "settings")), 100).lower().strip()
+    target_hint = args.get("target_device")
+    db = ctx.get("db")
+    relay = ctx.get("relay_manager")
+
+    devs = db.get_user_devices(user_id) if db else []
+    trusted = [d for d in devs if d.get("status") == "trusted"]
+    target_res = _resolve_target_device(trusted, target_hint or "", relay, user_id)
+    if target_res["status"] != "ok":
+        return {"success": False, "error": target_res["status"], "message": target_res.get("message")}
+
+    target_dev = target_res["device"]
+    cmd_id = f"cmd_settings_{int(time.time() * 1000)}"
+
+    cmd_data = {
+        "id": cmd_id,
+        "sender_device": trusted[0]["device_id"] if trusted else "server",
+        "target_device": target_dev["device_id"],
+        "type": "open_settings",
+        "payload": {"page": page, "target": page, "app": page},
+        "created_at": time.time(),
+        "expiry": 86400,
+    }
+
+    is_online = relay.is_device_connected(user_id, target_dev["device_id"]) if (relay and hasattr(relay, "is_device_connected")) else True
+    if not is_online:
+        if relay:
+            await relay.relay_command(user_id, cmd_data)
+        last_seen = _format_device_last_seen(target_dev, user_id, db)
+        return {
+            "success": False,
+            "status": "queued",
+            "page": page,
+            "target_device": target_dev.get("name"),
+            "message": f"I queued the command to open {page} settings on {target_dev.get('name')}. The device is currently offline (last seen {last_seen}).",
+        }
+
+    if relay:
+        relay_res = await relay.relay_command(user_id, cmd_data)
+        if isinstance(relay_res, dict) and not relay_res.get("success"):
+            return {
+                "success": False,
+                "status": "failed",
+                "error": relay_res.get("error", "RELAY_FAILED"),
+                "message": relay_res.get("message") or f"Could not relay open_settings to {target_dev.get('name')}.",
+            }
+
+    if relay and hasattr(relay, "wait_for_command_completion"):
+        completion = await relay.wait_for_command_completion(user_id, cmd_id, timeout=12.0)
+        if isinstance(completion, dict):
+            status = completion.get("status")
+            if status in ("succeeded", "executed"):
+                return {
+                    "success": True,
+                    "status": "succeeded",
+                    "page": page,
+                    "target_device": target_dev.get("name"),
+                    "message": f"Opened {page} settings on {target_dev.get('name')}."
+                }
+            err = completion.get("error") or "Settings launch did not report confirmation."
+            return {
+                "success": False,
+                "status": status or "failed",
+                "error": err,
+                "page": page,
+                "target_device": target_dev.get("name"),
+                "message": f"Could not open {page} settings on {target_dev.get('name')}: {err}"
+            }
+
+    return {
+        "success": True,
+        "status": "succeeded",
+        "page": page,
+        "target_device": target_dev.get("name"),
+        "message": f"Opened {page} settings on {target_dev.get('name')}."
+    }
+
+
 async def handle_open_app(user_id: int, args: dict, ctx: dict) -> dict:
     """
     Step C2.7 Item 1, 2, 4, 6:
@@ -1140,6 +1255,11 @@ async def handle_open_app(user_id: int, args: dict, ctx: dict) -> dict:
     app_name = sanitize_text_arg(args.get("name", ""), 80)
     explicit_browser = args.get("browser")
     target_hint = args.get("target_device", "laptop")
+
+    # Step C2.12: Route system settings pages to handle_open_settings
+    clean_app_lower = app_name.lower().strip()
+    if clean_app_lower in ("settings", "phone settings", "device settings", "bluetooth", "wifi", "wi-fi", "display", "battery", "apps", "notifications", "accessibility", "windows update"):
+        return await handle_open_settings(user_id, {"page": clean_app_lower, "target_device": target_hint}, ctx)
 
     db = ctx.get("db")
     relay = ctx.get("relay_manager")
@@ -1206,12 +1326,13 @@ async def handle_open_app(user_id: int, args: dict, ctx: dict) -> dict:
     if not is_online:
         if relay:
             await relay.relay_command(user_id, cmd_data)
+        last_seen = _format_device_last_seen(target_dev, user_id, db)
         return {
             "success": False,
             "status": "queued",
             "app": app_name,
             "target_device": target_dev.get("name"),
-            "message": f"I queued the command to open {app_name} on {target_dev.get('name')}, but the device is currently offline.",
+            "message": f"I queued the command to open {app_name} on {target_dev.get('name')}. The device is currently offline (last seen {last_seen}).",
         }
 
     if relay:
@@ -1927,6 +2048,16 @@ _SCHEMA_OPEN_APP = {
     "additionalProperties": False,
 }
 
+_SCHEMA_OPEN_SETTINGS = {
+    "type": "object",
+    "properties": {
+        "page": {"type": "string", "description": "Settings page or topic to open: 'settings', 'bluetooth', 'wifi', 'display', 'battery', 'apps', 'notifications', 'accessibility', 'windows update'", "minLength": 1, "maxLength": 80},
+        "target_device": {"type": "string", "description": "Target device name or hint ('laptop', 'phone')", "maxLength": 50, "default": "laptop"},
+    },
+    "required": ["page"],
+    "additionalProperties": False,
+}
+
 _SCHEMA_TYPE_TEXT = {
     "type": "object",
     "properties": {
@@ -2177,6 +2308,15 @@ def build_default_registry() -> ToolRegistry:
         risk_level=2,
         handler=handle_open_app,
         confirmation_template="Open {name} on {target_device}?",
+    ))
+
+    registry.register(Tool(
+        name="open_settings",
+        description="Open system settings or specific settings page (bluetooth, wifi, display, battery, apps, notifications, accessibility, windows update) on user's laptop or phone.",
+        parameters=_SCHEMA_OPEN_SETTINGS,
+        risk_level=1,
+        handler=handle_open_settings,
+        confirmation_template="Open {page} settings on {target_device}?",
     ))
 
     registry.register(Tool(

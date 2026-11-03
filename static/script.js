@@ -444,6 +444,27 @@ document.addEventListener("DOMContentLoaded", () => {
             </div>
           </div>
         `;
+      } else if (proposal.type && proposal.type.startsWith("confirm_")) {
+        // Step C2.12 Item 6: Structured Safety Confirmation Card
+        const title = proposal.action_title || proposal.prompt || "Action Confirmation";
+        const msg = proposal.message || "";
+        const warning = proposal.warning ? `<div style="color: #ea580c; font-size: 0.85rem; margin-top: 6px;">⚠️ ${escapeHtml(proposal.warning)}</div>` : "";
+        proposalHtml = `
+          <div class="task-action-card" id="safety-card-${Math.random().toString(36).substring(7)}" style="background: #fffaf5; border: 1.5px solid #fed7aa; border-radius: 12px; padding: 14px; margin-top: 10px;">
+            <div class="task-action-header" style="display:flex;align-items:center;gap:6px; font-weight:600; color: #9a3412;">
+              <span>🛡️</span>
+              <span>${escapeHtml(title)}</span>
+            </div>
+            <div class="task-action-prompt" style="margin-top:6px; color: #431407; font-size: 0.92rem;">
+              ${escapeHtml(msg)}
+              ${warning}
+            </div>
+            <div class="task-action-actions" style="margin-top:12px; display: flex; gap: 8px;">
+              <button class="generic-confirm-btn primary-btn" style="padding:7px 16px; border-radius:8px; font-weight:600; font-size:0.88rem; cursor:pointer;">✓ Yes, proceed</button>
+              <button class="generic-cancel-btn secondary-btn" style="padding:7px 16px; border-radius:8px; font-size:0.88rem; cursor:pointer;">✕ Cancel</button>
+            </div>
+          </div>
+        `;
       }
     }
 
@@ -579,6 +600,35 @@ document.addEventListener("DOMContentLoaded", () => {
           confirmBtn.disabled = true;
           cancelBtn.disabled = true;
           await handleMemoryActionConfirmation("cancel", card);
+        });
+      }
+    }
+
+    // Attach event listeners to generic safety confirmation cards (Step C2.12)
+    if (proposal && proposal.type && proposal.type.startsWith("confirm_") && proposal.type !== "confirm_forget") {
+      const card = group.querySelector(".task-action-card");
+      const confirmBtn = group.querySelector(".generic-confirm-btn");
+      const cancelBtn = group.querySelector(".generic-cancel-btn");
+
+      if (confirmBtn && cancelBtn) {
+        confirmBtn.addEventListener("click", () => {
+          confirmBtn.disabled = true;
+          cancelBtn.disabled = true;
+          const actionsDiv = card.querySelector(".task-action-actions");
+          if (actionsDiv) actionsDiv.innerHTML = `<div class="task-proposal-resolved confirmed" style="color:#16a34a; font-weight:600; font-size:0.88rem;">✓ Confirmed</div>`;
+          const input = document.getElementById("messageInput");
+          if (input) {
+            input.value = "yes, proceed";
+            const form = document.getElementById("chatForm");
+            if (form) form.dispatchEvent(new Event("submit"));
+          }
+        });
+
+        cancelBtn.addEventListener("click", () => {
+          confirmBtn.disabled = true;
+          cancelBtn.disabled = true;
+          const actionsDiv = card.querySelector(".task-action-actions");
+          if (actionsDiv) actionsDiv.innerHTML = `<div class="task-proposal-resolved cancelled" style="color:#dc2626; font-size:0.88rem;">✕ Cancelled</div>`;
         });
       }
     }

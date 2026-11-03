@@ -546,7 +546,8 @@ class CommandRelayManager:
                         if dt.tzinfo is None:
                             dt = dt.replace(tzinfo=timezone.utc)
                         now = datetime.now(timezone.utc)
-                        if (now - dt).total_seconds() < 45.0:
+                        # Step C2.12 Item 7: 90s presence threshold avoids false offline reports during network jitter
+                        if (now - dt).total_seconds() < 90.0:
                             return True
                     except Exception:
                         pass

@@ -215,18 +215,16 @@ object SinbhaAppLauncher {
             }
         }
 
-        // 3. Special System Intent Handlers
+        // 3. Special System Intent Handlers & Settings Pages (Step C2.12)
         when (cleanName) {
-            "settings" -> {
-                try {
-                    val intent = Intent(Settings.ACTION_SETTINGS).apply {
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-                    return launchIntentSafely(context, "settings", "com.android.settings", intent, method = "system_action")
-                } catch (e: Exception) {
-                    return LaunchResult(false, "settings", error = e.message)
-                }
-            }
+            "settings", "phone settings", "device settings" -> return openSettingsPage(context, "settings")
+            "bluetooth" -> return openSettingsPage(context, "bluetooth")
+            "wifi", "wi-fi", "wireless", "internet", "network" -> return openSettingsPage(context, "wifi")
+            "display", "screen", "brightness" -> return openSettingsPage(context, "display")
+            "battery", "power" -> return openSettingsPage(context, "battery")
+            "apps", "applications", "installed apps" -> return openSettingsPage(context, "apps")
+            "notifications", "notification" -> return openSettingsPage(context, "notifications")
+            "accessibility" -> return openSettingsPage(context, "accessibility")
             "camera" -> {
                 try {
                     val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
@@ -399,6 +397,65 @@ object SinbhaAppLauncher {
                 needsOverlayPermission = !canOverlay,
                 error = "could not be verified: background launch blocked (${e.message})"
             )
+        }
+    }
+
+    /**
+     * Step C2.12 Item 2: Opens Android Settings pages using standard Settings Intents.
+     * Pages: bluetooth, wifi, display, battery, apps, notifications, accessibility, settings.
+     * Returns LaunchResult with confirmed result.
+     */
+    fun openSettingsPage(context: Context, page: String): LaunchResult {
+        val cleanPage = page.lowercase().trim()
+        val (intent, targetName) = when (cleanPage) {
+            "bluetooth" -> Intent(Settings.ACTION_BLUETOOTH_SETTINGS) to "Bluetooth Settings"
+            "wifi", "wi-fi", "wireless", "network", "internet" -> Intent(Settings.ACTION_WIFI_SETTINGS) to "Wi-Fi Settings"
+            "display", "screen", "brightness" -> Intent(Settings.ACTION_DISPLAY_SETTINGS) to "Display Settings"
+            "battery", "power" -> {
+                val pIntent = Intent(Intent.ACTION_POWER_USAGE_SUMMARY)
+                if (context.packageManager.resolveActivity(pIntent, 0) != null) {
+                    pIntent to "Battery Settings"
+                } else {
+                    Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS) to "Battery Settings"
+                }
+            }
+            "apps", "applications", "installed apps" -> Intent(Settings.ACTION_APPLICATION_SETTINGS) to "Apps Settings"
+            "notifications", "notification" -> Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS) to "Notification Settings"
+            "accessibility" -> Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS) to "Accessibility Settings"
+            else -> Intent(Settings.ACTION_SETTINGS) to "Settings"
+        }
+
+        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        return try {
+            context.startActivity(intent)
+            LaunchResult(
+                success = true,
+                app = targetName,
+                packageName = "com.android.settings",
+                method = "settings_intent",
+                status = "succeeded"
+            )
+        } catch (e: Exception) {
+            // Fallback to general settings
+            try {
+                val fallbackIntent = Intent(Settings.ACTION_SETTINGS).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(fallbackIntent)
+                LaunchResult(
+                    success = true,
+                    app = "Settings",
+                    packageName = "com.android.settings",
+                    method = "settings_intent_fallback",
+                    status = "succeeded"
+                )
+            } catch (e2: Exception) {
+                LaunchResult(
+                    success = false,
+                    app = targetName,
+                    error = "Failed to open $targetName: ${e.message}"
+                )
+            }
         }
     }
 
