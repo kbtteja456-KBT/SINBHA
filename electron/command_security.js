@@ -360,32 +360,18 @@ async function safeLaunchDesktopApp(appNameOrTarget) {
         });
         child.on('error', (err) => {
           spawnError = err.message;
-          if (mapping.fallbackUrl) {
-            shell.openExternal(mapping.fallbackUrl);
-          } else if (mapping.fallbackBinary) {
-            const fallbackChild = spawn(mapping.fallbackBinary, mapping.args || [], {
-              shell: false,
-              detached: true,
-              stdio: 'ignore'
-            });
-            fallbackChild.unref();
-          }
         });
         await new Promise(r => setTimeout(r, 120));
-        if (spawnError && !mapping.fallbackUrl && !mapping.fallbackBinary) {
-          return { success: false, error: `Spawn error: ${spawnError}`, app: target };
+        if (spawnError) {
+          return { success: false, status: 'failed', error: `Spawn error: ${spawnError}`, app: target };
         }
         child.unref();
 
         const verify = await verifyProcessAppeared(mapping.expected || [mapping.binary], 8000);
         if (!verify.verified) {
-          if (mapping.fallbackUrl) {
-            await shell.openExternal(mapping.fallbackUrl);
-            return { success: true, app: target, method: 'web_fallback', url: mapping.fallbackUrl };
-          }
-          return { success: false, error: verify.error, app: target };
+          return { success: false, status: 'sent_not_verified', error: verify.error || 'Process or window did not appear within 8 seconds', app: target };
         }
-        return { success: true, app: target, method: 'spawn_binary', pid: verify.pid || child.pid };
+        return { success: true, status: 'succeeded', app: target, method: 'spawn_binary', pid: verify.pid || child.pid };
       }
 
       if (mapping.type === 'special' && target === 'claude') {
@@ -399,12 +385,14 @@ async function safeLaunchDesktopApp(appNameOrTarget) {
             child.unref();
             const verify = await verifyProcessAppeared(['Claude.exe'], 8000);
             if (verify.verified) {
-              return { success: true, app: 'claude', method: 'desktop_exe', pid: verify.pid || child.pid };
+              return { success: true, status: 'succeeded', app: 'claude', method: 'desktop_exe', pid: verify.pid || child.pid };
             }
+            return { success: false, status: 'sent_not_verified', error: verify.error, app: 'claude' };
           }
         }
-        await shell.openExternal('https://claude.ai');
-        return { success: true, app: 'claude', method: 'web_fallback' };
+        const sRes = findInstalledApp('claude');
+        const cands = (sRes.candidates || []).map(c => c.displayName || c.name);
+        return { success: false, status: 'not_installed', error: 'not_installed', app: 'claude', candidates: cands.slice(0, 3), message: "Claude desktop app is not installed on this computer." };
       }
 
       if (mapping.type === 'special' && target === 'chatgpt') {
@@ -418,12 +406,14 @@ async function safeLaunchDesktopApp(appNameOrTarget) {
             child.unref();
             const verify = await verifyProcessAppeared(['ChatGPT.exe'], 8000);
             if (verify.verified) {
-              return { success: true, app: 'chatgpt', method: 'desktop_exe', pid: verify.pid || child.pid };
+              return { success: true, status: 'succeeded', app: 'chatgpt', method: 'desktop_exe', pid: verify.pid || child.pid };
             }
+            return { success: false, status: 'sent_not_verified', error: verify.error, app: 'chatgpt' };
           }
         }
-        await shell.openExternal('https://chatgpt.com');
-        return { success: true, app: 'chatgpt', method: 'web_fallback' };
+        const sRes = findInstalledApp('chatgpt');
+        const cands = (sRes.candidates || []).map(c => c.displayName || c.name);
+        return { success: false, status: 'not_installed', error: 'not_installed', app: 'chatgpt', candidates: cands.slice(0, 3), message: "ChatGPT desktop app is not installed on this computer." };
       }
 
       if (mapping.type === 'special' && target === 'antigravity') {
@@ -510,12 +500,21 @@ async function safeLaunchDesktopApp(appNameOrTarget) {
       const targetBase = path.basename(foundLnk, '.lnk');
       const verify = await verifyProcessAppeared([`${target}.exe`, `${targetBase}.exe`], 8000);
       if (!verify.verified) {
-        return { success: false, error: verify.error, app: target };
+        return { success: false, status: 'sent_not_verified', error: verify.error, app: target, message: `Shortcut opened but process did not appear within 8 seconds.` };
       }
-      return { success: true, app: target, method: 'start_menu_shortcut', path: foundLnk, pid: verify.pid };
+      return { success: true, status: 'succeeded', app: target, method: 'start_menu_shortcut', path: foundLnk, pid: verify.pid };
     }
 
-    return { success: false, status: 'not_installed', error: 'not_installed', message: `App '${target}' not found in allowlist or Start Menu` };
+    const searchRes = findInstalledApp(target);
+    const top3 = (searchRes && searchRes.candidates) ? searchRes.candidates.map(c => c.displayName || c.name) : [];
+    return {
+      success: false,
+      status: 'not_installed',
+      error: 'not_installed',
+      app: target,
+      candidates: top3.slice(0, 3),
+      message: `App '${target}' is not installed on this computer.`
+    };
   } catch (e) {
     return { success: false, error: e.message };
   }
@@ -822,6 +821,22 @@ function buildInstalledAppsIndex() {
 }
 
 /**
+ * Returns all installed apps on Windows (name, displayName, type, path)
+ * for capability reporting to backend server (Step C2.11).
+ */
+function getInstalledApps() {
+  if (!installedAppsCache || (Date.now() - lastIndexTime > INDEX_CACHE_TTL_MS)) {
+    buildInstalledAppsIndex();
+  }
+  return (installedAppsCache || []).map(app => ({
+    name: app.name,
+    displayName: app.displayName || app.name,
+    type: app.type || 'unknown',
+    path: app.path || null
+  }));
+}
+
+/**
  * Searches the pre-built index of installed applications with typo-tolerant matching.
  * Returns confidence level ('high', 'medium', 'low') and top 3 candidates.
  * Typo tolerant: 'antygravity' -> 'antigravity', 'calclator' -> 'calculator', 'chatgpy' -> 'chatgpt'.
@@ -1022,13 +1037,17 @@ async function openAppWithFallback(appName, preferredBrowser = 'chrome', userCon
 
   // 3. Medium or Low confidence with candidates: Ask user for clarification
   if (candidates.length > 0 && confidence !== 'high') {
-    const candidateNames = candidates.map(c => `'${c.displayName}'`).join(', ');
+    const candList = candidates.slice(0, 3).map(c => c.displayName || c.name);
+    const candidateNames = candList.map(c => `'${c}'`).join(', ');
     return {
       success: false,
+      status: 'not_installed',
+      error: 'not_installed',
+      app_not_found: true,
       needs_clarification: true,
       confidence,
-      candidates,
-      message: `Did you mean ${candidateNames}?`
+      candidates: candList,
+      message: `Could not find '${appName}'. Did you mean ${candidateNames}? Or should I open its website?`
     };
   }
 
@@ -1037,6 +1056,7 @@ async function openAppWithFallback(appName, preferredBrowser = 'chrome', userCon
     const browserRes = await openUrlWithBrowser(fallbackUrl, preferredBrowser);
     return {
       success: true,
+      status: 'succeeded',
       method: 'website_fallback',
       app: target,
       url: fallbackUrl,
@@ -1046,6 +1066,7 @@ async function openAppWithFallback(appName, preferredBrowser = 'chrome', userCon
   }
 
   // Never silently fall back to a website without asking first!
+  const candList = (candidates || []).slice(0, 3).map(c => c.displayName || c.name);
   return {
     success: false,
     status: 'not_installed',
@@ -1053,6 +1074,7 @@ async function openAppWithFallback(appName, preferredBrowser = 'chrome', userCon
     app_not_found: true,
     offer_website: true,
     fallback_url: fallbackUrl,
+    candidates: candList,
     message: `Could not find an installed app matching '${appName}'. Would you like me to open the website instead?`
   };
 }
@@ -1129,6 +1151,7 @@ module.exports = {
   safeLockWorkstation,
   safeGetDesktopBattery,
   buildInstalledAppsIndex,
+  getInstalledApps,
   findInstalledApp,
   openUrlWithBrowser,
   openAppWithFallback,

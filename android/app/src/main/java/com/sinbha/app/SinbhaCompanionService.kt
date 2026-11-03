@@ -484,15 +484,23 @@ class SinbhaCompanionService : Service() {
                         apiClient.reportCommandStatus(cmdId, "needs_tap", result = resObj, error = err)
                         sendWsStatus(cmdId, "needs_tap", result = resObj, error = err)
                     } else {
-                        val isNotInstalled = launchResult.error?.contains("not installed", ignoreCase = true) == true ||
+                        val isNotInstalled = launchResult.status == "not_installed" ||
+                                              launchResult.error?.contains("not installed", ignoreCase = true) == true ||
                                               launchResult.error?.contains("not found", ignoreCase = true) == true ||
                                               launchResult.error?.contains("No installed app", ignoreCase = true) == true
                         finalOutcome = if (isNotInstalled) "not_installed" else "failed"
                         val err = launchResult.error ?: "App '${launchResult.app}' is not installed on this Android device."
+                        val candArr = org.json.JSONArray()
+                        for (c in launchResult.candidates) {
+                            candArr.put(c)
+                        }
                         val resObj = JSONObject().apply {
                             put("app", launchResult.app)
                             put("status", finalOutcome)
                             put("error", err)
+                            if (candArr.length() > 0) {
+                                put("candidates", candArr)
+                            }
                         }
                         apiClient.reportCommandStatus(cmdId, finalOutcome, result = resObj, error = err)
                         sendWsStatus(cmdId, finalOutcome, result = resObj, error = err)

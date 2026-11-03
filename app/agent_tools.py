@@ -1225,23 +1225,93 @@ async def handle_open_app(user_id: int, args: dict, ctx: dict) -> dict:
                 "unverified": relay_res.get("unverified", False),
             }
 
-    # Command Lifecycle Waiter (Item 1 & 2)
+    # Command Lifecycle Waiter (Item 1 & 2 & C2.11)
     if relay and hasattr(relay, "wait_for_command_completion"):
         completion = await relay.wait_for_command_completion(user_id, cmd_id, timeout=18.0)
         if isinstance(completion, dict):
             status = completion.get("status")
             result_data = completion.get("result") or {}
+            err = completion.get("error") or (result_data.get("error") if isinstance(result_data, dict) else None)
+            stages = completion.get("stages") or {}
+            stage_table = completion.get("stage_table")
+            first_missing = completion.get("first_missing_stage")
+            if not stage_table and stages and db and hasattr(db, "format_stage_table"):
+                stage_table, first_missing = db.format_stage_table(stages)
+
+            err_str = str(err or "").lower()
+            is_not_installed = (
+                status in ("not_installed", "app_not_found") or
+                result_data.get("status") == "not_installed" or
+                result_data.get("app_not_found") is True or
+                "not installed" in err_str or
+                err == "APP_NOT_INSTALLED"
+            )
+
             if status == "succeeded":
                 pid_info = f" (PID: {result_data.get('pid')})" if result_data.get("pid") else ""
                 pkg_info = f" ({result_data.get('package')})" if result_data.get("package") else ""
                 return {
                     "success": True,
                     "status": "succeeded",
+                    "command_id": cmd_id,
                     "app": app_name,
                     "browser": browser,
                     "target_device": target_dev.get("name"),
                     "result": result_data,
+                    "stages": stages,
+                    "stage_table": stage_table,
+                    "first_missing_stage": first_missing,
                     "message": f"Opened {app_name} on {target_dev.get('name')}{pid_info}{pkg_info}.",
+                }
+            elif is_not_installed:
+                raw_cands = result_data.get("candidates") if isinstance(result_data, dict) else None
+                if not raw_cands and relay and hasattr(relay, "resolve_installed_apps_candidates"):
+                    raw_cands = relay.resolve_installed_apps_candidates(user_id, target_dev["device_id"], app_name, limit=3)
+                cand_names = []
+                if raw_cands:
+                    for c in raw_cands[:3]:
+                        if isinstance(c, dict):
+                            cand_names.append(c.get("displayName") or c.get("name") or str(c))
+                        elif isinstance(c, str):
+                            cand_names.append(c)
+
+                if cand_names:
+                    if len(cand_names) == 1:
+                        c_text = f"'{cand_names[0]}'"
+                    elif len(cand_names) == 2:
+                        c_text = f"'{cand_names[0]}' or '{cand_names[1]}'"
+                    else:
+                        c_text = f"'{cand_names[0]}', '{cand_names[1]}' or '{cand_names[2]}'"
+                    msg = f"I could not find '{app_name}'. Did you mean {c_text}? Or should I open its website?"
+                else:
+                    msg = f"I could not find '{app_name}'. Should I open its website?"
+
+                return {
+                    "success": False,
+                    "status": "not_installed",
+                    "command_id": cmd_id,
+                    "app": app_name,
+                    "target_device": target_dev.get("name"),
+                    "candidates": cand_names,
+                    "error": "not_installed",
+                    "stages": stages,
+                    "stage_table": stage_table,
+                    "first_missing_stage": first_missing,
+                    "message": msg,
+                }
+            elif status == "sent_not_verified":
+                return {
+                    "success": False,
+                    "status": "sent_not_verified",
+                    "command_id": cmd_id,
+                    "app": app_name,
+                    "target_device": target_dev.get("name"),
+                    "result": result_data,
+                    "error": "sent, not verified",
+                    "stages": stages,
+                    "stage_table": stage_table,
+                    "first_missing_stage": first_missing,
+                    "message": f"Sent open_app for '{app_name}' to {target_dev.get('name')}, but launch could not be verified.",
                 }
             elif status == "timed_out":
                 # Step C2.7 Item 2: Register late confirmation listener
@@ -1264,40 +1334,36 @@ async def handle_open_app(user_id: int, args: dict, ctx: dict) -> dict:
                 return {
                     "success": False,
                     "status": "unconfirmed",
+                    "command_id": cmd_id,
                     "app": app_name,
                     "target_device": target_dev.get("name"),
                     "device_status": dev_status,
+                    "stages": stages,
+                    "stage_table": stage_table,
+                    "first_missing_stage": first_missing,
                     "message": f"I sent it to your {target_dev.get('name')}, but could not confirm (timed out after 10s){diag_str}.",
                 }
             else:
-                err = completion.get("error") or (result_data.get("error") if isinstance(result_data, dict) else "Failed to open app")
-                # Step C2.7 Item 4: Honest reporting, never silent fallback to website
-                err_str = str(err).lower()
-                if "not installed" in err_str or err == "APP_NOT_INSTALLED":
-                    return {
-                        "success": False,
-                        "status": "not_installed",
-                        "app": app_name,
-                        "target_device": target_dev.get("name"),
-                        "error": err,
-                        "message": f"App '{app_name}' is not installed on {target_dev.get('name')}.",
-                    }
-
-                # Real diagnostic data on failure
+                err_msg = err or "Failed to open app"
                 dev_status = await handle_get_device_status(user_id, {"target_device": target_dev.get("name")}, ctx)
                 return {
                     "success": False,
                     "status": "failed",
+                    "command_id": cmd_id,
                     "app": app_name,
                     "target_device": target_dev.get("name"),
-                    "error": err,
+                    "error": err_msg,
                     "device_status": dev_status,
-                    "message": f"Failed to open {app_name} on {target_dev.get('name')}: {err}.",
+                    "stages": stages,
+                    "stage_table": stage_table,
+                    "first_missing_stage": first_missing,
+                    "message": f"Failed to open {app_name} on {target_dev.get('name')}: {err_msg}.",
                 }
 
     return {
         "success": False,
         "status": "unconfirmed",
+        "command_id": cmd_id,
         "app": app_name,
         "browser": browser,
         "target_device": target_dev.get("name"),

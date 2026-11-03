@@ -723,7 +723,14 @@ class SinbhaPlugin : Plugin() {
             call.resolve(resObj)
         } else {
             val err = result.error ?: "Could not find or launch matching app for '$appName'"
-            call.reject(err, if (result.needsOverlayPermission) "OVERLAY_PERMISSION_REQUIRED" else "APP_NOT_FOUND")
+            val candArr = org.json.JSONArray()
+            for (c in result.candidates) candArr.put(c)
+            val data = JSObject().apply {
+                put("status", result.status ?: "not_installed")
+                put("error", err)
+                put("candidates", candArr)
+            }
+            call.reject(err, if (result.needsOverlayPermission) "OVERLAY_PERMISSION_REQUIRED" else "APP_NOT_FOUND", data)
         }
     }
 

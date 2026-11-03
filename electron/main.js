@@ -15,6 +15,7 @@ const {
   safeLockWorkstation,
   safeGetDesktopBattery,
   findInstalledApp,
+  getInstalledApps,
   openUrlWithBrowser,
   openAppWithFallback,
   safePressKeys
@@ -354,11 +355,47 @@ function recordCommandTrace(cmdId, type, handler, resultOrError, timeReceived, t
   return trace;
 }
 
+let lastDesktopHeartbeatTime = 0;
+
+async function sendDesktopHeartbeat(cookieHeader) {
+  try {
+    const devId = getOrCreateDesktopDeviceId();
+    const installed = getInstalledApps();
+    const battery = await safeGetDesktopBattery();
+    await fetch(`${config.BACKEND_URL}/api/devices/heartbeat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': cookieHeader,
+        'X-Requested-With': 'XMLHttpRequest',
+        'X-Client-Version': app.getVersion()
+      },
+      body: JSON.stringify({
+        device_id: devId,
+        platform: 'windows',
+        version: app.getVersion(),
+        client_version: app.getVersion(),
+        battery: battery ? battery.percentage : 100,
+        is_charging: battery ? battery.isPlugged : true,
+        installed_apps: installed,
+        supported_tools: ['open_app', 'open_url', 'find_installed_app', 'type_text', 'press_keys', 'send_note', 'ring_phone']
+      })
+    }).catch(() => {});
+  } catch (e) {}
+}
+
 // ----------------- Desktop Remote Command Poller Loop -----------------
 async function checkPendingDesktopCommandsLoop() {
   try {
     const cookieHeader = await getSessionCookieHeader();
     if (!cookieHeader) return;
+
+    // Periodically report heartbeat and presence with installed apps
+    const now = Date.now();
+    if (now - lastDesktopHeartbeatTime > 45000) {
+      lastDesktopHeartbeatTime = now;
+      sendDesktopHeartbeat(cookieHeader);
+    }
 
     // Get stable unified device ID (Step C2.9 Item 2)
     const devId = getOrCreateDesktopDeviceId();
@@ -410,7 +447,8 @@ async function checkPendingDesktopCommandsLoop() {
 
           const timeSent = new Date().toISOString();
           const isNotInstalled = outcome && (outcome.status === 'not_installed' || outcome.app_not_found || outcome.error === 'not_installed');
-          const st = outcome && outcome.success ? (outcome.status || 'succeeded') : (isNotInstalled ? 'not_installed' : 'failed');
+          const isSentNotVerified = outcome && outcome.status === 'sent_not_verified';
+          const st = outcome && outcome.success ? (outcome.status || 'succeeded') : (isNotInstalled ? 'not_installed' : (isSentNotVerified ? 'sent_not_verified' : 'failed'));
           recordCommandTrace(cmdId, type, handlerName, outcome, timeReceived, timeSent);
 
           if (cmdId) {
@@ -814,6 +852,10 @@ function setupIpcHandlers() {
 
   ipcMain.handle('get-desktop-battery', async () => {
     return safeGetDesktopBattery();
+  });
+
+  ipcMain.handle('get-installed-apps', async () => {
+    return getInstalledApps();
   });
 
   // Step C2: Laptop Tools IPC Handlers

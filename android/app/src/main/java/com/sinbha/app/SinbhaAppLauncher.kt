@@ -26,7 +26,9 @@ data class LaunchResult(
     val method: String? = null,
     val error: String? = null,
     val needsTap: Boolean = false,
-    val needsOverlayPermission: Boolean = false
+    val needsOverlayPermission: Boolean = false,
+    val status: String? = null,
+    val candidates: List<String> = emptyList()
 )
 
 /**
@@ -316,10 +318,26 @@ object SinbhaAppLauncher {
             e.printStackTrace()
         }
 
-        // Step C2.6 Item 6: Never fall back silently to a website!
+        // Step C2.6 & C2.11: Find top 3 closest installed app candidates
+        val candidatesList = mutableListOf<Pair<String, Int>>()
+        try {
+            val installed = getInstalledApps(context)
+            for (item in installed) {
+                val label = item["name"] ?: item["package"] ?: ""
+                val clean = label.lowercase().replace(Regex("[^a-z0-9]"), "")
+                val dist = levenshteinDistance(normalizedQuery, clean)
+                candidatesList.add(label to dist)
+            }
+            candidatesList.sortBy { it.second }
+        } catch (e: Exception) {}
+        val top3 = candidatesList.take(3).map { it.first }
+
+        // Step C2.6 & C2.11 Item 1: Honest not_installed result, never fall back silently to a website!
         return LaunchResult(
             success = false,
             app = appName,
+            status = "not_installed",
+            candidates = top3,
             error = "App '$appName' is not installed on this Android device."
         )
     }

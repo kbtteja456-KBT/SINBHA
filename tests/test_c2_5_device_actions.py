@@ -46,7 +46,7 @@ async def test_no_success_message_when_device_fails():
     fake_ws = AsyncMock()
     fake_ws.send_text = AsyncMock()
     relay.register_websocket(user_id, device_id, fake_ws)
-    relay.record_device_capabilities(user_id, device_id, platform="windows", app_version="1.4.5", supported_tools=["open_app", "open_url"])
+    relay.record_device_capabilities(user_id, device_id, platform="windows", app_version="1.4.25", supported_tools=["open_app", "open_url"])
 
     dev_obj = {"device_id": device_id, "name": "Laptop", "platform": "windows", "status": "trusted", "capabilities": {"open_app": True}, "permission_level": 1}
     mock_db = MagicMock()
@@ -91,7 +91,7 @@ async def test_success_message_only_after_device_confirms_pid():
     fake_ws = AsyncMock()
     fake_ws.send_text = AsyncMock()
     relay.register_websocket(user_id, device_id, fake_ws)
-    relay.record_device_capabilities(user_id, device_id, platform="windows", app_version="1.4.5", supported_tools=["open_app"])
+    relay.record_device_capabilities(user_id, device_id, platform="windows", app_version="1.4.25", supported_tools=["open_app"])
 
     dev_obj = {"device_id": device_id, "name": "Laptop", "platform": "windows", "status": "trusted", "capabilities": {"open_app": True}, "permission_level": 1}
     mock_db = MagicMock()
@@ -139,7 +139,7 @@ async def test_command_timeout_reports_unconfirmed():
     fake_ws = AsyncMock()
     fake_ws.send_text = AsyncMock()
     relay.register_websocket(user_id, device_id, fake_ws)
-    relay.record_device_capabilities(user_id, device_id, platform="android", app_version="1.4.5", supported_tools=["open_app"])
+    relay.record_device_capabilities(user_id, device_id, platform="android", app_version="1.4.25", supported_tools=["open_app"])
 
     dev_obj = {"device_id": device_id, "name": "Phone", "platform": "android", "status": "trusted", "capabilities": {"open_app": True}, "permission_level": 1}
     mock_db = MagicMock()

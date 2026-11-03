@@ -2953,18 +2953,24 @@ document.addEventListener("DOMContentLoaded", () => {
         // Step C2.10: Display Native App Version and Web Client Version separately
         let nativeVer = "None (Pure Web Client)";
         if (isElectron && electronStatus) {
-          nativeVer = `v${electronStatus.version || "1.4.23"} (Windows Electron)`;
+          nativeVer = `v${electronStatus.version || "1.4.25"} (Windows Electron)`;
         } else if (diag) {
-          nativeVer = `v${diag.versionName || "1.4.23"} (Android Native, versionCode: ${diag.versionCode || 50})`;
+          nativeVer = `v${diag.versionName || "1.4.25"} (Android Native, versionCode: ${diag.versionCode || 52})`;
         }
         lines.push(`Native App Version: ${nativeVer}`);
-        lines.push(`Web Client Version: v1.4.23`);
+        lines.push(`Web Client Version: v1.4.25`);
 
         if (isElectron && electronStatus) {
           lines.push(`Backend URL: ${electronStatus.backendUrl || "Configured"}`);
           lines.push(`Reminders Paused: ${electronStatus.paused ? "Yes" : "No"}`);
           lines.push(`DND: ${electronStatus.dnd ? "Enabled" : "Disabled"}`);
           lines.push(`Start with Windows: ${electronStatus.startWithWindows ? "Enabled" : "Disabled"}`);
+        }
+        if (isElectron && window.electronAPI && typeof window.electronAPI.getInstalledApps === "function") {
+          try {
+            const winApps = await window.electronAPI.getInstalledApps();
+            lines.push(`Installed Apps (Windows): ${winApps ? winApps.length : 0}`);
+          } catch (e) {}
         } else if (diag) {
           if (diag.deviceInfo) {
             lines.push(`Device: ${diag.deviceInfo.manufacturer} ${diag.deviceInfo.brand} ${diag.deviceInfo.model} (SDK ${diag.deviceInfo.androidSdk})`);
@@ -3019,7 +3025,7 @@ document.addEventListener("DOMContentLoaded", () => {
         } else {
           // Web / Desktop fallback
           lines.push(`Client: Browser / Desktop Webview`);
-          lines.push(`App Version: v1.4.21`);
+          lines.push(`App Version: v1.4.25`);
           lines.push(`Online: ${navigator.onLine ? "Yes" : "No"}`);
           lines.push(`Timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`);
           lines.push(`User Agent: ${navigator.userAgent}`);
@@ -3168,9 +3174,9 @@ document.addEventListener("DOMContentLoaded", () => {
               const badgeBg = isOk ? "#dcfce7" : "#fee2e2";
               const badgeColor = isOk ? "#166534" : "#991b1b";
 
-              // Step C2.10 Item 3: Render stage table for failed commands
+              // Step C2.10 & C2.11 Item 3: Render stage table for every command (passed or failed) with real command_id
               let stageTableHtml = "";
-              if (!isOk && c.stage_table && Array.isArray(c.stage_table)) {
+              if (c.stage_table && Array.isArray(c.stage_table) && c.stage_table.length > 0) {
                 const stageRows = c.stage_table.map(s => {
                   const isFail = s.is_failure_point;
                   const rowBg = isFail ? "#fef2f2" : "#ffffff";
@@ -3185,11 +3191,15 @@ document.addEventListener("DOMContentLoaded", () => {
                   `;
                 }).join("");
 
+                const failureHeader = (!isOk && c.first_missing_stage) ? `
+                  <div style="color: #991b1b; font-weight: 700; font-size: 0.72rem; margin-bottom: 3px;">
+                    ⚠️ Failure point: missing stage <code>${escapeHtml(c.first_missing_stage)}</code>
+                  </div>` : "";
+
                 stageTableHtml = `
-                  <div style="margin-top: 6px; padding: 6px; background: #fff5f5; border: 1px solid #fecaca; border-radius: 6px;">
-                    <div style="color: #991b1b; font-weight: 700; font-size: 0.72rem; margin-bottom: 3px;">
-                      ⚠️ Failure point: missing stage <code>${escapeHtml(c.first_missing_stage || 'unknown')}</code>
-                    </div>
+                  <div style="margin-top: 6px; padding: 6px; background: ${isOk ? '#f0fdf4' : '#fff5f5'}; border: 1px solid ${isOk ? '#bbf7d0' : '#fecaca'}; border-radius: 6px;">
+                    ${failureHeader}
+                    <div style="font-size: 0.68rem; color: #6b7280; margin-bottom: 3px;">Command ID: <code>${escapeHtml(c.command_id || 'N/A')}</code></div>
                     <table style="width: 100%; border-collapse: collapse; font-size: 0.70rem;">
                       <thead>
                         <tr style="text-align: left; background: #f3f4f6; border-bottom: 1px solid #d1d5db;">
@@ -3211,7 +3221,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     <span style="font-size: 0.72rem; font-weight: 700; padding: 2px 6px; border-radius: 4px; background: ${badgeBg}; color: ${badgeColor};">${escapeHtml(c.result.toUpperCase())} (${c.time_taken_ms}ms)</span>
                   </div>
                   <div style="font-size: 0.72rem; color: #4b5563; margin-top: 2px;">
-                    Sent: ${c.sent ? "Yes" : "No"} | Received: ${c.received ? "Yes" : "No"} | Started: ${c.started ? "Yes" : "No"}
+                    Sent: ${c.sent ? "Yes" : "No"} | Received: ${c.received ? "Yes" : "No"} | Started: ${c.started ? "Yes" : "No"} | ID: <code>${escapeHtml(c.command_id || '')}</code>
                   </div>
                   <div style="font-size: 0.70rem; color: #6b7280; font-family: monospace; margin-top: 2px;">
                     ${escapeHtml(c.message || '')}
@@ -3537,7 +3547,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       } catch (e) {}
 
-      return "1.4.24";
+      return "1.4.25";
     }
 
     // Register or handshake this device on server
@@ -3807,16 +3817,32 @@ document.addEventListener("DOMContentLoaded", () => {
           isCharging = b.charging;
         }
 
+        let installedApps = null;
+        if (window.electronAPI && typeof window.electronAPI.getInstalledApps === "function") {
+          try {
+            installedApps = await window.electronAPI.getInstalledApps();
+          } catch (e) {}
+        } else if (window.Capacitor && window.Capacitor.isPluginAvailable && window.Capacitor.isPluginAvailable("SinbhaNative")) {
+          try {
+            const appRes = await window.Capacitor.Plugins.SinbhaNative.getInstalledApps();
+            installedApps = (appRes && appRes.apps) || null;
+          } catch (e) {}
+        }
+
         if (deviceWs && deviceWs.readyState === WebSocket.OPEN) {
           const clientVer = await getActiveClientVersion();
-          deviceWs.send(JSON.stringify({
+          const statusPayload = {
             type: "device_status",
             battery: batteryPct,
             is_charging: isCharging,
             platform: platform,
             version: clientVer,
             supported_tools: supportedTools
-          }));
+          };
+          if (installedApps && Array.isArray(installedApps) && installedApps.length > 0) {
+            statusPayload.installed_apps = installedApps;
+          }
+          deviceWs.send(JSON.stringify(statusPayload));
         }
       } catch (e) {}
     }
@@ -3974,100 +4000,84 @@ document.addEventListener("DOMContentLoaded", () => {
           const appName = payload.app || "";
           showToast(`🚀 Opening ${appName}...`);
 
-          const lowerApp = appName.toLowerCase();
-          let opened = false;
+          let launchStatus = "failed";
+          let launchResult = null;
+          let launchError = null;
 
           // 1. If running inside Electron desktop app (Windows)
           if (window.electronAPI && window.electronAPI.launchDesktopApp) {
             try {
               const res = await window.electronAPI.launchDesktopApp(payload);
+              launchResult = res;
               if (res && res.success) {
                 showToast(`✨ Launched ${appName} on laptop!`);
-                opened = true;
+                launchStatus = res.status || "succeeded";
+              } else if (res && (res.status === "not_installed" || res.error === "not_installed")) {
+                launchStatus = "not_installed";
+                launchError = res.error || "not_installed";
+                showToast(`App '${appName}' is not installed.`);
+              } else if (res && res.status === "sent_not_verified") {
+                launchStatus = "sent_not_verified";
+                launchError = res.error || "sent, not verified";
+                showToast(`Sent ${appName}, but verification failed.`);
               } else {
-                showToast(`Could not launch ${appName}: ${res ? res.error : "Unknown error"}`);
+                launchStatus = "failed";
+                launchError = res ? (res.error || res.message) : "Launch failed";
+                showToast(`Could not launch ${appName}: ${launchError}`);
               }
+            } catch (e) {
+              launchStatus = "failed";
+              launchError = e.message;
+            }
+          }
+          // 2. If running inside Capacitor Android app via native SinbhaPlugin
+          else if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative) {
+            try {
+              const res = await window.Capacitor.Plugins.SinbhaNative.openApp(payload);
+              launchResult = res;
+              showToast(`✨ Opened ${appName} on phone!`);
+              launchStatus = "succeeded";
+            } catch (e) {
+              const code = e && (e.code || (e.data && e.data.status));
+              const isNotInstalled = code === "APP_NOT_FOUND" || code === "not_installed" || (e.message && e.message.toLowerCase().includes("not installed"));
+              launchStatus = isNotInstalled ? "not_installed" : "failed";
+              launchError = e.message || "Failed to open app";
+              launchResult = {
+                app: appName,
+                status: launchStatus,
+                error: launchError,
+                candidates: (e.data && e.data.candidates) || []
+              };
+              showToast(`Could not launch ${appName}: ${launchError}`);
+            }
+          }
+          // 3. Fallback browser/webview: only open if explicit URL was provided; NEVER fallback to web silently!
+          else if (payload.url) {
+            window.open(payload.url.startsWith("http") ? payload.url : `https://${payload.url}`, "_blank");
+            launchStatus = "succeeded";
+            launchResult = { method: "direct_url", url: payload.url };
+          } else {
+            launchStatus = "not_installed";
+            launchError = `App '${appName}' is not installed or companion launcher is unavailable.`;
+            launchResult = { app: appName, status: "not_installed", error: launchError, candidates: [] };
+          }
+
+          if (cmdId) {
+            reportCommandLifecycle(cmdId, launchStatus, launchResult, launchError);
+            try {
+              await fetch(`/api/devices/commands/${encodeURIComponent(cmdId)}/ack`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  status: launchStatus === "succeeded" ? "executed" : launchStatus,
+                  command_id: cmdId,
+                  result: launchResult,
+                  error: launchError
+                })
+              });
             } catch (e) {}
           }
-
-          // 2. If running inside Capacitor Android app via native SinbhaPlugin
-          if (!opened && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative) {
-            try {
-              await window.Capacitor.Plugins.SinbhaNative.openApp(payload);
-              showToast(`✨ Opened ${appName} on phone!`);
-              opened = true;
-            } catch (e) {
-              console.warn("SinbhaNative.openApp plugin call failed, trying intent URI:", e);
-            }
-          }
-
-          // 3. Direct URL / Search Query handling in browser / WebView
-          if (!opened && (payload.url || payload.search_query)) {
-            if (payload.url) {
-              window.open(payload.url.startsWith("http") ? payload.url : `https://${payload.url}`, "_blank");
-              opened = true;
-            } else if (payload.search_query) {
-              if (lowerApp.includes("youtube")) {
-                window.open(`https://www.youtube.com/results?search_query=${encodeURIComponent(payload.search_query)}`, "_blank");
-              } else {
-                window.open(`https://www.google.com/search?q=${encodeURIComponent(payload.search_query)}`, "_blank");
-              }
-              opened = true;
-            }
-          }
-
-          // 4. Direct Android Package Intent Launcher
-          if (!opened && /Android/i.test(navigator.userAgent || "")) {
-            const androidIntentMap = {
-              whatsapp: "intent:#Intent;package=com.whatsapp;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
-              youtube: "intent:#Intent;package=com.google.android.youtube;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
-              spotify: "spotify://",
-              gmail: "intent:#Intent;package=com.google.android.gm;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
-              chrome: "intent:#Intent;package=com.android.chrome;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
-              snapchat: "intent:#Intent;package=com.snapchat.android;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
-              instagram: "intent:#Intent;package=com.instagram.android;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
-              claude: "intent:#Intent;package=com.anthropic.claude;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
-              chatgpt: "intent:#Intent;package=com.openai.chatgpt;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
-              maps: "geo:0,0",
-              camera: "intent:#Intent;action=android.media.action.IMAGE_CAPTURE;end;"
-            };
-            if (androidIntentMap[lowerApp]) {
-              try {
-                const link = document.createElement("a");
-                link.href = androidIntentMap[lowerApp];
-                link.rel = "noreferrer";
-                document.body.appendChild(link);
-                link.click();
-                setTimeout(() => { if (link.parentNode) link.parentNode.removeChild(link); }, 300);
-                showToast(`✨ Opening ${appName} on phone!`);
-                opened = true;
-              } catch (ie) {
-                window.location.href = androidIntentMap[lowerApp];
-                opened = true;
-              }
-            }
-          }
-
-          // 5. Web browser fallback: protocol or web link
-          if (!opened) {
-            const webMap = {
-              whatsapp: "https://web.whatsapp.com",
-              spotify: "https://open.spotify.com",
-              youtube: "https://youtube.com",
-              gmail: "https://mail.google.com",
-              maps: "https://maps.google.com",
-              chrome: "https://google.com",
-              snapchat: "https://web.snapchat.com",
-              instagram: "https://www.instagram.com",
-              claude: "https://claude.ai",
-              chatgpt: "https://chatgpt.com"
-            };
-            if (webMap[lowerApp]) {
-              window.open(webMap[lowerApp], "_blank");
-            } else if (lowerApp === "notepad" || lowerApp === "calculator" || lowerApp === "calc" || lowerApp === "terminal" || lowerApp === "cmd") {
-              showToast(`💡 Note: Launching local Windows apps (${appName}) requires the SINBHA Windows Desktop App!`);
-            }
-          }
+          return;
         } else if (type === "type_input" || (type === "system_control" && payload.action === "type_input")) {
           if (window.electronAPI && window.electronAPI.typeInput) {
             await window.electronAPI.typeInput(payload);

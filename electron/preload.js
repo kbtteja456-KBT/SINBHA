@@ -33,9 +33,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startAlarmRing: (sender) => ipcRenderer.send('start-alarm-ring', sender),
   stopAlarmRing: () => ipcRenderer.send('stop-alarm-ring'),
 
-  // Step 16c & C2.9: Cross-Device App Launcher, Trace & Hardware Control
+  // Step 16c & C2.9 & C2.11: Cross-Device App Launcher, Trace & Hardware Control
   getDeviceId: () => ipcRenderer.invoke('get-device-id'),
   getCommandTrace: () => ipcRenderer.invoke('get-command-trace'),
+  getInstalledApps: () => ipcRenderer.invoke('get-installed-apps'),
   launchDesktopApp: (appName) => ipcRenderer.invoke('launch-desktop-app', appName),
   typeInput: (payload) => ipcRenderer.invoke('type-input', payload),
   lockWorkstation: () => ipcRenderer.invoke('lock-workstation'),

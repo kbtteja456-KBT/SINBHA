@@ -2919,7 +2919,17 @@ def update_device_presence(
             select(Device).where(and_(Device.user_id == user_id, Device.device_id == device_id))
         )
         if not dev:
-            return None
+            dev = Device(
+                user_id=user_id,
+                device_id=device_id,
+                name=name or (f"{platform.capitalize()} Device" if platform else "Companion Device"),
+                platform=platform or "unknown",
+                status="trusted",
+                permission_level=1,
+                created_at=now,
+                last_seen_at=now
+            )
+            session.add(dev)
         dev.last_seen_at = now
         if last_ping:
             dev.last_ping_at = now

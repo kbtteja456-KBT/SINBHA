@@ -2149,8 +2149,11 @@ async def run_real_device_check_endpoint(
                 if not stage_table:
                     stage_table, first_missing = db.format_stage_table(stages)
 
+                cmd_id = res.get("command_id")
+
                 round_runs.append({
                     "round": r_idx + 1,
+                    "command_id": cmd_id,
                     "result": st,
                     "passed": run_pass,
                     "sent": True,
@@ -2166,6 +2169,7 @@ async def run_real_device_check_endpoint(
             last_run = round_runs[-1]
             results_for_dev.append({
                 "app": app_name,
+                "command_id": last_run.get("command_id"),
                 "sent": True,
                 "received": last_run["received"],
                 "started": last_run["started"],
