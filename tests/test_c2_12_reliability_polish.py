@@ -196,3 +196,4 @@ def test_llm_fallback_candidates_and_openrouter_token_capping():
     # Check that Groq secondary models are real valid models, not fake ones
     model_names = [c.get("model") for c in candidates]
     assert "llama-3.3-70b-versatile" in model_names or "llama-3.1-8b-instant" in model_names or any(c.get("provider") == "openrouter" for c in candidates)
+

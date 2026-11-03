@@ -90,6 +90,58 @@ class SinbhaCompanionService : Service() {
                 e.printStackTrace()
             }
         }
+
+        /**
+         * Step C2.12: Truthfully checks Android accessibility service state:
+         * - "enabled": service is connected and running.
+         * - "blocked_by_restricted_settings": blocked by Android 13+ sideload restrictions.
+         * - "disabled": installed but not turned on in Accessibility settings.
+         * - "missing": service component not found in manifest/package.
+         */
+        fun getAccessibilityStatus(context: Context): String {
+            if (SinbhaAccessibilityService.isRunning()) {
+                return "enabled"
+            }
+
+            // Check if blocked by Android 13+ restricted settings (API >= 33)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                try {
+                    val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? android.app.AppOpsManager
+                    if (appOps != null) {
+                        val mode = appOps.unsafeCheckOpNoThrow(
+                            "android:access_restricted_settings",
+                            android.os.Process.myUid(),
+                            context.packageName
+                        )
+                        if (mode == android.app.AppOpsManager.MODE_IGNORED) {
+                            return "blocked_by_restricted_settings"
+                        }
+                    }
+                } catch (ignored: Exception) {}
+            }
+
+            val intent = Intent("android.accessibilityservice.AccessibilityService")
+            intent.setPackage(context.packageName)
+            val services = context.packageManager.queryIntentServices(intent, 0)
+            if (services.isEmpty()) {
+                return "missing"
+            }
+
+            return "disabled"
+        }
+
+        fun getAccessibilityGuidance(status: String): String {
+            return when (status) {
+                "blocked_by_restricted_settings" ->
+                    "Accessibility is blocked by Android restricted settings. Go to Settings -> Apps -> SINBHA -> tap ⋮ (top-right) -> tap 'Allow restricted settings', then turn on SINBHA in Settings -> Accessibility."
+                "disabled" ->
+                    "SINBHA Screen Agent is turned off. Open Phone Settings -> Accessibility -> Installed apps -> SINBHA Screen Agent and turn it on."
+                "missing" ->
+                    "The screen accessibility service is not available on this phone build."
+                else ->
+                    "Accessibility service is ready."
+            }
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -694,59 +746,5 @@ class SinbhaCompanionService : Service() {
             .build()
 
         nm.notify((System.currentTimeMillis() % 10000).toInt() + 1000, notif)
-    }
-
-    companion object {
-        /**
-         * Step C2.12: Truthfully checks Android accessibility service state:
-         * - "enabled": service is connected and running.
-         * - "blocked_by_restricted_settings": blocked by Android 13+ sideload restrictions.
-         * - "disabled": installed but not turned on in Accessibility settings.
-         * - "missing": service component not found in manifest/package.
-         */
-        fun getAccessibilityStatus(context: Context): String {
-            if (SinbhaAccessibilityService.isRunning()) {
-                return "enabled"
-            }
-
-            // Check if blocked by Android 13+ restricted settings (API >= 33)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                try {
-                    val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? android.app.AppOpsManager
-                    if (appOps != null) {
-                        val mode = appOps.unsafeCheckOpNoThrow(
-                            "android:access_restricted_settings",
-                            android.os.Process.myUid(),
-                            context.packageName
-                        )
-                        if (mode == android.app.AppOpsManager.MODE_IGNORED) {
-                            return "blocked_by_restricted_settings"
-                        }
-                    }
-                } catch (ignored: Exception) {}
-            }
-
-            val intent = Intent("android.accessibilityservice.AccessibilityService")
-            intent.setPackage(context.packageName)
-            val services = context.packageManager.queryIntentServices(intent, 0)
-            if (services.isEmpty()) {
-                return "missing"
-            }
-
-            return "disabled"
-        }
-
-        fun getAccessibilityGuidance(status: String): String {
-            return when (status) {
-                "blocked_by_restricted_settings" ->
-                    "Accessibility is blocked by Android restricted settings. Go to Settings -> Apps -> SINBHA -> tap ⋮ (top-right) -> tap 'Allow restricted settings', then turn on SINBHA in Settings -> Accessibility."
-                "disabled" ->
-                    "SINBHA Screen Agent is turned off. Open Phone Settings -> Accessibility -> Installed apps -> SINBHA Screen Agent and turn it on."
-                "missing" ->
-                    "The screen accessibility service is not available on this phone build."
-                else ->
-                    "Accessibility service is ready."
-            }
-        }
     }
 }
