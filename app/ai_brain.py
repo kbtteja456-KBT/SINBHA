@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import time
 import datetime
 import httpx
 from dotenv import load_dotenv
@@ -528,6 +529,17 @@ def extract_fallback_task_proposal(user_message: str) -> dict | None:
         "notes": None
     }
 
+_model_lockouts: dict = {}
+
+def mark_model_lockout(provider: str, model: str, duration_seconds: float = 300.0):
+    """Temporarily marks an LLM model as rate-limited/locked-out (e.g. daily token quota exceeded)."""
+    _model_lockouts[f"{provider.lower()}:{model.lower()}"] = time.time() + duration_seconds
+
+def is_model_locked_out(provider: str, model: str) -> bool:
+    """Checks if a model is currently in a temporary rate-limit lockout."""
+    expiry = _model_lockouts.get(f"{provider.lower()}:{model.lower()}", 0.0)
+    return time.time() < expiry
+
 def get_llm_credentials(active_provider: Optional[str] = None) -> Optional[dict]:
     """
     Returns active LLM credentials.
@@ -546,13 +558,23 @@ def get_llm_credentials(active_provider: Optional[str] = None) -> Optional[dict]
     has_groq = bool(groq_key and groq_key != "your_groq_api_key_here")
     has_openrouter = bool(openrouter_key and openrouter_key != "your_openrouter_api_key_here")
 
+    def _select_groq_model():
+        chosen = groq_model
+        if is_model_locked_out("groq", chosen):
+            # If 120b hit daily tokens per day (TPD) quota, automatically use 20b which has a separate quota
+            sec = "openai/gpt-oss-20b" if "120b" in chosen else "openai/gpt-oss-120b"
+            if not is_model_locked_out("groq", sec):
+                chosen = sec
+        return chosen
+
     if provider_pref == "groq" and has_groq:
+        chosen_model = _select_groq_model()
         return {
             "provider": "groq",
             "api_key": groq_key,
-            "model": groq_model,
+            "model": chosen_model,
             "endpoint": "https://api.groq.com/openai/v1/chat/completions",
-            "reasoning_effort": "low" if "gpt-oss-120b" in groq_model else None
+            "reasoning_effort": "low" if "gpt-oss-120b" in chosen_model or "gpt-oss-20b" in chosen_model else None
         }
 
     if provider_pref == "openrouter" and has_openrouter:
@@ -566,12 +588,13 @@ def get_llm_credentials(active_provider: Optional[str] = None) -> Optional[dict]
 
     # Auto: Groq first (free, ultra-fast), then OpenRouter
     if has_groq:
+        chosen_model = _select_groq_model()
         return {
             "provider": "groq",
             "api_key": groq_key,
-            "model": groq_model,
+            "model": chosen_model,
             "endpoint": "https://api.groq.com/openai/v1/chat/completions",
-            "reasoning_effort": "low" if "gpt-oss-120b" in groq_model else None
+            "reasoning_effort": "low" if "gpt-oss-120b" in chosen_model or "gpt-oss-20b" in chosen_model else None
         }
 
     if has_openrouter:

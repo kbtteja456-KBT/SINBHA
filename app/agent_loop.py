@@ -26,7 +26,7 @@ import asyncio
 from typing import Optional
 
 from app.agent_tools import default_registry, ToolRegistry
-from app.ai_brain import get_llm_credentials, BASE_SYSTEM_PROMPT
+from app.ai_brain import get_llm_credentials, mark_model_lockout, BASE_SYSTEM_PROMPT
 
 # Constants
 MAX_AGENT_STEPS = 5           # Max LLM round-trips per user message
@@ -339,11 +339,20 @@ async def _call_llm_with_tools(
 
             elif response.status_code == 429:
                 log_llm_reliability("rate_limit", provider, model, attempt=attempt+1, status_code=429, latency_ms=latency_ms)
+                err_text = ""
+                try:
+                    err_text = response.text.lower()
+                except Exception:
+                    pass
+                is_daily_limit = "tokens per day" in err_text or "tpd" in err_text
+                if is_daily_limit:
+                    mark_model_lockout(provider, model, 300.0)
+                    return {"success": False, "error": "rate_limit", "status": 429, "provider": provider, "model": model, "daily_limit": True}
                 if attempt < max_retries:
-                    # Briefly queue/backoff before retrying
+                    # Briefly queue/backoff before retrying transient minute limits
                     await asyncio.sleep(1.5)
                     continue
-                return {"success": False, "error": "rate_limit", "status": 429, "provider": provider, "model": model}
+                return {"success": False, "error": "rate_limit", "status": 429, "provider": provider, "model": model, "daily_limit": False}
 
             elif response.status_code == 401:
                 log_llm_reliability("invalid_api_key", provider, model, attempt=attempt+1, status_code=401, latency_ms=latency_ms)
@@ -413,25 +422,19 @@ class AgentResult:
 def _get_fallback_candidates(creds: dict) -> List[dict]:
     """
     Returns ordered list of fallback credentials to attempt if primary call fails.
-    Includes alternate provider and secondary/tertiary models on primary provider.
+    Prioritizes models with separate quotas on the verified active provider before alternate providers.
     """
     candidates = []
     provider = creds.get("provider", "").lower()
     model = creds.get("model", "")
 
-    # 1. Alternate provider if configured
-    alt_provider = "openrouter" if provider == "groq" else "groq"
-    alt_creds = get_llm_credentials(alt_provider)
-    if alt_creds and alt_creds.get("api_key") and alt_creds.get("provider") != provider:
-        candidates.append(alt_creds)
-
-    # 2. Secondary models on current provider
+    # 1. Secondary models on current provider with separate quotas
     if provider == "groq":
-        for sec_model in ("llama-3.3-70b-versatile", "llama-3.1-8b-instant", "openai/gpt-oss-120b"):
+        for sec_model in ("openai/gpt-oss-20b", "openai/gpt-oss-120b"):
             if sec_model != model:
                 fb = dict(creds)
                 fb["model"] = sec_model
-                fb["reasoning_effort"] = None
+                fb["reasoning_effort"] = "low"
                 candidates.append(fb)
     elif provider == "openrouter":
         for sec_model in ("google/gemini-2.5-flash", "meta-llama/llama-3.3-70b-instruct"):
@@ -439,6 +442,12 @@ def _get_fallback_candidates(creds: dict) -> List[dict]:
                 fb = dict(creds)
                 fb["model"] = sec_model
                 candidates.append(fb)
+
+    # 2. Alternate provider if configured
+    alt_provider = "openrouter" if provider == "groq" else "groq"
+    alt_creds = get_llm_credentials(alt_provider)
+    if alt_creds and alt_creds.get("api_key") and alt_creds.get("provider") != provider:
+        candidates.append(alt_creds)
 
     return candidates
 
@@ -584,21 +593,44 @@ async def run_agent_loop(
                 error="agent_timeout",
             )
 
+        # Determine tools to pass: in step > 0 when an action tool was already executed,
+        # omit the heavy tools schema during reply synthesis to save ~4000 tokens per call.
+        current_tools = tools_list
+        if step > 0 and tool_calls_log:
+            last_tool = tool_calls_log[-1].get("tool")
+            if last_tool not in ("find_installed_app", "search_web", "fetch_page", "get_inbox_notifications", "list_devices"):
+                current_tools = None
+
         # Call LLM
-        llm_result = await _call_llm_with_tools(messages, tools_list, creds)
+        llm_result = await _call_llm_with_tools(messages, current_tools, creds)
 
         # Step C2.7 Item 5: If LLM returns an empty or failed answer, retry automatically with second model/provider
         if not llm_result["success"]:
             fallback_candidates = _get_fallback_candidates(creds)
             for fallback_creds in fallback_candidates:
                 logger.info(f"LLM call failed with {llm_result.get('error')}; retrying with fallback {fallback_creds.get('provider')}/{fallback_creds.get('model')}")
-                fallback_result = await _call_llm_with_tools(messages, tools_list, fallback_creds)
+                fallback_result = await _call_llm_with_tools(messages, current_tools, fallback_creds)
                 if fallback_result["success"]:
                     llm_result = fallback_result
                     creds = fallback_creds
                     break
 
         if not llm_result["success"]:
+            # If an action tool has already executed successfully on device, return its confirmed message
+            if tool_calls_log:
+                last_call = tool_calls_log[-1]
+                last_res = last_call.get("result", {})
+                if last_res.get("success", False) and last_res.get("message"):
+                    return AgentResult(
+                        reply=last_res.get("message"),
+                        tool_calls_log=tool_calls_log,
+                        step_log=step_log,
+                        proposal=proposal,
+                        confirmation_card=confirmation_card,
+                        new_facts=new_facts,
+                        web_search_meta=web_search_meta,
+                    )
+
             error_msg = llm_result.get("error", "unknown")
             # Step C2.7 Item 5: Truthful failure classification, never show provider names to users
             if error_msg == "rate_limit":

@@ -182,7 +182,7 @@ def test_llm_fallback_candidates_and_openrouter_token_capping():
     """
     Requirement 3:
     - Fallback candidates contain real available models on Groq and OpenRouter.
-    - Automatic fallback switches between providers.
+    - Automatic fallback switches between models and providers.
     """
     creds_groq = {
         "provider": "groq",
@@ -193,7 +193,80 @@ def test_llm_fallback_candidates_and_openrouter_token_capping():
 
     candidates = _get_fallback_candidates(creds_groq)
     assert len(candidates) >= 1
-    # Check that Groq secondary models are real valid models, not fake ones
+    # Check that Groq secondary models are real valid models with separate quotas
     model_names = [c.get("model") for c in candidates]
-    assert "llama-3.3-70b-versatile" in model_names or "llama-3.1-8b-instant" in model_names or any(c.get("provider") == "openrouter" for c in candidates)
+    assert "openai/gpt-oss-20b" in model_names or any(c.get("provider") == "openrouter" for c in candidates)
+
+
+@pytest.mark.asyncio
+async def test_daily_rate_limit_lockout_and_tool_result_preservation():
+    """
+    Verifies:
+    1. mark_model_lockout locks out exhausted models and get_llm_credentials auto-selects 20b.
+    2. When a tool has executed and synthesis hits 429, the tool confirmation message is preserved.
+    """
+    from app.ai_brain import mark_model_lockout, is_model_locked_out, get_llm_credentials
+    from app.agent_tools import build_default_registry
+
+    # 1. Lockout functionality
+    mark_model_lockout("groq", "openai/gpt-oss-120b", 60.0)
+    assert is_model_locked_out("groq", "openai/gpt-oss-120b") is True
+
+    with patch.dict(os.environ, {"GROQ_API_KEY": "dummy_gsk", "GROQ_MODEL": "openai/gpt-oss-120b"}):
+        creds = get_llm_credentials("groq")
+        assert creds["model"] == "openai/gpt-oss-20b"
+
+    # 2. Tool result preservation on subsequent rate limit
+    mock_reg = build_default_registry()
+    tool_call = {
+        "id": "tc_1",
+        "type": "function",
+        "function": {"name": "open_app", "arguments": '{"name":"youtube","target_device":"phone"}'}
+    }
+
+    # Step 0 returns tool call; Step 1 returns 429
+    call_count = 0
+    async def mock_call_llm(messages, tools, creds, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return {
+                "success": True,
+                "message": {"role": "assistant", "content": None, "tool_calls": [tool_call]},
+                "finish_reason": "tool_calls",
+                "provider": "groq",
+                "model": "openai/gpt-oss-20b",
+                "latency_ms": 100
+            }
+        # Subsequent call fails with 429
+        return {"success": False, "error": "rate_limit", "status": 429, "provider": "groq", "model": "openai/gpt-oss-20b"}
+
+    with patch("app.agent_loop._call_llm_with_tools", side_effect=mock_call_llm):
+        mock_relay = MagicMock()
+        mock_relay.is_device_connected.return_value = True
+        mock_relay.relay_command = AsyncMock(return_value={"success": True, "message": "Opened YouTube on Phone", "status": "succeeded"})
+        mock_relay.wait_for_command_completion = AsyncMock(return_value={"status": "succeeded", "result": {"package": "com.google.android.youtube"}})
+        mock_db = MagicMock()
+        mock_db.get_emergency_stopped.return_value = False
+        mock_db.is_emergency_stopped.return_value = False
+        mock_db.get_setting.return_value = "chrome"
+        mock_db.get_trusted_devices.return_value = [{"device_id": "phone1", "platform": "android", "name": "Phone", "status": "trusted"}]
+        mock_db.get_user_devices.return_value = mock_db.get_trusted_devices.return_value
+
+        res = await run_agent_loop(
+            user_id=1,
+            user_message="open youtube in my phone",
+            chat_history=[],
+            remembered_facts=[],
+            user_devices=mock_db.get_trusted_devices.return_value,
+            db_module=mock_db,
+            relay_manager=mock_relay,
+            registry=mock_reg
+        )
+        assert res.reply is not None
+        # Must preserve the action result, NOT display a raw 429 error
+        assert "429" not in res.reply
+        assert "opened youtube on phone" in res.reply.lower()
+        assert len(res.tool_calls_log) == 1
+
 

@@ -1285,9 +1285,11 @@ async def handle_open_app(user_id: int, args: dict, ctx: dict) -> dict:
     target_package = None
     if is_phone and relay and hasattr(relay, "resolve_installed_apps_candidates"):
         candidates = relay.resolve_installed_apps_candidates(user_id, target_dev["device_id"], app_name, limit=1)
-        if candidates and candidates[0].get("score", 0) >= 0.50:
-            target_package = candidates[0].get("package")
-            app_name = candidates[0].get("name") or app_name
+        if candidates and isinstance(candidates, list) and len(candidates) > 0 and isinstance(candidates[0], dict):
+            score = candidates[0].get("score", 0)
+            if isinstance(score, (int, float)) and score >= 0.50:
+                target_package = candidates[0].get("package")
+                app_name = candidates[0].get("name") or app_name
 
     # Capability Handshake (Item 2)
     supported = None
