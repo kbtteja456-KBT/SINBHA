@@ -338,6 +338,7 @@ async def signup_endpoint(payload: SignupRequest, request: Request, response: Re
     Requirement 1 & 7: User registration with email + password (min 8 chars, argon2 hash),
     checkboxes for 18+ and Terms/Privacy agreement.
     Step 17 Item 2: Sends a verification link that expires in 24 hours.
+    Requires email confirmation before logging in.
     """
     check_endpoint_rate_limits(request)
     try:
@@ -349,24 +350,20 @@ async def signup_endpoint(payload: SignupRequest, request: Request, response: Re
             timezone_name=payload.timezone or "UTC",
             is_verified=False,
         )
-        token = db.create_session(user["id"])
-        response.set_cookie(
-            key=SESSION_COOKIE_NAME,
-            value=token,
-            httponly=True,
-            samesite="lax",
-            secure=is_production(),
-            max_age=14 * 86400,
-            path="/"
-        )
         # Send verification email with expiring link
         if user.get("verification_token"):
             email_service.send_verification_email(user["email"], user["verification_token"])
 
+        # Do NOT auto-login without email confirmation!
         return {
             "success": True,
-            "user": user,
-            "message": "Account created successfully! 🌸 A verification link has been sent to your email."
+            "requires_verification": True,
+            "user": {
+                "id": user["id"],
+                "email": user["email"],
+                "is_verified": False
+            },
+            "message": "Account created! 🌸 Please check your email to confirm your account and start chatting."
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -379,11 +376,22 @@ async def login_endpoint(payload: LoginRequest, request: Request, response: Resp
     Requirement 1 & 2: User login with argon2 password verification,
     secure sessions (httpOnly, SameSite, Secure in production), and rate limiting.
     Step 17 Item 5: Email alert for new login from a new device.
+    Strictly prevents login for unverified accounts until confirmation.
     """
     check_endpoint_rate_limits(request)
     client_ip = get_client_ip(request)
     try:
         user = db.authenticate_user(payload.email, payload.password, client_ip=client_ip)
+        if not user.get("is_verified"):
+            # Resend verification email to ensure user can confirm immediately
+            tok = db.create_email_verification_token(user["id"])
+            if tok:
+                email_service.send_verification_email(user["email"], tok)
+            raise HTTPException(
+                status_code=403,
+                detail="Please confirm your email address before logging in. We have sent a confirmation link to your inbox."
+            )
+
         token = db.create_session(user["id"])
         response.set_cookie(
             key=SESSION_COOKIE_NAME,
@@ -418,10 +426,11 @@ async def login_endpoint(payload: LoginRequest, request: Request, response: Resp
 
 @app.get("/api/auth/verify-email")
 @app.post("/api/auth/verify-email")
-async def verify_email_endpoint(token: Optional[str] = None, payload: Optional[VerifyEmailRequest] = None):
+async def verify_email_endpoint(response: Response, token: Optional[str] = None, payload: Optional[VerifyEmailRequest] = None):
     """
     Step 17 Item 2: Verifies email token.
     Accepts token via query parameter (for direct email link clicks) or JSON body.
+    Authenticates user and returns session cookie so they can immediately start chatting.
     """
     tok = (payload.token if payload else None) or token
     if not tok:
@@ -429,9 +438,23 @@ async def verify_email_endpoint(token: Optional[str] = None, payload: Optional[V
     success, msg, user_id = db.verify_email_with_token(tok)
     if not success:
         raise HTTPException(status_code=400, detail=msg)
+
+    # Immediately authenticate user upon confirmation
+    session_token = db.create_session(user_id)
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=session_token,
+        httponly=True,
+        samesite="lax",
+        secure=is_production(),
+        max_age=14 * 86400,
+        path="/"
+    )
+
     return {
         "success": True,
-        "message": "Email verified successfully! You can now pair devices and use remote companion commands."
+        "token": session_token,
+        "message": "Email verified successfully! You are now logged in and ready to chat."
     }
 
 @app.post("/api/auth/resend-verification")
@@ -2826,26 +2849,49 @@ async def root():
     )
 
 @app.get("/verify-email", response_class=HTMLResponse)
-async def verify_email_page(token: Optional[str] = None):
+async def verify_email_page(response: Response, token: Optional[str] = None):
     if not token:
         return HTMLResponse("<div style='font-family: sans-serif; text-align: center; padding: 40px;'><h2>⚠️ Missing Token</h2><p>Verification token was not provided.</p></div>", status_code=400)
     success, msg, user_id = db.verify_email_with_token(token)
-    if success:
-        return HTMLResponse("""
+    if success and user_id:
+        session_token = db.create_session(user_id)
+        html_content = """
         <!DOCTYPE html>
         <html>
-        <head><title>SINBHA - Email Verified</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+        <head>
+            <title>SINBHA - Email Verified</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <meta http-equiv="refresh" content="1;url=/?verified=true">
+            <script>
+                // Instantly open app on phone and start chatting
+                setTimeout(function() {
+                    window.location.href = "/?verified=true";
+                }, 1000);
+            </script>
+        </head>
         <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #fffaf5;">
             <div style="max-width: 440px; margin: 20px; padding: 32px; background: white; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); text-align: center; border: 1px solid #fed7aa;">
                 <h1 style="color: #ea580c; margin-top: 0; font-size: 28px;">🌸 Email Verified!</h1>
-                <p style="color: #431407; font-size: 16px; line-height: 1.5;">Your email has been successfully confirmed. You can now pair your phone and laptop and send remote companion commands.</p>
+                <p style="color: #431407; font-size: 16px; line-height: 1.5;">Your email has been confirmed. You are now logged in!</p>
                 <div style="margin-top: 24px;">
-                    <a href="/" style="display: inline-block; background: #f97316; color: white; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 600;">Open SINBHA</a>
+                    <a href="/?verified=true" style="display: inline-block; background: #f97316; color: white; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 600; font-size: 16px;">Open SINBHA & Start Chatting 🌸</a>
                 </div>
+                <p style="color: #9a3412; font-size: 13px; margin-top: 16px;">Opening your app directly...</p>
             </div>
         </body>
         </html>
-        """)
+        """
+        html_resp = HTMLResponse(content=html_content, status_code=200)
+        html_resp.set_cookie(
+            key=SESSION_COOKIE_NAME,
+            value=session_token,
+            httponly=True,
+            samesite="lax",
+            secure=is_production(),
+            max_age=14 * 86400,
+            path="/"
+        )
+        return html_resp
     else:
         return HTMLResponse(f"""
         <!DOCTYPE html>

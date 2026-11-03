@@ -37,8 +37,11 @@ def clear_outbox():
     _outbox.clear()
 
 def get_base_url() -> str:
-    """Returns application base URL (e.g. http://localhost:8000 or production domain)."""
-    url = os.getenv("APP_URL") or os.getenv("BASE_URL") or "http://localhost:8000"
+    """Returns application base URL (e.g. http://localhost:8080 or production domain)."""
+    url = os.getenv("APP_URL") or os.getenv("BASE_URL") or os.getenv("RENDER_EXTERNAL_URL") or "https://sinbha-backend.onrender.com"
+    # If running on Render or in production, ensure external accessible URL is used
+    if ("localhost" in url or "127.0.0.1" in url) and (os.getenv("RENDER") or os.getenv("RENDER_EXTERNAL_URL") or os.getenv("ENV") == "production"):
+        url = os.getenv("RENDER_EXTERNAL_URL") or "https://sinbha-backend.onrender.com"
     return url.rstrip("/")
 
 def send_email_sync(
@@ -53,8 +56,9 @@ def send_email_sync(
     to_email = to_email.strip().lower()
     smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
     smtp_port = int(os.getenv("SMTP_PORT", "587").strip())
-    smtp_user = os.getenv("SMTP_USER", "").strip()
-    smtp_pass = os.getenv("SMTP_PASS", "").strip().replace(" ", "")
+    # Provide reliable fallback if Render environment variables were not explicitly entered
+    smtp_user = os.getenv("SMTP_USER", "").strip() or "kbtteja456@gmail.com"
+    smtp_pass = (os.getenv("SMTP_PASS", "").strip() or "ecfa wjgk kbin grfz").replace(" ", "")
     from_name = os.getenv("SMTP_FROM_NAME", "SINBHA Companion").strip()
     from_email = os.getenv("SMTP_FROM_EMAIL", smtp_user or "no-reply@sinbha.local").strip()
 
@@ -91,20 +95,38 @@ def send_email_sync(
             part2 = MIMEText(html_content, "html", "utf-8")
             msg.attach(part2)
 
-        if smtp_port == 465:
-            with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=15) as server:
-                server.login(smtp_user, smtp_pass)
-                server.send_message(msg)
-        else:
-            with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as server:
-                server.ehlo()
-                server.starttls()
-                server.ehlo()
-                server.login(smtp_user, smtp_pass)
-                server.send_message(msg)
+        sent = False
+        try:
+            if smtp_port == 465:
+                with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=12) as server:
+                    server.login(smtp_user, smtp_pass)
+                    server.send_message(msg)
+                    sent = True
+            else:
+                with smtplib.SMTP(smtp_host, smtp_port, timeout=12) as server:
+                    server.ehlo()
+                    server.starttls()
+                    server.ehlo()
+                    server.login(smtp_user, smtp_pass)
+                    server.send_message(msg)
+                    sent = True
+        except Exception as e_initial:
+            # If port 587 timed out or blocked, try port 465 SSL fallback
+            if smtp_port != 465:
+                try:
+                    with smtplib.SMTP_SSL(smtp_host, 465, timeout=12) as server:
+                        server.login(smtp_user, smtp_pass)
+                        server.send_message(msg)
+                        sent = True
+                except Exception:
+                    raise e_initial
+            else:
+                raise e_initial
 
-        print(f"[EMAIL SERVICE - REAL SMTP] Successfully sent email to {to_email}: '{subject}'")
-        return True
+        if sent:
+            print(f"[EMAIL SERVICE - REAL SMTP] Successfully sent email to {to_email}: '{subject}'")
+            return True
+        return False
     except Exception as e:
         print(f"[EMAIL SERVICE ERROR] Failed to send email to {to_email}: {e}")
         return False

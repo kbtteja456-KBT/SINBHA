@@ -61,30 +61,28 @@ def test_signup_sends_verification_link_and_restricts_unverified():
     assert verify_email is not None
     assert "token=" in verify_email["text"]
 
-    # 3. User has active session and can access chat / app features
+    # 3. Unverified user is NOT logged in without confirming email
     res_me = client.get("/api/auth/me")
     assert res_me.status_code == 200
-    assert res_me.json()["user"]["email"] == email
+    assert res_me.json()["user"] is None
 
-    # 4. Unverified user CANNOT pair new devices
-    res_pair = client.post("/api/devices/register", json={
-        "device_id": f"dev_{int(time.time()*1000)}",
-        "name": "My Phone",
-        "platform": "android"
-    })
-    assert res_pair.status_code == 403
-    assert "Email verification required" in res_pair.json()["detail"]
+    # 4. Attempting to log in before verifying is blocked with 403
+    res_login = client.post("/api/auth/login", json={"email": email, "password": pw})
+    assert res_login.status_code == 403
+    assert "confirm your email address" in res_login.json()["detail"].lower() or "verify" in res_login.json()["detail"].lower()
 
-    # 5. Unverified user CANNOT send remote commands
-    res_cmd = client.post("/api/devices/commands/send", json={
-        "id": "cmd_test_unverified",
-        "sender_device": "web",
-        "target_device": "some_device",
-        "type": "open_app",
-        "payload": {"app": "notepad"}
-    })
-    assert res_cmd.status_code == 403
-    assert "Email verification required" in res_cmd.json()["detail"]
+    # 5. Clicking confirmation link confirms email, sets session, and opens app logged in
+    latest_email = email_service.get_outbox()[-1]
+    tok = latest_email["text"].split("token=")[1].split()[0].strip()
+    res_verify = client.get(f"/verify-email?token={tok}")
+    assert res_verify.status_code == 200
+    assert "Email Verified" in res_verify.text
+
+    # 6. User is now authenticated and verified
+    res_me_verified = client.get("/api/auth/me")
+    assert res_me_verified.status_code == 200
+    assert res_me_verified.json()["user"]["email"] == email
+    assert res_me_verified.json()["user"]["is_verified"] is True
 
 
 def test_email_verification_unlocks_pairing_and_commands():

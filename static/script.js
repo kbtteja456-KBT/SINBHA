@@ -2153,12 +2153,26 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   async function checkAuthStatus() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const wasJustVerified = urlParams.get("verified") === "true";
+    if (wasJustVerified) {
+      try {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      } catch (e) {}
+    }
+
     try {
       const res = await fetch("/api/auth/me");
       if (res.ok) {
         const data = await res.json();
         if (data.user) {
           showAppScreen(data.user);
+          if (wasJustVerified) {
+            showToast("🌸 Email confirmed! Welcome to SINBHA! Let's chat!");
+            setTimeout(() => {
+              if (messageInput) messageInput.focus();
+            }, 300);
+          }
           return;
         }
       }
@@ -2176,6 +2190,8 @@ document.addEventListener("DOMContentLoaded", () => {
       tabSignupBtn.classList.remove("active");
       if (loginForm) loginForm.style.display = "flex";
       if (signupForm) signupForm.style.display = "none";
+      const noticeEl = document.getElementById("signupVerificationNotice");
+      if (noticeEl) noticeEl.style.display = "none";
       hideAuthAlert();
     });
 
@@ -2183,6 +2199,8 @@ document.addEventListener("DOMContentLoaded", () => {
       tabSignupBtn.classList.add("active");
       tabLoginBtn.classList.remove("active");
       if (signupForm) signupForm.style.display = "flex";
+      const noticeEl = document.getElementById("signupVerificationNotice");
+      if (noticeEl) noticeEl.style.display = "none";
       if (loginForm) loginForm.style.display = "none";
       hideAuthAlert();
     });
@@ -2281,7 +2299,35 @@ document.addEventListener("DOMContentLoaded", () => {
         });
         const data = await res.json();
 
-        if (res.ok && data.user) {
+        if (res.ok && data.requires_verification) {
+          if (signupForm) signupForm.style.display = "none";
+          let noticeEl = document.getElementById("signupVerificationNotice");
+          if (!noticeEl) {
+            noticeEl = document.createElement("div");
+            noticeEl.id = "signupVerificationNotice";
+            signupForm.parentNode.insertBefore(noticeEl, signupForm.nextSibling);
+          }
+          noticeEl.style.display = "block";
+          noticeEl.innerHTML = `
+            <div style="background: #fffaf5; border: 1px solid #fed7aa; border-radius: 12px; padding: 24px; text-align: center; margin-top: 15px;">
+              <div style="font-size: 36px; margin-bottom: 8px;">🌸✉️</div>
+              <h3 style="color: #ea580c; margin-bottom: 8px; font-size: 1.15rem;">Check Your Email</h3>
+              <p style="color: #431407; font-size: 0.92rem; line-height: 1.5; margin-bottom: 16px;">
+                We sent a confirmation link to <strong>${escapeHtml(email)}</strong>.<br/>
+                Please click the link in your email to confirm your account and start chatting with SINBHA!
+              </p>
+              <button type="button" id="backToLoginFromVerifyBtn" class="primary-btn" style="width: 100%; padding: 10px; border-radius: 8px; font-weight: 600;">Go to Log In 🌸</button>
+            </div>
+          `;
+          const backBtn = document.getElementById("backToLoginFromVerifyBtn");
+          if (backBtn && tabLoginBtn) {
+            backBtn.addEventListener("click", () => {
+              tabLoginBtn.click();
+              noticeEl.style.display = "none";
+            });
+          }
+          showToast("🌸 Account created! Please check your email to confirm.");
+        } else if (res.ok && data.user) {
           showToast(`🌸 Account created! Welcome to SINBHA, ${data.user.email}!`);
           showAppScreen(data.user);
         } else {

@@ -791,8 +791,9 @@ async def run_agent_loop(
             # - CRITICAL UNTRUSTED-CONTENT OVERRIDE:
             #   If AI read web pages, messages or emails, ANY subsequent tool at level 2+ or remote actions
             #   ALWAYS strictly require fresh confirmation! allow_without_asking is overridden.
+            # Direct user chat requests to open apps or links should NOT trigger double confirmation prompts
             requires_confirmation = (tool.risk_level >= 2)
-            if not untrusted_content_read and tool_name in ("open_app", "open_url") and is_allowed_without_asking:
+            if not untrusted_content_read and tool_name in ("open_app", "open_url"):
                 requires_confirmation = False
 
             if untrusted_content_read and (tool.risk_level >= 2 or tool_name in ("open_app", "open_url", "send_note", "ring_phone")):

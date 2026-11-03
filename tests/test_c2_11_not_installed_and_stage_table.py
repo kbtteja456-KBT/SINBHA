@@ -232,3 +232,4 @@ def test_windows_installed_apps_reporting_presence():
     assert presence["installed_apps"] is not None
     assert len(presence["installed_apps"]) == 4
     assert presence["installed_apps"][0]["name"] == "notepad"
+
