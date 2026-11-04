@@ -23,10 +23,16 @@ import datetime
 import httpx
 import logging
 import asyncio
-from typing import Optional
+from typing import Optional, List
 
 from app.agent_tools import default_registry, ToolRegistry
 from app.ai_brain import get_llm_credentials, mark_model_lockout, BASE_SYSTEM_PROMPT
+from app.llm_provider_config import (
+    telemetry,
+    check_spending_and_user_limits,
+    is_production_environment,
+    build_ordered_provider_chain
+)
 
 # Constants
 MAX_AGENT_STEPS = 5           # Max LLM round-trips per user message
@@ -34,7 +40,7 @@ AGENT_TIMEOUT_SECONDS = 60    # Total wall-clock timeout for the entire agent lo
 LLM_CALL_TIMEOUT = 30         # Per-LLM-call timeout
 
 logger = logging.getLogger("sinbha.llm_reliability")
-APPROVED_PROVIDERS = {"groq", "openrouter"}
+APPROVED_PROVIDERS = {"groq", "gemini", "openrouter", "dev_local"}
 
 def log_llm_reliability(
     event_type: str,
@@ -255,6 +261,17 @@ async def _call_llm_with_tools(
     provider = creds.get("provider", "unknown").lower()
     model = creds.get("model", "unknown")
 
+    # Step C2.13 Item 5: Dev-only OpenAI-compatible base URL provider strictly refused in production
+    if provider == "dev_local" and is_production_environment():
+        telemetry.record_error("production_refusal")
+        return {
+            "success": False,
+            "error": "production_refusal",
+            "provider": "dev_local",
+            "model": model,
+            "message": "Local developer LLM base URL is strictly prohibited in production environments."
+        }
+
     if provider not in APPROVED_PROVIDERS:
         log_llm_reliability("unapproved_provider", provider, model, error_detail=f"Provider {provider} not approved")
         return {
@@ -262,16 +279,18 @@ async def _call_llm_with_tools(
             "error": "unapproved_provider",
             "provider": provider,
             "model": model,
-            "message": f"Provider '{provider}' is not approved. Only Groq and OpenRouter are approved AI providers."
+            "message": f"Provider '{provider}' is not approved. Only Groq, Google AI Studio, and OpenRouter are approved AI providers."
         }
 
     headers = {
-        "Authorization": f"Bearer {creds['api_key']}",
+        "Authorization": f"Bearer {creds.get('api_key', '')}",
         "Content-Type": "application/json",
     }
     if provider == "openrouter":
         headers["HTTP-Referer"] = "http://localhost:8080"
         headers["X-Title"] = "SINBHA Agent"
+    elif provider == "gemini":
+        headers["x-goog-api-key"] = creds.get("api_key", "")
 
     actual_max_tokens = min(max_tokens, 300) if provider == "openrouter" else max_tokens
     payload = {
@@ -311,6 +330,7 @@ async def _call_llm_with_tools(
                     tool_calls = message.get("tool_calls")
                     if not content_text and not tool_calls:
                         log_llm_reliability("empty_answer", provider, model, attempt=attempt+1, status_code=200, latency_ms=latency_ms)
+                        telemetry.record_error("empty_answer")
                         return {
                             "success": False,
                             "error": "empty_answer",
@@ -318,6 +338,12 @@ async def _call_llm_with_tools(
                             "model": model,
                             "status": 200
                         }
+
+                    # Step C2.13 Item 4: Record token usage in telemetry
+                    usage = data.get("usage", {})
+                    p_tok = usage.get("prompt_tokens", max(1, len(json.dumps(messages)) // 4))
+                    c_tok = usage.get("completion_tokens", max(1, len(content_text) // 4))
+                    telemetry.record_usage(provider, model, 0, p_tok, c_tok)
 
                     return {
                         "success": True,
@@ -329,6 +355,7 @@ async def _call_llm_with_tools(
                     }
                 except Exception as e:
                     log_llm_reliability("malformed_response", provider, model, attempt=attempt+1, status_code=200, latency_ms=latency_ms, error_detail=str(e))
+                    telemetry.record_error("malformed_tool_call")
                     return {
                         "success": False,
                         "error": "malformed_tool_call",
@@ -339,6 +366,7 @@ async def _call_llm_with_tools(
 
             elif response.status_code == 429:
                 log_llm_reliability("rate_limit", provider, model, attempt=attempt+1, status_code=429, latency_ms=latency_ms)
+                telemetry.record_error("rate_limit")
                 err_text = ""
                 try:
                     err_text = response.text.lower()
@@ -352,18 +380,30 @@ async def _call_llm_with_tools(
                     # Briefly queue/backoff before retrying transient minute limits
                     await asyncio.sleep(1.5)
                     continue
+                telemetry.mark_lockout(f"{provider}:{model}", 180.0, "rate_limit")
                 return {"success": False, "error": "rate_limit", "status": 429, "provider": provider, "model": model, "daily_limit": False}
 
             elif response.status_code == 401:
                 log_llm_reliability("invalid_api_key", provider, model, attempt=attempt+1, status_code=401, latency_ms=latency_ms)
+                telemetry.record_error("invalid_api_key")
+                telemetry.mark_lockout(provider, 3600.0, "invalid_api_key")
                 return {"success": False, "error": "invalid_api_key", "status": 401, "provider": provider, "model": model}
 
             elif response.status_code == 402:
                 log_llm_reliability("insufficient_credits", provider, model, attempt=attempt+1, status_code=402, latency_ms=latency_ms)
+                telemetry.record_error("insufficient_credits")
+                telemetry.mark_lockout(provider, 3600.0, "insufficient_credits")
                 return {"success": False, "error": "insufficient_credits", "status": 402, "provider": provider, "model": model}
+
+            elif response.status_code == 404:
+                log_llm_reliability("model_not_found", provider, model, attempt=attempt+1, status_code=404, latency_ms=latency_ms)
+                telemetry.record_error("model_not_found")
+                telemetry.mark_lockout(f"{provider}:{model}", 3600.0, "model_not_found")
+                return {"success": False, "error": "model_not_found", "status": 404, "provider": provider, "model": model}
 
             elif response.status_code >= 500:
                 log_llm_reliability("server_error", provider, model, attempt=attempt+1, status_code=response.status_code, latency_ms=latency_ms)
+                telemetry.record_error("server_error")
                 if attempt < max_retries:
                     await asyncio.sleep(1.0 * (2 ** attempt))
                     continue
@@ -371,6 +411,7 @@ async def _call_llm_with_tools(
 
             else:
                 log_llm_reliability("http_error", provider, model, attempt=attempt+1, status_code=response.status_code, latency_ms=latency_ms)
+                telemetry.record_error(f"status_{response.status_code}")
                 return {"success": False, "error": f"status_{response.status_code}", "status": response.status_code, "provider": provider, "model": model}
 
         except httpx.TimeoutException:
@@ -423,6 +464,7 @@ def _get_fallback_candidates(creds: dict) -> List[dict]:
     """
     Returns ordered list of fallback credentials to attempt if primary call fails.
     Prioritizes models with separate quotas on the verified active provider before alternate providers.
+    Uses build_ordered_provider_chain to respect lockouts, health, and priorities.
     """
     candidates = []
     provider = creds.get("provider", "").lower()
@@ -431,23 +473,31 @@ def _get_fallback_candidates(creds: dict) -> List[dict]:
     # 1. Secondary models on current provider with separate quotas
     if provider == "groq":
         for sec_model in ("openai/gpt-oss-20b", "openai/gpt-oss-120b"):
-            if sec_model != model:
+            if sec_model != model and not telemetry.is_locked_out(f"groq:{sec_model}"):
                 fb = dict(creds)
                 fb["model"] = sec_model
                 fb["reasoning_effort"] = "low"
                 candidates.append(fb)
+    elif provider == "gemini":
+        for sec_model in ("gemini-2.5-flash", "gemini-1.5-flash"):
+            if sec_model != model and not telemetry.is_locked_out(f"gemini:{sec_model}"):
+                fb = dict(creds)
+                fb["model"] = sec_model
+                candidates.append(fb)
     elif provider == "openrouter":
         for sec_model in ("google/gemini-2.5-flash", "meta-llama/llama-3.3-70b-instruct"):
-            if sec_model != model:
+            if sec_model != model and not telemetry.is_locked_out(f"openrouter:{sec_model}"):
                 fb = dict(creds)
                 fb["model"] = sec_model
                 candidates.append(fb)
 
-    # 2. Alternate provider if configured
-    alt_provider = "openrouter" if provider == "groq" else "groq"
-    alt_creds = get_llm_credentials(alt_provider)
-    if alt_creds and alt_creds.get("api_key") and alt_creds.get("provider") != provider:
-        candidates.append(alt_creds)
+    # 2. Add alternate providers from the ordered provider chain
+    full_chain = build_ordered_provider_chain(active_pref="auto")
+    for c in full_chain:
+        if c.get("provider") == provider and c.get("model") == model:
+            continue
+        if not any(cand.get("provider") == c.get("provider") and cand.get("model") == c.get("model") for cand in candidates):
+            candidates.append(c)
 
     return candidates
 
@@ -492,6 +542,16 @@ async def run_agent_loop(
         return AgentResult(
             reply="External AI model processing is currently disabled in your Settings. You can re-enable it in Settings at any time! 🌸",
             error="ai_disabled",
+        )
+
+    # Check daily spending cap and per-user token limits (Step C2.13 Item 7)
+    allowed, limit_reason = check_spending_and_user_limits(user_id)
+    if not allowed:
+        return AgentResult(
+            reply=limit_reason,
+            tool_calls_log=[],
+            step_log=[],
+            error="limit_exceeded",
         )
 
     creds = get_llm_credentials(active_provider)

@@ -2568,16 +2568,29 @@ def update_device_settings(
         return _device_to_dict(dev)
 
 def get_active_ai_provider(user_id: int) -> str:
-    """Returns active AI provider: 'auto', 'groq', 'openrouter', or 'disabled'."""
+    """Returns active AI provider: 'auto', 'groq', 'gemini', 'openrouter', 'dev_local', or 'disabled'."""
     return get_setting(user_id, "active_ai_provider", "auto")
 
 def set_active_ai_provider(user_id: int, provider: str) -> str:
-    """Sets active AI provider: 'auto', 'groq', 'openrouter', or 'disabled'."""
+    """Sets active AI provider: 'auto', 'groq', 'gemini', 'openrouter', 'dev_local', or 'disabled'."""
     clean = (provider or "auto").strip().lower()
-    if clean not in ("auto", "groq", "openrouter", "disabled"):
+    if clean not in ("auto", "groq", "gemini", "openrouter", "dev_local", "disabled"):
         clean = "auto"
     set_setting(user_id, "active_ai_provider", clean)
     return clean
+
+def get_disabled_ai_providers(user_id: int) -> List[str]:
+    """Returns list of explicitly disabled providers for the user."""
+    val = get_setting(user_id, "disabled_ai_providers", "")
+    if not val:
+        return []
+    return [p.strip().lower() for p in val.split(",") if p.strip()]
+
+def set_disabled_ai_providers(user_id: int, providers: List[str]) -> List[str]:
+    """Stores list of explicitly disabled providers for the user."""
+    val = ",".join(p.strip().lower() for p in providers if p.strip())
+    set_setting(user_id, "disabled_ai_providers", val)
+    return [p.strip().lower() for p in providers if p.strip()]
 
 # ----------------- Persistent Device Commands & Multi-Worker Presence (Step C2.8) -----------------
 

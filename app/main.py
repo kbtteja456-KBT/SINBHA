@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Depends, Request, Response, status, 
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from pydantic import BaseModel
-from typing import Optional, Any, Union
+from typing import Optional, Any, Union, List
 from dotenv import load_dotenv
 
 # Load environment variables (.env)
@@ -151,6 +151,7 @@ class SettingsUpdateRequest(BaseModel):
     user_display_name: Optional[str] = ""
     dnd_allow_alarms: Optional[Any] = "true"
     active_ai_provider: Optional[str] = "auto"
+    disabled_ai_providers: Optional[List[str]] = None
 
 class TaskStatusUpdateRequest(BaseModel):
     status: str  # "pending" or "completed"
@@ -1452,35 +1453,71 @@ async def get_settings_endpoint(user: dict = Depends(get_current_user)):
 
 @app.get("/api/settings/ai-provider")
 async def get_ai_provider_endpoint(user: dict = Depends(get_current_user)):
-    """Returns transparency metadata and active AI provider selection."""
+    """Returns transparency metadata, active AI provider selection, and privacy disclosures."""
     user_id = user["id"]
     active = db.get_active_ai_provider(user_id)
+    disabled_list = db.get_disabled_ai_providers(user_id) if hasattr(db, "get_disabled_ai_providers") else []
+
+    from app.llm_provider_config import (
+        PROVIDER_PRIVACY_METADATA,
+        get_spending_alert,
+        GLOBAL_DAILY_SPEND_CAP_USD,
+        telemetry,
+    )
+
+    providers_list = [
+        {
+            "id": "auto",
+            "name": "Auto (Groq -> Gemini Flash -> OpenRouter)",
+            "description": "Automatically prioritizes free Groq (20b/120b), falls back to direct Google AI Studio Gemini Flash, and then OpenRouter.",
+            "data_use": "Routes requests through the fallback chain according to provider health and quota limits.",
+            "is_disabled": False,
+        }
+    ]
+    for pid, meta in PROVIDER_PRIVACY_METADATA.items():
+        providers_list.append({
+            "id": pid,
+            "name": meta["name"],
+            "description": meta.get("description", meta.get("name")),
+            "data_use": meta.get("privacy_note") or meta.get("data_use", ""),
+            "privacy_note": meta.get("privacy_note") or meta.get("data_use", ""),
+            "terms_url": meta.get("terms_url", ""),
+            "role": meta.get("role", "provider"),
+            "default_model": meta.get("default_model", ""),
+            "is_disabled": pid in disabled_list,
+        })
+    providers_list.append({
+        "id": "disabled",
+        "name": "Disable External AI (Local Only)",
+        "description": "Stops sending any message text to third-party AI models. Operates in local/offline companion mode.",
+        "data_use": "No external requests are sent.",
+        "is_disabled": False,
+    })
+
     return {
         "active_provider": active,
-        "available_providers": [
-            {
-                "id": "auto",
-                "name": "Auto (Groq / OpenRouter)",
-                "description": "Uses Groq (free, ultra-fast Llama) when configured, with OpenRouter fallback.",
-            },
-            {
-                "id": "groq",
-                "name": "Groq Cloud Only",
-                "description": "Sends messages exclusively to Groq API (openai/gpt-oss-120b or Llama 3.3).",
-            },
-            {
-                "id": "openrouter",
-                "name": "OpenRouter AI Only",
-                "description": "Sends messages exclusively to OpenRouter API (Gemini / Claude / OpenRouter models).",
-            },
-            {
-                "id": "disabled",
-                "name": "Disable External AI (Local Only)",
-                "description": "Stops sending any message text to third-party AI models. Operates in local/offline companion mode.",
-            },
-        ],
-        "transparency_note": "SINBHA only sends message text to your chosen model provider (Groq or OpenRouter). No other third party receives your conversations.",
+        "disabled_providers": disabled_list,
+        "available_providers": providers_list,
+        "spending_alert": get_spending_alert(),
+        "daily_spend_cap_usd": GLOBAL_DAILY_SPEND_CAP_USD,
+        "today_spend_usd": telemetry.spend_today_usd,
+        "transparency_note": "SINBHA only sends message text to your chosen model provider. You can switch any provider off at any time.",
     }
+
+
+@app.get("/api/diagnostics/llm-usage")
+async def get_llm_usage_endpoint(user: dict = Depends(get_current_user)):
+    """
+    Step C2.13 Item 4: DEV_MODE usage view: tokens today per provider, model, user, and errors by type.
+    """
+    from app.llm_provider_config import telemetry, get_spending_alert
+    is_dev = os.getenv("DEV_MODE", "false").lower() in ("true", "1")
+    return {
+        "dev_mode": is_dev,
+        "summary": telemetry.get_summary(),
+        "spending_alert": get_spending_alert(),
+    }
+
 
 @app.post("/api/settings")
 async def update_settings_endpoint(payload: SettingsUpdateRequest, user: dict = Depends(get_current_user)):
@@ -1507,6 +1544,8 @@ async def update_settings_endpoint(payload: SettingsUpdateRequest, user: dict = 
         db.set_setting(user_id, "dnd_allow_alarms", val_str)
     if payload.active_ai_provider is not None:
         db.set_active_ai_provider(user_id, payload.active_ai_provider)
+    if payload.disabled_ai_providers is not None and hasattr(db, "set_disabled_ai_providers"):
+        db.set_disabled_ai_providers(user_id, payload.disabled_ai_providers)
     db.log_audit(user_id, "SETTINGS_UPDATED", f"Persistence: {payload.persistence}, Quiet hours: {payload.quiet_hours_start}-{payload.quiet_hours_end}, Web Search: {payload.web_search_enabled}, Sound: {payload.reminder_sound_mode}")
     return {"success": True, "settings": db.get_all_settings(user_id)}
 

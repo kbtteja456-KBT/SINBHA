@@ -533,77 +533,53 @@ _model_lockouts: dict = {}
 
 def mark_model_lockout(provider: str, model: str, duration_seconds: float = 300.0):
     """Temporarily marks an LLM model as rate-limited/locked-out (e.g. daily token quota exceeded)."""
+    try:
+        from app.llm_provider_config import telemetry
+        telemetry.mark_lockout(f"{provider}:{model}", duration_seconds, "rate_limit")
+    except Exception:
+        pass
     _model_lockouts[f"{provider.lower()}:{model.lower()}"] = time.time() + duration_seconds
 
 def is_model_locked_out(provider: str, model: str) -> bool:
     """Checks if a model is currently in a temporary rate-limit lockout."""
+    try:
+        from app.llm_provider_config import telemetry
+        if telemetry.is_locked_out(f"{provider}:{model}") or telemetry.is_locked_out(provider):
+            return True
+    except Exception:
+        pass
     expiry = _model_lockouts.get(f"{provider.lower()}:{model.lower()}", 0.0)
     return time.time() < expiry
 
-def get_llm_credentials(active_provider: Optional[str] = None) -> Optional[dict]:
+def get_llm_credentials(active_provider: Optional[str] = None, disabled_providers: Optional[List[str]] = None) -> Optional[dict]:
     """
-    Returns active LLM credentials.
-    Respects user's active_provider setting ('groq', 'openrouter', 'disabled', or 'auto').
+    Returns active LLM credentials based on ordered provider chain.
+    Respects user's active_provider setting ('groq', 'gemini', 'openrouter', 'disabled', or 'auto').
     If active_provider == 'disabled', returns None (disables external AI models).
     """
     provider_pref = (active_provider or os.getenv("ACTIVE_AI_PROVIDER", "auto")).strip().lower()
     if provider_pref == "disabled":
         return None
 
+    try:
+        from app.llm_provider_config import build_ordered_provider_chain
+        chain = build_ordered_provider_chain(active_pref=provider_pref, disabled_providers=disabled_providers)
+        if chain:
+            return chain[0]
+    except Exception as e:
+        pass
+
+    # Safe fallback if config module is absent or raises
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
-    groq_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b").strip()
-    openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
-    openrouter_model = os.getenv("OPENROUTER_MODEL", "google/gemini-2.5-flash").strip()
-
-    has_groq = bool(groq_key and groq_key != "your_groq_api_key_here")
-    has_openrouter = bool(openrouter_key and openrouter_key != "your_openrouter_api_key_here")
-
-    def _select_groq_model():
-        chosen = groq_model
-        if is_model_locked_out("groq", chosen):
-            # If 120b hit daily tokens per day (TPD) quota, automatically use 20b which has a separate quota
-            sec = "openai/gpt-oss-20b" if "120b" in chosen else "openai/gpt-oss-120b"
-            if not is_model_locked_out("groq", sec):
-                chosen = sec
-        return chosen
-
-    if provider_pref == "groq" and has_groq:
-        chosen_model = _select_groq_model()
+    groq_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b").strip()
+    if groq_key and groq_key != "your_groq_api_key_here":
         return {
             "provider": "groq",
             "api_key": groq_key,
-            "model": chosen_model,
+            "model": groq_model,
             "endpoint": "https://api.groq.com/openai/v1/chat/completions",
-            "reasoning_effort": "low" if "gpt-oss-120b" in chosen_model or "gpt-oss-20b" in chosen_model else None
-        }
-
-    if provider_pref == "openrouter" and has_openrouter:
-        return {
-            "provider": "openrouter",
-            "api_key": openrouter_key,
-            "model": openrouter_model,
-            "endpoint": "https://openrouter.ai/api/v1/chat/completions",
-            "reasoning_effort": None
-        }
-
-    # Auto: Groq first (free, ultra-fast), then OpenRouter
-    if has_groq:
-        chosen_model = _select_groq_model()
-        return {
-            "provider": "groq",
-            "api_key": groq_key,
-            "model": chosen_model,
-            "endpoint": "https://api.groq.com/openai/v1/chat/completions",
-            "reasoning_effort": "low" if "gpt-oss-120b" in chosen_model or "gpt-oss-20b" in chosen_model else None
-        }
-
-    if has_openrouter:
-        return {
-            "provider": "openrouter",
-            "api_key": openrouter_key,
-            "model": openrouter_model,
-            "endpoint": "https://openrouter.ai/api/v1/chat/completions",
-            "reasoning_effort": None
+            "supports_tools": True,
+            "reasoning_effort": "low" if "gpt-oss" in groq_model else None
         }
 
     return None

@@ -260,17 +260,16 @@ async function verifyWindowOrProcessAppeared(expectedProcessNames, appNameHint =
     expectedProcessNames = expectedProcessNames ? [expectedProcessNames] : [];
   }
   const hint = String(appNameHint || '').toLowerCase().trim();
-  const candidateProcesses = [...expectedProcessNames];
-  if (hint && (hint.includes('setting') || hint.includes('store') || hint.includes('calculator') || hint.includes('camera') || hint.includes('clock') || hint.includes('weather'))) {
-    if (!candidateProcesses.includes('ApplicationFrameHost.exe')) {
-      candidateProcesses.push('ApplicationFrameHost.exe');
-    }
-  }
+  const candidateProcesses = [...expectedProcessNames].filter(p => p !== 'ApplicationFrameHost.exe');
+
   if (hint.includes('setting') && !candidateProcesses.includes('SystemSettings.exe')) {
     candidateProcesses.push('SystemSettings.exe');
   }
   if (hint.includes('store') && !candidateProcesses.includes('WinStore.App.exe')) {
     candidateProcesses.push('WinStore.App.exe');
+  }
+  if (hint.includes('calculator') && !candidateProcesses.includes('CalculatorApp.exe')) {
+    candidateProcesses.push('CalculatorApp.exe');
   }
 
   const startTime = Date.now();
@@ -318,20 +317,41 @@ async function verifyProcessAppeared(expectedProcessNames, maxWaitMs = 8000) {
 
 /**
  * Step C2.12: Opens Windows ms-settings pages safely using shell.openExternal.
- * Verifies window or SystemSettings/ApplicationFrameHost appeared within 8s.
+ * Verifies window or SystemSettings appeared within 8s. Never falsely reports success.
  */
 async function safeOpenSettings(page = 'settings') {
   const cleanPage = String(page || 'settings').toLowerCase().trim();
   const uri = SETTINGS_PAGES[cleanPage] || (cleanPage.startsWith('ms-settings:') ? cleanPage : `ms-settings:${cleanPage}`);
 
-  await shell.openExternal(uri);
-  const verify = await verifyWindowOrProcessAppeared(['SystemSettings.exe', 'ApplicationFrameHost.exe'], 'Settings', 8000);
+  try {
+    if (shell && shell.openExternal) {
+      await shell.openExternal(uri);
+    }
+  } catch (e) {}
+
+  try {
+    const { spawn } = require('child_process');
+    spawn('explorer.exe', [uri], { detached: true, stdio: 'ignore' });
+  } catch (e) {}
+
+  const verify = await verifyWindowOrProcessAppeared(['SystemSettings.exe'], 'Settings', 8000);
+  if (!verify.verified) {
+    return {
+      success: false,
+      status: 'launch_timeout',
+      page: cleanPage,
+      uri,
+      verified: false,
+      error: verify.error || 'Settings window did not appear within timeout'
+    };
+  }
+
   return {
     success: true,
     status: 'succeeded',
     page: cleanPage,
     uri,
-    verified: verify.verified,
+    verified: true,
     pid: verify.pid || null,
     method: 'ms-settings'
   };
