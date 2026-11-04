@@ -268,6 +268,7 @@ def build_ordered_provider_chain(
     chain = []
 
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    groq_key2 = os.getenv("GROQ_API_KEY2", "").strip()
     gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
     openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
     dev_local_url = os.getenv("DEV_LLM_BASE_URL", "").strip()
@@ -289,14 +290,13 @@ def build_ordered_provider_chain(
                 "is_local": True
             })
 
-    # 2. Groq (Primary)
+    # 2. Groq Primary (Key 1)
     has_groq = bool(groq_key and groq_key != "your_groq_api_key_here")
-    if has_groq and "groq" not in disabled_set and not telemetry.is_locked_out("groq"):
-        # Select best available model (20b or 120b)
-        preferred_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b").strip()
-        if telemetry.is_locked_out(f"groq:{preferred_model}") or telemetry.is_locked_out(preferred_model):
-            preferred_model = "openai/gpt-oss-20b" if "120b" in preferred_model else "openai/gpt-oss-120b"
+    preferred_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b").strip()
+    if telemetry.is_locked_out(f"groq:{preferred_model}") or telemetry.is_locked_out(preferred_model):
+        preferred_model = "openai/gpt-oss-20b" if "120b" in preferred_model else "openai/gpt-oss-120b"
 
+    if has_groq and "groq" not in disabled_set and not telemetry.is_locked_out("groq"):
         chain.append({
             "provider": "groq",
             "api_key": groq_key,
@@ -306,10 +306,22 @@ def build_ordered_provider_chain(
             "reasoning_effort": "low" if "gpt-oss" in preferred_model else None
         })
 
+    # 2b. Groq Secondary (Key 2: Additional 200,000 Tokens/Day Quota)
+    has_groq2 = bool(groq_key2 and groq_key2 != "your_groq_api_key_here")
+    if has_groq2 and "groq" not in disabled_set and not telemetry.is_locked_out("groq2"):
+        chain.append({
+            "provider": "groq",
+            "api_key": groq_key2,
+            "model": preferred_model,
+            "endpoint": "https://api.groq.com/openai/v1/chat/completions",
+            "supports_tools": True,
+            "reasoning_effort": "low" if "gpt-oss" in preferred_model else None
+        })
+
     # 3. Google AI Studio (Fallback 1)
     has_gemini = bool(gemini_key and gemini_key != "your_gemini_api_key_here")
     if has_gemini and "gemini" not in disabled_set and not telemetry.is_locked_out("gemini"):
-        gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+        gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
         chain.append({
             "provider": "gemini",
             "api_key": gemini_key,
