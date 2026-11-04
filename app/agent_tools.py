@@ -1235,11 +1235,11 @@ async def handle_open_settings(user_id: int, args: dict, ctx: dict) -> dict:
             }
 
     return {
-        "success": True,
-        "status": "succeeded",
+        "success": False,
+        "status": "unconfirmed",
         "page": page,
         "target_device": target_dev.get("name"),
-        "message": f"Opened {page} settings on {target_dev.get('name')}."
+        "message": f"I sent the command to open {page} settings to {target_dev.get('name')}, but did not receive confirmation from the device within 12s.",
     }
 
 
