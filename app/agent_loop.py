@@ -446,6 +446,7 @@ class AgentResult:
         error: str = None,
         step_log: list = None,
         trace: dict = None,
+        action_receipt: dict = None,
     ):
         self.reply = reply
         self.tool_calls_log = tool_calls_log or []
@@ -456,6 +457,7 @@ class AgentResult:
         self.error = error
         self.step_log = step_log or []
         self.trace = trace or {}
+        self.action_receipt = action_receipt
 
 
 # --------------- Main Agent Loop ---------------
@@ -479,7 +481,7 @@ def _get_fallback_candidates(creds: dict) -> List[dict]:
                 fb["reasoning_effort"] = "low"
                 candidates.append(fb)
     elif provider == "gemini":
-        for sec_model in ("gemini-2.5-flash", "gemini-1.5-flash"):
+        for sec_model in ("gemini-3-flash-preview", "gemini-2.5-flash"):
             if sec_model != model and not telemetry.is_locked_out(f"gemini:{sec_model}"):
                 fb = dict(creds)
                 fb["model"] = sec_model
@@ -720,7 +722,30 @@ async def run_agent_loop(
                 "step_log": step_log,
                 "elapsed_ms": int((time.time() - start_time) * 1000),
             }
-            return AgentResult(reply=reply, tool_calls_log=tool_calls_log, step_log=step_log, error=error_msg, trace=trace_data)
+            # Build receipt if an action tool was executed before LLM failed
+            action_receipt = None
+            if tool_calls_log:
+                for tc in reversed(tool_calls_log):
+                    t_name = tc.get("tool")
+                    if t_name in ("open_app", "open_settings", "open_url", "ring_phone", "send_note", "type_text", "press_keys"):
+                        r_data = tc.get("result", {})
+                        if isinstance(r_data, dict):
+                            status_val = r_data.get("status") or ("succeeded" if r_data.get("success") else "failed")
+                            dev_val = r_data.get("target_device") or (tc.get("args") or {}).get("target_device") or "device"
+                            method_val = r_data.get("route") or r_data.get("method") or (r_data.get("result") or {}).get("method") or (r_data.get("result") or {}).get("route") or "direct"
+                            evidence_val = r_data.get("evidence") or r_data.get("error") or r_data.get("message") or ""
+                            action_receipt = {
+                                "status": status_val,
+                                "device": dev_val,
+                                "route": method_val,
+                                "evidence": evidence_val,
+                                "tool": t_name,
+                                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                                "elapsed_ms": int((time.time() - start_time) * 1000)
+                            }
+                            break
+
+            return AgentResult(reply=reply, tool_calls_log=tool_calls_log, step_log=step_log, error=error_msg, trace=trace_data, action_receipt=action_receipt)
 
         msg = llm_result["message"]
         finish_reason = llm_result.get("finish_reason", "stop")
@@ -788,6 +813,32 @@ async def run_agent_loop(
                 "step_log": step_log,
                 "elapsed_ms": int((time.time() - start_time) * 1000),
             }
+            # Build receipt if any device action tool was executed
+            action_receipt = None
+            if tool_calls_log:
+                for tc in reversed(tool_calls_log):
+                    t_name = tc.get("tool")
+                    if t_name in ("open_app", "open_settings", "open_url", "ring_phone", "send_note", "type_text", "press_keys"):
+                        r_data = tc.get("result", {})
+                        if isinstance(r_data, dict):
+                            status_val = r_data.get("status") or ("succeeded" if r_data.get("success") else "failed")
+                            dev_val = r_data.get("target_device") or (tc.get("args") or {}).get("target_device") or "device"
+                            method_val = r_data.get("route") or r_data.get("method") or (r_data.get("result") or {}).get("method") or (r_data.get("result") or {}).get("route") or "direct"
+                            evidence_val = r_data.get("evidence") or r_data.get("error") or r_data.get("message") or ""
+                            if not evidence_val and status_val == "succeeded":
+                                res_nested = r_data.get("result") or {}
+                                evidence_val = f"Verified: {res_nested.get('package') or res_nested.get('app') or dev_val}"
+                            action_receipt = {
+                                "status": status_val,
+                                "device": dev_val,
+                                "route": method_val,
+                                "evidence": evidence_val,
+                                "tool": t_name,
+                                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                                "elapsed_ms": int((time.time() - start_time) * 1000)
+                            }
+                            break
+
             return AgentResult(
                 reply=content,
                 tool_calls_log=tool_calls_log,
@@ -797,6 +848,7 @@ async def run_agent_loop(
                 web_search_meta=web_search_meta,
                 step_log=step_log,
                 trace=trace_data,
+                action_receipt=action_receipt,
             )
 
         # Process tool calls

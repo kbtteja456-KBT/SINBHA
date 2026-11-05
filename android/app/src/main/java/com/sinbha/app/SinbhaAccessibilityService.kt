@@ -90,6 +90,32 @@ class SinbhaAccessibilityService : AccessibilityService() {
         val GATED_ACTION_VERBS = setOf(
             "send", "post", "submit", "buy", "pay", "delete", "remove", "install", "share", "transfer"
         )
+
+        // Step M1+M2: Window state change listener for launch verification
+        @Volatile
+        private var lastWindowStateTime: Long = 0L
+
+        @Volatile
+        private var lastTopPackage: String = ""
+
+        fun getLastWindowStateChange(): Pair<String, Long> {
+            return Pair(lastTopPackage, lastWindowStateTime)
+        }
+
+        /**
+         * Route 4: Launch via Accessibility Service context (bypasses Background Activity Start restriction).
+         */
+        fun launchIntentFromAccessibility(intent: Intent): Boolean {
+            val s = instance ?: return false
+            return try {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                s.startActivity(intent)
+                true
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to launch intent from accessibility service: ${e.message}")
+                false
+            }
+        }
     }
 
     private var currentPackage: String = ""
@@ -109,6 +135,8 @@ class SinbhaAccessibilityService : AccessibilityService() {
         val pkg = event.packageName?.toString() ?: ""
         if (pkg.isNotEmpty()) {
             currentPackage = pkg
+            lastTopPackage = pkg
+            lastWindowStateTime = System.currentTimeMillis()
         }
     }
 

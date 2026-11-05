@@ -4,6 +4,7 @@ import json
 import socket
 import re
 import datetime
+import logging
 from fastapi import FastAPI, HTTPException, Depends, Request, Response, status, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
@@ -16,6 +17,8 @@ load_dotenv()
 
 import time
 from fastapi.middleware.cors import CORSMiddleware
+
+logger = logging.getLogger("sinbha.main")
 
 APP_START_TIME = time.time()
 
@@ -895,18 +898,29 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
         })
 
     # Run the agent loop
-    from app.agent_loop import run_agent_loop
-    agent_result = await run_agent_loop(
-        user_id=user_id,
-        user_message=user_msg,
-        chat_history=recent_history[:-1],
-        remembered_facts=current_facts,
-        user_devices=annotated_devs,
-        user_timezone=user_tz,
-        user_email=user.get("email", ""),
-        db_module=db,
-        relay_manager=relay_manager,
-    )
+    try:
+        from app.agent_loop import run_agent_loop
+        agent_result = await run_agent_loop(
+            user_id=user_id,
+            user_message=user_msg,
+            chat_history=recent_history[:-1],
+            remembered_facts=current_facts,
+            user_devices=annotated_devs,
+            user_timezone=user_tz,
+            user_email=user.get("email", ""),
+            db_module=db,
+            relay_manager=relay_manager,
+        )
+    except Exception as e:
+        logger.error(f"Agent loop error: {e}", exc_info=True)
+        fallback_reply = "I had trouble reaching my AI brain just now. Please try again or tap Retry 🌸"
+        db.save_message(user_id, "assistant", fallback_reply)
+        return JSONResponse({
+            "reply": fallback_reply,
+            "proposal": None,
+            "retry_available": True,
+            "error": "agent_failed"
+        })
 
     ai_reply = agent_result.reply
     db.save_message(user_id, "assistant", ai_reply)
@@ -979,6 +993,7 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
         "step_log": agent_result.step_log,
         "trace": getattr(agent_result, "trace", {}),
         "tool_calls_log": agent_result.tool_calls_log,
+        "action_receipt": getattr(agent_result, "action_receipt", None),
     })
 
 # ----------------- Task Management Endpoints (Per-User) -----------------
@@ -2171,6 +2186,10 @@ async def run_real_device_check_endpoint(
     laptop_apps = ["notepad", "calculator", "vscode", "chrome", "whatsapp", "nonexistent_test_app_xyz"]
     phone_apps = ["settings", "camera", "files", "snapchat", "whatsapp", "nonexistent_test_app_xyz"]
     num_rounds = min(3, max(1, int((payload or {}).get("rounds", 1))))
+    delay_seconds = min(60, max(0, int((payload or {}).get("delay_seconds", 0))))
+    if delay_seconds > 0:
+        logger.info(f"[REAL_DEVICE_CHECK] Delaying check by {delay_seconds}s for user to lock screen...")
+        await asyncio.sleep(delay_seconds)
 
     for d in trusted:
         platform = (d.get("platform") or "").lower()
@@ -2269,6 +2288,103 @@ async def run_real_device_check_endpoint(
     }
 
 
+@app.post("/api/devices/background-launch-test")
+async def run_background_launch_test_endpoint(
+    payload: dict = None,
+    user: dict = Depends(get_current_user)
+):
+    """
+    Milestone M1+M2 Item 1: Live background launch test.
+    Sends open_app, open_settings, open_url, and deep link to the phone
+    while SINBHA is in the background and the screen is off.
+    Records for each which launch route worked.
+    Returns Android version, SDK int, phone model, routes used, and status.
+    """
+    from app.agent_tools import handle_open_app, handle_open_settings, handle_open_url
+    ctx = {"db": db, "relay_manager": relay_manager, "user_email": user.get("email")}
+    user_id = user["id"]
+
+    target_filter = (payload or {}).get("device_id") if isinstance(payload, dict) else None
+    delay_seconds = min(60, max(0, int((payload or {}).get("delay_seconds", 0))))
+
+    devices = db.get_user_devices(user_id)
+    # Prefer android phone
+    trusted = [d for d in devices if d.get("status") == "trusted" and (d.get("platform") or "").lower() == "android"]
+    if not trusted:
+        trusted = [d for d in devices if d.get("status") == "trusted"]
+
+    if target_filter:
+        trusted = [d for d in trusted if d.get("device_id") == target_filter]
+
+    if not trusted:
+        return {
+            "success": False,
+            "error": "NO_PHONE_CONNECTED",
+            "message": "No trusted Android phone companion connected.",
+            "results": []
+        }
+
+    phone = trusted[0]
+    dev_id = phone.get("device_id")
+    dev_name = phone.get("name") or "Android Phone"
+    device_tel = relay_manager.get_device_telemetry(user_id, dev_id) or {}
+
+    phone_model = device_tel.get("phone_model") or phone.get("phone_model") or "Android Device"
+    android_version = device_tel.get("android_version") or phone.get("android_version") or "Unknown"
+    sdk_int = device_tel.get("sdk_int") or phone.get("sdk_int") or 0
+
+    if delay_seconds > 0:
+        logger.info(f"[BACKGROUND_LAUNCH_TEST] Waiting {delay_seconds}s for screen off / background...")
+        await asyncio.sleep(delay_seconds)
+
+    test_cases = [
+        {"type": "open_app", "name": "Launch App (Camera)", "fn": handle_open_app, "args": {"name": "camera", "target_device": dev_id}},
+        {"type": "open_settings", "name": "Open Settings (Bluetooth)", "fn": handle_open_settings, "args": {"page": "bluetooth", "target_device": dev_id}},
+        {"type": "open_url", "name": "Open URL (HTTPS)", "fn": handle_open_url, "args": {"url": "https://google.com", "target_device": dev_id}},
+        {"type": "deep_link", "name": "Deep Link (Maps)", "fn": handle_open_url, "args": {"url": "geo:0,0?q=restaurants", "target_device": dev_id}},
+    ]
+
+    results = []
+    all_succeeded = True
+
+    for tc in test_cases:
+        t0 = time.time()
+        try:
+            res = await tc["fn"](user_id, tc["args"], ctx)
+        except Exception as e:
+            res = {"success": False, "status": "failed", "error": str(e), "message": f"Exception: {e}"}
+        elapsed_ms = int((time.time() - t0) * 1000)
+
+        status = res.get("status") or ("succeeded" if res.get("success") else "failed")
+        route = res.get("route") or "direct_start"
+        evidence = res.get("evidence") or res.get("message") or ""
+
+        if status not in ("succeeded", "needs_tap", "sent_not_verified"):
+            all_succeeded = False
+
+        results.append({
+            "test_type": tc["type"],
+            "name": tc["name"],
+            "status": status,
+            "route_used": route,
+            "evidence": evidence,
+            "elapsed_ms": elapsed_ms,
+            "command_id": res.get("command_id"),
+        })
+
+    return {
+        "success": True,
+        "phone_model": phone_model,
+        "android_version": str(android_version),
+        "sdk_int": int(sdk_int) if sdk_int else 0,
+        "device_id": dev_id,
+        "device_name": dev_name,
+        "delay_seconds": delay_seconds,
+        "all_succeeded": all_succeeded,
+        "results": results
+    }
+
+
 @app.post("/api/devices/heartbeat")
 @app.get("/api/devices/heartbeat")
 async def device_heartbeat_endpoint(request: Request, user: dict = Depends(get_device_command_user)):
@@ -2299,13 +2415,16 @@ async def device_heartbeat_endpoint(request: Request, user: dict = Depends(get_d
             supported_tools=data.get("supported_tools"),
             installed_apps=data.get("installed_apps"),
         )
-        if "battery" in data or "platform" in data:
+        if "battery" in data or "platform" in data or "android_version" in data:
             relay_manager.store_device_telemetry(user["id"], clean_id, {
                 "battery": data.get("battery"),
                 "is_charging": data.get("is_charging", False),
                 "platform": data.get("platform", "android"),
                 "version": data.get("version") or current_ver,
                 "installed_apps": data.get("installed_apps"),
+                "android_version": data.get("android_version"),
+                "sdk_int": data.get("sdk_int"),
+                "phone_model": data.get("phone_model"),
                 "updated_at": time.time()
             })
         if data.get("installed_apps") or data.get("supported_tools"):

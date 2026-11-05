@@ -315,12 +315,56 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Add an AI bubble to chat (with optional proposal action card and web search sources)
-  function appendAiMessage(text, timeStr = null, proposal = null, webSearch = null, trace = null) {
+  // Add an AI bubble to chat (with optional proposal action card, web search sources, and action receipts)
+  function appendAiMessage(text, timeStr = null, proposal = null, webSearch = null, trace = null, actionReceipt = null) {
     const group = document.createElement("div");
     group.className = "message-group ai-group";
     
-    let proposalHtml = "";
+    // Step M1+M2 Item 4: App-built action receipt
+    let receiptHtml = "";
+    let displayText = text;
+
+    if (actionReceipt && actionReceipt.tool) {
+      const st = String(actionReceipt.status || "unconfirmed").toLowerCase();
+      const isSuccess = st === "succeeded";
+      const isNeedsTap = st === "needs_tap";
+      const isNotInstalled = st === "not_installed";
+      const isUnverified = st === "sent_not_verified" || st === "unconfirmed";
+      
+      const badgeBg = isSuccess ? "#dcfce7" : (isNeedsTap ? "#fef3c7" : (isNotInstalled ? "#f3e8ff" : "#fee2e2"));
+      const badgeColor = isSuccess ? "#15803d" : (isNeedsTap ? "#b45309" : (isNotInstalled ? "#7e22ce" : "#b91c1c"));
+      const badgeLabel = isSuccess ? "✓ Succeeded" : (isNeedsTap ? "👆 Needs Tap" : (isNotInstalled ? "❓ Not Installed" : (isUnverified ? "⚠️ Sent (Not Verified)" : "✕ Failed")));
+      
+      const routeName = escapeHtml(actionReceipt.route || "direct");
+      const devName = escapeHtml(actionReceipt.device || "Companion Device");
+      const evidence = escapeHtml(actionReceipt.evidence || (isSuccess ? "Verified via window/process check" : "Awaiting verification"));
+      const timeElapsed = actionReceipt.elapsed_ms ? `${actionReceipt.elapsed_ms}ms` : "";
+
+      receiptHtml = `
+        <div class="action-receipt-card" style="margin-top: 8px; background: #fff; border: 1.5px solid ${badgeColor}; border-radius: 8px; padding: 10px; font-size: 0.8rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <span style="font-weight: 700; color: #1f2937;">Action Receipt: <span style="font-family: ui-monospace, monospace; color: #be185d;">${escapeHtml(actionReceipt.tool)}</span></span>
+            <span style="background: ${badgeBg}; color: ${badgeColor}; font-weight: 700; font-size: 0.72rem; padding: 2px 8px; border-radius: 10px;">${badgeLabel}</span>
+          </div>
+          <div style="color: #4b5563; line-height: 1.4; font-size: 0.76rem;">
+            <div><strong>Device:</strong> ${devName}</div>
+            <div><strong>Route:</strong> <span style="font-family: ui-monospace, monospace; color: #2563eb;">${routeName}</span></div>
+            <div><strong>Evidence:</strong> ${evidence}</div>
+            ${timeElapsed ? `<div><strong>Duration:</strong> ${timeElapsed}</div>` : ''}
+          </div>
+        </div>
+      `;
+
+      // If AI text contradicts receipt (e.g. AI says "Settings is open" when receipt status is not succeeded), suppress AI text
+      if (!isSuccess && displayText) {
+        const lower = displayText.toLowerCase();
+        if (lower.includes("is open") || lower.includes("opened ") || lower.includes("have opened")) {
+          displayText = isNeedsTap 
+            ? "Your phone requires a tap to open this app from the background. Check your notification shade 🌸"
+            : (isNotInstalled ? displayText : "The command was transmitted, but device launch could not be confirmed.");
+        }
+      }
+    }
     if (proposal) {
       if (proposal.type === "task_proposal") {
         // Step 5 & 6B: Task proposal card with suggested reminders & Confirm / Cancel gate
@@ -501,7 +545,8 @@ document.addEventListener("DOMContentLoaded", () => {
     group.innerHTML = `
       <div class="message-avatar">🌸</div>
       <div class="message-bubble ai-bubble">
-        <p>${escapeHtml(text)}</p>
+        <p>${escapeHtml(displayText)}</p>
+        ${receiptHtml}
         ${webSearchHtml}
         ${proposalHtml}
         ${isDevMode && trace && (trace.provider || trace.tool_calls?.length > 0) ? `
@@ -1203,7 +1248,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const data = await response.json();
-      appendAiMessage(data.reply, null, data.proposal, data.web_search, data.trace);
+      appendAiMessage(data.reply, null, data.proposal, data.web_search, data.trace, data.action_receipt);
       if (data.trace) {
         recordDevTrace(data.trace);
       }
@@ -3209,13 +3254,28 @@ document.addEventListener("DOMContentLoaded", () => {
     if (btnRealDeviceCheck) {
       btnRealDeviceCheck.addEventListener("click", async () => {
         btnRealDeviceCheck.disabled = true;
-        btnRealDeviceCheck.textContent = "⏳ Running Real Device Check (6 Apps)...";
+        const chkDelay = document.getElementById("chkDelay20s");
+        const delaySeconds = (chkDelay && chkDelay.checked) ? 20 : 0;
+
         if (realDeviceResultsContainer) realDeviceResultsContainer.style.display = "block";
         if (realDeviceSummaryBadge) {
-          realDeviceSummaryBadge.textContent = "Testing...";
+          realDeviceSummaryBadge.textContent = delaySeconds > 0 ? "Countdown..." : "Testing...";
           realDeviceSummaryBadge.style.background = "#dbeafe";
           realDeviceSummaryBadge.style.color = "#1e40af";
         }
+
+        if (delaySeconds > 0) {
+          for (let sec = delaySeconds; sec > 0; sec--) {
+            btnRealDeviceCheck.textContent = `🌙 Lock phone now! Starting in ${sec}s...`;
+            if (realDeviceResultsList) {
+              realDeviceResultsList.innerHTML = `<div style="color: #2563eb; font-weight: 600;">🔒 Lock your phone now! Commands run in ${sec} seconds...</div>`;
+            }
+            await new Promise(r => setTimeout(r, 1000));
+          }
+        }
+
+        btnRealDeviceCheck.textContent = "⏳ Running Real Device Check (6 Apps)...";
+        if (realDeviceSummaryBadge) realDeviceSummaryBadge.textContent = "Testing...";
         if (realDeviceResultsList) {
           realDeviceResultsList.innerHTML = '<div style="color: #6b7280; font-style: italic;">Sending 6 commands through chat path to all connected devices...</div>';
         }
@@ -3224,7 +3284,7 @@ document.addEventListener("DOMContentLoaded", () => {
           const res = await fetch("/api/devices/real-device-check", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ rounds: 1 })
+            body: JSON.stringify({ rounds: 1, delay_seconds: delaySeconds })
           });
           const data = await res.json();
 
@@ -3361,6 +3421,112 @@ document.addEventListener("DOMContentLoaded", () => {
         } finally {
           btnRealDeviceCheck.disabled = false;
           btnRealDeviceCheck.textContent = "🔍 Run Real Device Check (Cross-Device 6-App Test)";
+        }
+      });
+    }
+
+    // Milestone M1+M2 Item 1: Background Launch Test Runner
+    const btnBackgroundLaunchTest = document.getElementById("btnBackgroundLaunchTest");
+    const bgLaunchResultsContainer = document.getElementById("bgLaunchResultsContainer");
+    const bgLaunchSummaryBadge = document.getElementById("bgLaunchSummaryBadge");
+    const bgLaunchDeviceInfo = document.getElementById("bgLaunchDeviceInfo");
+    const bgLaunchResultsList = document.getElementById("bgLaunchResultsList");
+
+    if (btnBackgroundLaunchTest) {
+      btnBackgroundLaunchTest.addEventListener("click", async () => {
+        btnBackgroundLaunchTest.disabled = true;
+        const chkDelay = document.getElementById("chkDelay20s");
+        const delaySeconds = (chkDelay && chkDelay.checked) ? 20 : 0;
+
+        if (bgLaunchResultsContainer) bgLaunchResultsContainer.style.display = "block";
+        if (bgLaunchSummaryBadge) {
+          bgLaunchSummaryBadge.textContent = delaySeconds > 0 ? "Countdown..." : "Testing...";
+          bgLaunchSummaryBadge.style.background = "#dbeafe";
+          bgLaunchSummaryBadge.style.color = "#1e40af";
+        }
+
+        if (delaySeconds > 0) {
+          for (let sec = delaySeconds; sec > 0; sec--) {
+            btnBackgroundLaunchTest.textContent = `🌙 Lock phone now! Starting in ${sec}s...`;
+            if (bgLaunchResultsList) {
+              bgLaunchResultsList.innerHTML = `<div style="color: #059669; font-weight: 600;">🔒 Screen-off mode: Lock your phone now! Starting in ${sec}s...</div>`;
+            }
+            await new Promise(r => setTimeout(r, 1000));
+          }
+        }
+
+        btnBackgroundLaunchTest.textContent = "⏳ Testing Background Launch Routes...";
+        if (bgLaunchSummaryBadge) bgLaunchSummaryBadge.textContent = "Testing...";
+        if (bgLaunchResultsList) {
+          bgLaunchResultsList.innerHTML = '<div style="color: #6b7280; font-style: italic;">Testing app, settings, url, and deep link via route ladder...</div>';
+        }
+
+        try {
+          const res = await fetch("/api/devices/background-launch-test", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ delay_seconds: delaySeconds })
+          });
+          const data = await res.json();
+
+          if (!data.success) {
+            if (bgLaunchSummaryBadge) {
+              bgLaunchSummaryBadge.textContent = data.error || "Failed";
+              bgLaunchSummaryBadge.style.background = "#fee2e2";
+              bgLaunchSummaryBadge.style.color = "#991b1b";
+            }
+            if (bgLaunchResultsList) {
+              bgLaunchResultsList.innerHTML = `<div style="color: #ef4444; font-weight: 600;">${escapeHtml(data.message || data.error || "Background test failed")}</div>`;
+            }
+            return;
+          }
+
+          if (bgLaunchDeviceInfo) {
+            bgLaunchDeviceInfo.textContent = `📱 ${data.phone_model} (Android ${data.android_version}, API ${data.sdk_int}) — Device: ${data.device_name}`;
+          }
+
+          const results = data.results || [];
+          let passedCount = 0;
+          const rowsHtml = results.map(r => {
+            const isOk = r.status === "succeeded" || r.status === "needs_tap" || r.status === "sent_not_verified";
+            if (r.status === "succeeded") passedCount++;
+            const icon = r.status === "succeeded" ? "✅" : (r.status === "needs_tap" ? "🔔" : "⚠️");
+            const badgeBg = r.status === "succeeded" ? "#dcfce7" : (r.status === "needs_tap" ? "#fef3c7" : "#fee2e2");
+            const badgeCol = r.status === "succeeded" ? "#166534" : (r.status === "needs_tap" ? "#92400e" : "#991b1b");
+            return `
+              <div style="background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 8px; display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                  <span style="font-weight: 600; color: #1f2937;">${icon} ${escapeHtml(r.name)}</span>
+                  <div style="font-size: 0.72rem; color: #6b7280;">Route: <strong style="color: #4b5563;">${escapeHtml(r.route_used)}</strong> (${r.elapsed_ms}ms)</div>
+                </div>
+                <span style="font-size: 0.72rem; font-weight: 700; padding: 2px 6px; border-radius: 4px; background: ${badgeBg}; color: ${badgeCol};">
+                  ${escapeHtml(r.status)}
+                </span>
+              </div>
+            `;
+          }).join("");
+
+          if (bgLaunchResultsList) {
+            bgLaunchResultsList.innerHTML = rowsHtml;
+          }
+
+          if (bgLaunchSummaryBadge) {
+            bgLaunchSummaryBadge.textContent = `${passedCount}/${results.length} Verified`;
+            bgLaunchSummaryBadge.style.background = passedCount === results.length ? "#dcfce7" : "#fee2e2";
+            bgLaunchSummaryBadge.style.color = passedCount === results.length ? "#166534" : "#991b1b";
+          }
+        } catch (err) {
+          if (bgLaunchSummaryBadge) {
+            bgLaunchSummaryBadge.textContent = "Error";
+            bgLaunchSummaryBadge.style.background = "#fee2e2";
+            bgLaunchSummaryBadge.style.color = "#991b1b";
+          }
+          if (bgLaunchResultsList) {
+            bgLaunchResultsList.innerHTML = `<div style="color: #ef4444;">Error: ${escapeHtml(err.message)}</div>`;
+          }
+        } finally {
+          btnBackgroundLaunchTest.disabled = false;
+          btnBackgroundLaunchTest.textContent = "📱 Run Background Launch Test (App, Settings, URL, Deep Link)";
         }
       });
     }

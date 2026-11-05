@@ -426,6 +426,9 @@ class SinbhaApiClient(private val context: Context) {
                 put("platform", "android")
                 put("version", BuildConfig.VERSION_NAME)
                 put("client_version", BuildConfig.VERSION_NAME)
+                put("android_version", Build.VERSION.RELEASE ?: "")
+                put("sdk_int", Build.VERSION.SDK_INT)
+                put("phone_model", "${Build.MANUFACTURER} ${Build.MODEL}".trim())
                 if (battery != null) put("battery", battery)
                 put("is_charging", isCharging)
                 if (installedApps != null && installedApps.length() > 0) {

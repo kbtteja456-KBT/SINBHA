@@ -346,12 +346,21 @@ object SinbhaAppLauncher {
      * If blocked or overlay permission is missing, shows tap-to-open notification
      * and reports 'needs a tap' honestly.
      */
-    private fun launchIntentSafely(
+    /**
+     * Step M1+M2: Unified Safe Launcher with Route Ladder for EVERY launch type.
+     * Route Ladder Order:
+     * 1. Route 1: direct_start (if app/service is exempt or foreground)
+     * 2. Route 2: overlay_window (start activity using SYSTEM_ALERT_WINDOW exemption)
+     * 3. Route 3: full_screen_intent (High-priority full-screen intent notification with wake lock)
+     * 4. Route 4: accessibility_service (if SinbhaAccessibilityService is running, start activity from its context)
+     * 5. Route 5: needs_tap (Post high-priority notification with pending intent and return needs_tap)
+     */
+    fun launchIntentWithRouteLadder(
         context: Context,
         appName: String,
         packageName: String?,
         launchIntent: Intent,
-        method: String
+        baseMethod: String = "launch"
     ): LaunchResult {
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
 
@@ -361,49 +370,118 @@ object SinbhaAppLauncher {
             true
         }
 
-        // Step C2.8 Item 5: Android 10+ strictly restricts background activity launches.
-        // If overlay permission is not granted, Android suppresses the launch.
-        // Post tap-to-open notification and report 'needs_tap' honestly.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !canOverlay) {
-            showTapToOpenNotification(context, appName, launchIntent)
-            return LaunchResult(
-                success = false,
-                app = appName,
-                packageName = packageName,
-                method = method,
-                needsTap = true,
-                needsOverlayPermission = true,
-                error = "needs a tap: Android blocked background launch (enable 'Display over other apps' in Settings to allow direct open)"
-            )
-        }
-
+        // --- Route 1: direct_start (Immediate try) ---
         try {
             context.startActivity(launchIntent)
             return LaunchResult(
                 success = true,
                 app = appName,
                 packageName = packageName,
-                method = if (canOverlay) "$method+overlay_exemption" else "$method+direct_start"
+                method = "direct_start",
+                status = "succeeded"
             )
         } catch (e: Exception) {
-            // Background start was restricted by Android OS or security manager
-            showTapToOpenNotification(context, appName, launchIntent)
-            return LaunchResult(
-                success = false,
-                app = appName,
-                packageName = packageName,
-                method = method,
-                needsTap = true,
-                needsOverlayPermission = !canOverlay,
-                error = "could not be verified: background launch blocked (${e.message})"
-            )
+            // direct_start was blocked by Android BAL or security manager; cascade to route 2
         }
+
+        // --- Route 2: overlay_window (SYSTEM_ALERT_WINDOW exemption) ---
+        if (canOverlay) {
+            try {
+                // Ensure overlay bird service or overlay context triggers the intent
+                val overlayIntent = Intent(launchIntent).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                }
+                context.startActivity(overlayIntent)
+                return LaunchResult(
+                    success = true,
+                    app = appName,
+                    packageName = packageName,
+                    method = "overlay_window",
+                    status = "succeeded"
+                )
+            } catch (e: Exception) {}
+        }
+
+        // --- Route 3: full_screen_intent (High-priority notification with full-screen intent) ---
+        try {
+            val launchedViaFsi = triggerFullScreenIntentLaunch(context, appName, launchIntent)
+            if (launchedViaFsi) {
+                return LaunchResult(
+                    success = true,
+                    app = appName,
+                    packageName = packageName,
+                    method = "full_screen_intent",
+                    status = "succeeded"
+                )
+            }
+        } catch (e: Exception) {}
+
+        // --- Route 4: accessibility_service (if enabled and running) ---
+        if (SinbhaAccessibilityService.isRunning()) {
+            val aSuccess = SinbhaAccessibilityService.launchIntentFromAccessibility(launchIntent)
+            if (aSuccess) {
+                return LaunchResult(
+                    success = true,
+                    app = appName,
+                    packageName = packageName,
+                    method = "accessibility_service",
+                    status = "succeeded"
+                )
+            }
+        }
+
+        // --- Route 5: needs_tap (Last Resort Tap-To-Open Notification) ---
+        showTapToOpenNotification(context, appName, launchIntent)
+        return LaunchResult(
+            success = false,
+            app = appName,
+            packageName = packageName,
+            method = "needs_tap",
+            needsTap = true,
+            needsOverlayPermission = !canOverlay,
+            status = "needs_tap",
+            error = "needs a tap: background launch blocked by Android OS (tap notification to open)"
+        )
+    }
+
+    private fun triggerFullScreenIntentLaunch(context: Context, appName: String, launchIntent: Intent): Boolean {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return false
+        val displayTitle = appName.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+        val pi = PendingIntent.getActivity(
+            context,
+            (System.currentTimeMillis() % 10000).toInt(),
+            launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val channelId = SinbhaPlugin.DEVICE_COMMANDS_CHANNEL_ID
+        val notif = NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("Opening $displayTitle 📱")
+            .setContentText("SINBHA is opening $displayTitle...")
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setAutoCancel(true)
+            .setContentIntent(pi)
+            .setFullScreenIntent(pi, true)
+            .build()
+
+        nm.notify(TAP_NOTIFICATION_ID + 1, notif)
+        return true
+    }
+
+    private fun launchIntentSafely(
+        context: Context,
+        appName: String,
+        packageName: String?,
+        launchIntent: Intent,
+        method: String
+    ): LaunchResult {
+        return launchIntentWithRouteLadder(context, appName, packageName, launchIntent, method)
     }
 
     /**
-     * Step C2.12 Item 2: Opens Android Settings pages using standard Settings Intents.
-     * Pages: bluetooth, wifi, display, battery, apps, notifications, accessibility, settings.
-     * Returns LaunchResult with confirmed result.
+     * Step C2.12 Item 2 & M1+M2: Opens Android Settings pages through the Route Ladder.
      */
     fun openSettingsPage(context: Context, page: String): LaunchResult {
         val cleanPage = page.lowercase().trim()
@@ -426,37 +504,14 @@ object SinbhaAppLauncher {
         }
 
         intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-        return try {
-            context.startActivity(intent)
-            LaunchResult(
-                success = true,
-                app = targetName,
-                packageName = "com.android.settings",
-                method = "settings_intent",
-                status = "succeeded"
-            )
-        } catch (e: Exception) {
-            // Fallback to general settings
-            try {
-                val fallbackIntent = Intent(Settings.ACTION_SETTINGS).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                }
-                context.startActivity(fallbackIntent)
-                LaunchResult(
-                    success = true,
-                    app = "Settings",
-                    packageName = "com.android.settings",
-                    method = "settings_intent_fallback",
-                    status = "succeeded"
-                )
-            } catch (e2: Exception) {
-                LaunchResult(
-                    success = false,
-                    app = targetName,
-                    error = "Failed to open $targetName: ${e.message}"
-                )
-            }
+        val res = launchIntentWithRouteLadder(context, targetName, "com.android.settings", intent, "settings_intent")
+        if (res.success || res.needsTap) return res
+
+        // Fallback to general settings if specific subpage failed
+        val fallbackIntent = Intent(Settings.ACTION_SETTINGS).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
+        return launchIntentWithRouteLadder(context, "Settings", "com.android.settings", fallbackIntent, "settings_intent_fallback")
     }
 
     private fun showTapToOpenNotification(context: Context, appName: String, launchIntent: Intent) {

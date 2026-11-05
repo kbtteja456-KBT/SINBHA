@@ -75,8 +75,8 @@ DEFAULT_MODELS = {
         {"id": "openai/gpt-oss-120b", "supports_tools": True, "tpm": 8000, "tpd": 200000, "cost_in": 0.0, "cost_out": 0.0},
     ],
     "gemini": [
+        {"id": "gemini-3-flash-preview", "supports_tools": True, "tpm": 1000000, "tpd": 1500, "cost_in": 0.0, "cost_out": 0.0},
         {"id": "gemini-2.5-flash", "supports_tools": True, "tpm": 1000000, "tpd": 1500, "cost_in": 0.0, "cost_out": 0.0},
-        {"id": "gemini-2.0-flash", "supports_tools": True, "tpm": 1000000, "tpd": 1500, "cost_in": 0.0, "cost_out": 0.0},
     ],
     "openrouter": [
         {"id": "google/gemini-2.5-flash", "supports_tools": True, "tpm": 500000, "tpd": 1000000, "cost_in": 0.15, "cost_out": 0.60},
@@ -321,7 +321,7 @@ def build_ordered_provider_chain(
     # 3. Google AI Studio (Fallback 1)
     has_gemini = bool(gemini_key and gemini_key != "your_gemini_api_key_here")
     if has_gemini and "gemini" not in disabled_set and not telemetry.is_locked_out("gemini"):
-        gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
+        gemini_model = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview").strip()
         chain.append({
             "provider": "gemini",
             "api_key": gemini_key,

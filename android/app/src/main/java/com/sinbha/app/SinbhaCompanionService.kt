@@ -439,7 +439,9 @@ class SinbhaCompanionService : Service() {
                         if (now - lastHeartbeatTime > 60_000L) {
                             lastHeartbeatTime = now
                             try {
-                                apiClient.sendHeartbeat(deviceId)
+                                val bm = getSystemService(Context.BATTERY_SERVICE) as? android.os.BatteryManager
+                                val batLevel = bm?.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: 100
+                                apiClient.sendHeartbeat(deviceId, battery = batLevel)
                             } catch (e: Exception) {}
                         }
 
@@ -460,6 +462,31 @@ class SinbhaCompanionService : Service() {
                 delay(pollDelay)
             }
         }
+    }
+
+    /**
+     * Step M1+M2 Item 3: Android launch verification.
+     * Waits up to 3.5s for accessibility service window-state change or foreground package.
+     * Returns true only if verified; otherwise returns false (sent_not_verified).
+     */
+    private suspend fun verifyLaunchSuccess(targetPackage: String?, launchTime: Long): Boolean {
+        // If accessibility service is not running, we cannot verify window appearance truthfully
+        if (!SinbhaAccessibilityService.isRunning()) {
+            return false
+        }
+
+        // Poll for window state change for up to 3500ms
+        val startTime = System.currentTimeMillis()
+        while (System.currentTimeMillis() - startTime < 3500L) {
+            val (lastPkg, lastTime) = SinbhaAccessibilityService.getLastWindowStateChange()
+            if (lastTime >= launchTime && lastPkg.isNotBlank()) {
+                if (targetPackage == null || lastPkg.equals(targetPackage, ignoreCase = true) || lastPkg.contains(targetPackage, ignoreCase = true)) {
+                    return true
+                }
+            }
+            delay(250L)
+        }
+        return false
     }
 
     /**
@@ -515,23 +542,31 @@ class SinbhaCompanionService : Service() {
             when (type) {
                 "open_app" -> {
                     handlerRan = "android:SinbhaAppLauncher"
+                    val launchTime = System.currentTimeMillis()
                     val launchResult = SinbhaAppLauncher.launchFromPayload(applicationContext, payload)
                     if (launchResult.success) {
-                        finalOutcome = "succeeded"
+                        // Step M1+M2: Verify launch via window-state change or accessibility service
+                        val verified = verifyLaunchSuccess(launchResult.packageName, launchTime)
+                        finalOutcome = if (verified) "succeeded" else "sent_not_verified"
                         val resObj = JSONObject().apply {
                             put("app", launchResult.app)
                             put("package", launchResult.packageName ?: "")
-                            put("method", launchResult.method ?: "overlay_exemption")
+                            put("method", launchResult.method ?: "direct_start")
+                            put("route", launchResult.method ?: "direct_start")
+                            put("verified", verified)
+                            put("status", finalOutcome)
                         }
-                        apiClient.reportCommandStatus(cmdId, "succeeded", result = resObj)
-                        sendWsStatus(cmdId, "succeeded", result = resObj)
+                        apiClient.reportCommandStatus(cmdId, finalOutcome, result = resObj)
+                        sendWsStatus(cmdId, finalOutcome, result = resObj)
                     } else if (launchResult.needsTap) {
                         finalOutcome = "needs_tap"
                         val resObj = JSONObject().apply {
                             put("app", launchResult.app)
                             put("package", launchResult.packageName ?: "")
                             put("needs_tap", true)
-                            put("reason", "background launch blocked")
+                            put("route", "needs_tap")
+                            put("status", "needs_tap")
+                            put("reason", "background launch blocked by Android OS")
                         }
                         val err = launchResult.error ?: "needs a tap"
                         apiClient.reportCommandStatus(cmdId, "needs_tap", result = resObj, error = err)
@@ -561,18 +596,33 @@ class SinbhaCompanionService : Service() {
                 }
                 "open_url" -> {
                     handlerRan = "android:SinbhaAppLauncher"
+                    val launchTime = System.currentTimeMillis()
                     val urlStr = payload.optString("url")
                     val launchResult = SinbhaAppLauncher.launchFromPayload(applicationContext, JSONObject().apply {
                         put("url", urlStr)
                     })
                     if (launchResult.success) {
-                        finalOutcome = "succeeded"
+                        val verified = verifyLaunchSuccess(null, launchTime)
+                        finalOutcome = if (verified) "succeeded" else "sent_not_verified"
                         val resObj = JSONObject().apply {
                             put("url", urlStr)
                             put("method", launchResult.method ?: "browser_launch")
+                            put("route", launchResult.method ?: "browser_launch")
+                            put("verified", verified)
+                            put("status", finalOutcome)
                         }
-                        apiClient.reportCommandStatus(cmdId, "succeeded", result = resObj)
-                        sendWsStatus(cmdId, "succeeded", result = resObj)
+                        apiClient.reportCommandStatus(cmdId, finalOutcome, result = resObj)
+                        sendWsStatus(cmdId, finalOutcome, result = resObj)
+                    } else if (launchResult.needsTap) {
+                        finalOutcome = "needs_tap"
+                        val resObj = JSONObject().apply {
+                            put("url", urlStr)
+                            put("needs_tap", true)
+                            put("route", "needs_tap")
+                            put("status", "needs_tap")
+                        }
+                        apiClient.reportCommandStatus(cmdId, "needs_tap", result = resObj, error = "needs a tap")
+                        sendWsStatus(cmdId, "needs_tap", result = resObj, error = "needs a tap")
                     } else {
                         finalOutcome = "failed"
                         val err = launchResult.error ?: "Failed to open URL"
@@ -582,17 +632,33 @@ class SinbhaCompanionService : Service() {
                 }
                 "open_settings" -> {
                     handlerRan = "android:SinbhaAppLauncher.openSettingsPage"
+                    val launchTime = System.currentTimeMillis()
                     val pageStr = payload.optString("page", payload.optString("target", payload.optString("app", "settings")))
                     val launchResult = SinbhaAppLauncher.openSettingsPage(applicationContext, pageStr)
                     if (launchResult.success) {
-                        finalOutcome = "succeeded"
+                        val verified = verifyLaunchSuccess("com.android.settings", launchTime)
+                        finalOutcome = if (verified) "succeeded" else "sent_not_verified"
                         val resObj = JSONObject().apply {
                             put("page", pageStr)
                             put("app", launchResult.app)
                             put("method", launchResult.method ?: "settings_intent")
+                            put("route", launchResult.method ?: "settings_intent")
+                            put("verified", verified)
+                            put("status", finalOutcome)
                         }
-                        apiClient.reportCommandStatus(cmdId, "succeeded", result = resObj)
-                        sendWsStatus(cmdId, "succeeded", result = resObj)
+                        apiClient.reportCommandStatus(cmdId, finalOutcome, result = resObj)
+                        sendWsStatus(cmdId, finalOutcome, result = resObj)
+                    } else if (launchResult.needsTap) {
+                        finalOutcome = "needs_tap"
+                        val resObj = JSONObject().apply {
+                            put("page", pageStr)
+                            put("app", launchResult.app)
+                            put("needs_tap", true)
+                            put("route", "needs_tap")
+                            put("status", "needs_tap")
+                        }
+                        apiClient.reportCommandStatus(cmdId, "needs_tap", result = resObj, error = "needs a tap")
+                        sendWsStatus(cmdId, "needs_tap", result = resObj, error = "needs a tap")
                     } else {
                         finalOutcome = "failed"
                         val err = launchResult.error ?: "Failed to open Settings page: $pageStr"
