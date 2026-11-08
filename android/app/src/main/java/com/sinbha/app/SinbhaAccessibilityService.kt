@@ -127,7 +127,7 @@ class SinbhaAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
-        Log.i(TAG, "🌸 SinbhaAccessibilityService connected and ready.")
+        Log.i(TAG, "SinbhaAccessibilityService connected and ready.")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -768,7 +768,7 @@ class SinbhaAccessibilityService : AccessibilityService() {
                     }
 
                     val textV = TextView(this).apply {
-                        text = "🌸 SINBHA is controlling your phone"
+                        text = "SINBHA is controlling your phone"
                         setTextColor(Color.WHITE)
                         textSize = 12f
                         layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f)

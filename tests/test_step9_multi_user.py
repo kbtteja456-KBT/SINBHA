@@ -317,7 +317,7 @@ def run_all_step9_tests():
         print("  ✓ Logout invalidated session; subsequent calls returned 401.")
 
         print("\n" + "=" * 70)
-        print("ALL STEP 9 MULTI-USER & SECURITY TESTS PASSED PERFECTLY! 🌸")
+        print("ALL STEP 9 MULTI-USER & SECURITY TESTS PASSED PERFECTLY!")
         print("=" * 70)
         return True
 

@@ -142,6 +142,8 @@ class TestC2ToolExecution:
             {"device_id": "lap_1", "name": "Dell Laptop", "platform": "windows", "status": "trusted"}
         ]
         mock_relay = AsyncMock()
+        mock_relay.is_device_connected = MagicMock(return_value=True)
+        mock_relay.get_device_supported_tools = MagicMock(return_value=["open_app"])
         mock_relay.wait_for_command_completion.return_value = {"status": "succeeded", "result": {"app": "claude"}}
 
         ctx = {"db": mock_db, "relay_manager": mock_relay}
@@ -158,6 +160,8 @@ class TestC2ToolExecution:
             {"device_id": "lap_1", "name": "Dell Laptop", "platform": "windows", "status": "trusted"}
         ]
         mock_relay = AsyncMock()
+        mock_relay.is_device_connected = MagicMock(return_value=True)
+        mock_relay.get_device_supported_tools = MagicMock(return_value=["open_app"])
         mock_relay.wait_for_command_completion.return_value = {"status": "succeeded", "result": {"app": "claude"}}
 
         ctx = {"db": mock_db, "relay_manager": mock_relay}

@@ -1,9 +1,9 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SINBHA - Waking Up</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>SINBHA - Connection Recovery</title>
   <style>
     :root {
       --bg: #0f1117;
@@ -13,6 +13,8 @@
       --accent: #f472b6;
       --accent-glow: rgba(244, 114, 182, 0.35);
       --border: #2d3748;
+      --warning: #fbbf24;
+      --error: #f87171;
     }
     * {
       box-sizing: border-box;
@@ -27,32 +29,32 @@
       align-items: center;
       justify-content: center;
       min-height: 100vh;
-      overflow: hidden;
+      padding: 16px;
       user-select: none;
     }
     .container {
       background: var(--card-bg);
       border: 1px solid var(--border);
       border-radius: 20px;
-      padding: 40px 32px;
+      padding: 36px 28px;
       max-width: 440px;
-      width: 90%;
+      width: 100%;
       text-align: center;
       box-shadow: 0 20px 40px rgba(0,0,0,0.4);
       position: relative;
     }
     .logo-wrapper {
       position: relative;
-      width: 100px;
-      height: 100px;
-      margin: 0 auto 24px;
+      width: 90px;
+      height: 90px;
+      margin: 0 auto 20px;
       display: flex;
       align-items: center;
       justify-content: center;
     }
     .logo-img {
-      width: 80px;
-      height: 80px;
+      width: 74px;
+      height: 74px;
       border-radius: 50%;
       object-fit: cover;
       box-shadow: 0 0 25px var(--accent-glow);
@@ -69,7 +71,7 @@
     h1 {
       font-size: 22px;
       font-weight: 700;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
       color: #fff;
     }
     h1 span {
@@ -78,8 +80,8 @@
     p {
       color: var(--subtext);
       font-size: 14px;
-      line-height: 1.6;
-      margin-bottom: 24px;
+      line-height: 1.5;
+      margin-bottom: 20px;
     }
     .status-badge {
       display: inline-flex;
@@ -87,23 +89,38 @@
       gap: 8px;
       background: rgba(244, 114, 182, 0.1);
       border: 1px solid rgba(244, 114, 182, 0.25);
-      padding: 6px 14px;
+      padding: 8px 16px;
       border-radius: 20px;
       font-size: 13px;
       color: var(--accent);
       margin-bottom: 20px;
+      max-width: 100%;
+      word-break: break-word;
+    }
+    .status-badge.rate-limit {
+      background: rgba(251, 191, 36, 0.1);
+      border-color: rgba(251, 191, 36, 0.3);
+      color: var(--warning);
+    }
+    .status-badge.error {
+      background: rgba(248, 113, 113, 0.1);
+      border-color: rgba(248, 113, 113, 0.3);
+      color: var(--error);
     }
     .dot {
       width: 8px;
       height: 8px;
       border-radius: 50%;
-      background: var(--accent);
+      background: currentColor;
       animation: blink 1.2s infinite;
+      flex-shrink: 0;
     }
     .retry-btn {
       background: linear-gradient(135deg, #ec4899, #f43f5e);
       color: #fff;
       border: none;
+      min-height: 48px;
+      min-width: 160px;
       padding: 12px 28px;
       border-radius: 12px;
       font-size: 14px;
@@ -111,6 +128,10 @@
       cursor: pointer;
       transition: all 0.2s ease;
       box-shadow: 0 4px 14px rgba(236, 72, 153, 0.3);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
     }
     .retry-btn:hover {
       transform: translateY(-2px);
@@ -119,14 +140,42 @@
     .retry-btn:active {
       transform: translateY(0);
     }
+    .diagnostics-panel {
+      margin-top: 24px;
+      padding: 12px 14px;
+      background: rgba(15, 17, 23, 0.7);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: 11px;
+      color: #64748b;
+      text-align: left;
+      line-height: 1.6;
+    }
+    .diagnostics-panel summary {
+      cursor: pointer;
+      color: var(--subtext);
+      font-weight: 600;
+      margin-bottom: 6px;
+      outline: none;
+    }
+    .diag-item {
+      display: flex;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      padding: 2px 0;
+    }
+    .diag-item span:last-child {
+      color: var(--text);
+      font-family: monospace;
+    }
     .footer-note {
-      margin-top: 20px;
+      margin-top: 18px;
       font-size: 12px;
       color: #64748b;
     }
     @keyframes float {
       0%, 100% { transform: translateY(0); }
-      50% { transform: translateY(-8px); }
+      50% { transform: translateY(-6px); }
     }
     @keyframes ripple {
       0% { transform: scale(0.8); opacity: 1; }
@@ -144,30 +193,73 @@
       <div class="pulse-ring"></div>
       <img src="icon.png" alt="SINBHA Logo" class="logo-img" onerror="this.src='tray_icon.png'">
     </div>
-    <h1>SINBHA is <span>Waking Up</span> 🌸</h1>
-    <p>
+    <h1 id="headline">SINBHA is <span>Waking Up</span></h1>
+    <p id="subtext">
       Your personal AI companion is warming up in the cloud.<br>
       This only takes a few seconds—hang tight!
     </p>
 
-    <div class="status-badge">
+    <div id="badge" class="status-badge">
       <div class="dot"></div>
       <span id="statusText">Connecting in <b id="countdown">5</b>s...</span>
     </div>
 
     <div>
-      <button id="retryBtn" class="retry-btn">Retry Now ⚡</button>
+      <button id="retryBtn" class="retry-btn">Retry Connection ⚡</button>
     </div>
 
+    <details class="diagnostics-panel" id="diagBox">
+      <summary>Connection Diagnostics</summary>
+      <div class="diag-item"><span>Target Service:</span> <span id="diagHost">sinbha-backend.onrender.com</span></div>
+      <div class="diag-item"><span>Status Code:</span> <span id="diagStatus">-</span></div>
+      <div class="diag-item"><span>Detail:</span> <span id="diagDetail">Initializing</span></div>
+      <div class="diag-item"><span>Network Online:</span> <span id="diagOnline">Yes</span></div>
+      <div class="diag-item"><span>Timestamp:</span> <span id="diagTime">-</span></div>
+    </details>
+
     <div class="footer-note">
-      Automatic health check active • Never a blank screen
+      Zero blank screen protection • Automatic recovery active
     </div>
   </div>
 
   <script>
     const BACKEND_URL = 'https://sinbha-backend.onrender.com';
+    const params = new URLSearchParams(window.location.search);
+    const statusCode = params.get('status') || '';
+    const errorDetail = params.get('error') || '';
+
     let secondsLeft = 5;
     let timer = null;
+
+    // Adapt UI messaging and initial countdown based on status code
+    const headline = document.getElementById('headline');
+    const subtext = document.getElementById('subtext');
+    const badge = document.getElementById('badge');
+    const diagStatus = document.getElementById('diagStatus');
+    const diagDetail = document.getElementById('diagDetail');
+    const diagOnline = document.getElementById('diagOnline');
+    const diagTime = document.getElementById('diagTime');
+
+    diagStatus.textContent = statusCode || 'N/A';
+    diagDetail.textContent = errorDetail || 'Server warm-up';
+    diagOnline.textContent = navigator.onLine ? 'Yes' : 'No (Device Offline)';
+    diagTime.textContent = new Date().toLocaleTimeString();
+
+    if (statusCode === '429') {
+      headline.innerHTML = 'Taking a <span>Quick Breather</span>';
+      subtext.innerHTML = 'Too many requests were detected from this device connection.<br>Cooling down to ensure safe, stable access.';
+      badge.className = 'status-badge rate-limit';
+      secondsLeft = 20; // 20s window to let rate limits reset
+    } else if (statusCode.startsWith('5') || statusCode === '502' || statusCode === '503') {
+      headline.innerHTML = 'SINBHA is <span>Waking Up</span>';
+      subtext.innerHTML = 'The server is warming up from standby mode.<br>This usually takes 15–30 seconds—hang tight!';
+      secondsLeft = 8;
+    } else if (statusCode && (statusCode.startsWith('-') || statusCode === '0')) {
+      headline.innerHTML = 'Connection <span>Interrupted</span>';
+      subtext.innerHTML = 'Unable to reach the cloud server.<br>Please check your internet connection.';
+      badge.className = 'status-badge error';
+      secondsLeft = 6;
+    }
 
     async function checkHealth() {
       const statusText = document.getElementById('statusText');
@@ -175,16 +267,24 @@
 
       try {
         const res = await fetch(`${BACKEND_URL}/api/health`, { cache: 'no-store' });
+        diagStatus.textContent = res.status;
+        diagTime.textContent = new Date().toLocaleTimeString();
         if (res.ok) {
-          statusText.innerHTML = 'Connected! Loading app... 🌸';
+          statusText.innerHTML = 'Connected! Loading app...';
           window.location.href = BACKEND_URL;
+          return;
+        } else if (res.status === 429) {
+          statusText.innerHTML = 'Rate limit cooling down...';
+          secondsLeft = 25;
+          startCountdown();
           return;
         }
       } catch (err) {
-        // Still waking up
+        diagDetail.textContent = err.message || 'Network unreachable';
+        diagOnline.textContent = navigator.onLine ? 'Yes' : 'No (Device Offline)';
       }
 
-      secondsLeft = 5;
+      secondsLeft = statusCode === '429' ? 20 : 8;
       startCountdown();
     }
 
@@ -210,7 +310,16 @@
       checkHealth();
     });
 
-    // Start initial countdown on load
+    window.addEventListener('online', () => {
+      diagOnline.textContent = 'Yes';
+      clearInterval(timer);
+      checkHealth();
+    });
+
+    window.addEventListener('offline', () => {
+      diagOnline.textContent = 'No (Device Offline)';
+    });
+
     startCountdown();
   </script>
 </body>

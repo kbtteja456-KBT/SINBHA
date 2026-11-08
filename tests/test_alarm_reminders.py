@@ -151,7 +151,7 @@ class TestAlarmReminders(unittest.TestCase):
                 "success": True,
                 "message": {
                     "role": "assistant",
-                    "content": "I'll set that reminder for you 🌸",
+                    "content": "I'll set that reminder for you",
                     "tool_calls": [{
                         "id": "tc_test_rem",
                         "type": "function",

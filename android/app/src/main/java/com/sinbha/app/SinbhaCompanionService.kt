@@ -210,7 +210,7 @@ class SinbhaCompanionService : Service() {
 
         return NotificationCompat.Builder(this, PERSISTENT_CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("SINBHA Companion Connected 🌸")
+            .setContentTitle("SINBHA Companion Connected")
             .setContentText("Listening for phone & laptop commands in background")
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
@@ -457,8 +457,15 @@ class SinbhaCompanionService : Service() {
                     prefs.lastError = e.message
                 }
 
-                // If WebSocket is active, poll less aggressively (every 5s); if disconnected, poll every 2s
-                val pollDelay = if (prefs.wsConnected) 5000L else 2000L
+                // Adaptive polling with rate-limit and WebSocket awareness:
+                // If rate-limited (429), back off for 30s.
+                // If WebSocket is active, poll only every 30s as safety heartbeat.
+                // If disconnected, poll every 10s for battery and network courtesy.
+                val pollDelay = when {
+                    prefs.lastHttpStatus == 429 -> 30000L
+                    prefs.wsConnected -> 30000L
+                    else -> 10000L
+                }
                 delay(pollDelay)
             }
         }

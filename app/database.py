@@ -188,6 +188,33 @@ def init_db():
                         conn.exec_driver_sql(f"ALTER TABLE devices ADD COLUMN {c_name} {c_type}")
                         conn.commit()
 
+                # Check facts table columns (Pillar 3 & Evolution)
+                res_facts = conn.exec_driver_sql("PRAGMA table_info(facts)").fetchall()
+                fact_cols = [r[1] for r in res_facts]
+                new_fact_cols = [
+                    ("fact_type", "VARCHAR(32) DEFAULT 'stable_fact'"),
+                    ("source", "VARCHAR(64) DEFAULT 'user_explicit'"),
+                    ("confidence", "INTEGER DEFAULT 100"),
+                    ("is_sensitive", "BOOLEAN DEFAULT 0"),
+                    ("last_confirmed_at", "DATETIME"),
+                    ("expires_at", "DATETIME"),
+                ]
+                for c_name, c_type in new_fact_cols:
+                    if c_name not in fact_cols:
+                        conn.exec_driver_sql(f"ALTER TABLE facts ADD COLUMN {c_name} {c_type}")
+                        conn.commit()
+
+                # Check proactive_events table columns
+                res_pro = conn.exec_driver_sql("PRAGMA table_info(proactive_events)").fetchall()
+                pro_cols = [r[1] for r in res_pro]
+                if "id" in pro_cols:
+                    if "delivered_at" not in pro_cols:
+                        conn.exec_driver_sql("ALTER TABLE proactive_events ADD COLUMN delivered_at DATETIME")
+                        conn.commit()
+                    if "completed_at" not in pro_cols:
+                        conn.exec_driver_sql("ALTER TABLE proactive_events ADD COLUMN completed_at DATETIME")
+                        conn.commit()
+
             elif engine.dialect.name == "postgresql":
                 conn.exec_driver_sql("ALTER TABLE device_tokens ADD COLUMN IF NOT EXISTS device_id VARCHAR(64)")
                 conn.exec_driver_sql("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE")
@@ -207,9 +234,67 @@ def init_db():
                 conn.exec_driver_sql("ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_http_status INTEGER")
                 conn.exec_driver_sql("ALTER TABLE devices ADD COLUMN IF NOT EXISTS first_device_token VARCHAR(128)")
                 conn.exec_driver_sql("ALTER TABLE devices ADD COLUMN IF NOT EXISTS first_device_token_expires_at TIMESTAMP WITH TIME ZONE")
+
+                # Check facts table columns for PostgreSQL
+                conn.exec_driver_sql("ALTER TABLE facts ADD COLUMN IF NOT EXISTS fact_type VARCHAR(32) DEFAULT 'stable_fact'")
+                conn.exec_driver_sql("ALTER TABLE facts ADD COLUMN IF NOT EXISTS source VARCHAR(64) DEFAULT 'user_explicit'")
+                conn.exec_driver_sql("ALTER TABLE facts ADD COLUMN IF NOT EXISTS confidence INTEGER DEFAULT 100")
+                conn.exec_driver_sql("ALTER TABLE facts ADD COLUMN IF NOT EXISTS is_sensitive BOOLEAN DEFAULT FALSE")
+                conn.exec_driver_sql("ALTER TABLE facts ADD COLUMN IF NOT EXISTS last_confirmed_at TIMESTAMP WITH TIME ZONE")
+                conn.exec_driver_sql("ALTER TABLE facts ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE")
+
+                conn.exec_driver_sql("ALTER TABLE proactive_events ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP WITH TIME ZONE")
+                conn.exec_driver_sql("ALTER TABLE proactive_events ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP WITH TIME ZONE")
                 conn.commit()
     except Exception:
         pass
+
+
+def migrate_facts_schema(target_engine=None) -> Dict[str, Any]:
+    """
+    Safely upgrades existing facts table on SQLite or PostgreSQL databases.
+    Preserves all existing user facts and retrofits:
+    - fact_type (VARCHAR(32), default 'stable_fact')
+    - source (VARCHAR(64), default 'user_explicit')
+    - confidence (INTEGER, default 100)
+    - is_sensitive (BOOLEAN, default 0 / False)
+    - last_confirmed_at (DATETIME / TIMESTAMP WITH TIME ZONE)
+    - expires_at (DATETIME / TIMESTAMP WITH TIME ZONE)
+    """
+    eng = target_engine or engine
+    added_cols = []
+    with eng.connect() as conn:
+        dialect = eng.dialect.name
+        if dialect == "sqlite":
+            res_facts = conn.exec_driver_sql("PRAGMA table_info(facts)").fetchall()
+            fact_cols = [r[1] for r in res_facts]
+            new_fact_cols = [
+                ("fact_type", "VARCHAR(32) DEFAULT 'stable_fact'"),
+                ("source", "VARCHAR(64) DEFAULT 'user_explicit'"),
+                ("confidence", "INTEGER DEFAULT 100"),
+                ("is_sensitive", "BOOLEAN DEFAULT 0"),
+                ("last_confirmed_at", "DATETIME"),
+                ("expires_at", "DATETIME"),
+            ]
+            for c_name, c_type in new_fact_cols:
+                if c_name not in fact_cols:
+                    conn.exec_driver_sql(f"ALTER TABLE facts ADD COLUMN {c_name} {c_type}")
+                    added_cols.append(c_name)
+            conn.commit()
+        elif dialect == "postgresql":
+            pg_cols = [
+                ("fact_type", "VARCHAR(32) DEFAULT 'stable_fact'"),
+                ("source", "VARCHAR(64) DEFAULT 'user_explicit'"),
+                ("confidence", "INTEGER DEFAULT 100"),
+                ("is_sensitive", "BOOLEAN DEFAULT FALSE"),
+                ("last_confirmed_at", "TIMESTAMP WITH TIME ZONE"),
+                ("expires_at", "TIMESTAMP WITH TIME ZONE"),
+            ]
+            for c_name, c_type in pg_cols:
+                conn.exec_driver_sql(f"ALTER TABLE facts ADD COLUMN IF NOT EXISTS {c_name} {c_type}")
+                added_cols.append(c_name)
+            conn.commit()
+    return {"dialect": eng.dialect.name, "added_columns": added_cols}
 
 # ----------------- User Authentication & Account Operations (Step 9 & 10) -----------------
 
@@ -1108,23 +1193,64 @@ def get_all_messages(user_id: int):
 
 # ----------------- Facts & Memory Operations (Per-User, Encrypted at Rest) -----------------
 
-def get_all_facts(user_id: int):
-    """Returns all persistent facts for this user with decrypted text."""
+def is_memory_enabled(user_id: int) -> bool:
+    """Checks whether personal memory persistence is enabled for this user."""
+    setting = get_setting(user_id, "memory_enabled")
+    if setting is None:
+        return True
+    return str(setting).lower() != "false"
+
+def toggle_user_memory(user_id: int, enabled: bool) -> bool:
+    """Enables or disables persistent memory storage for this user."""
+    val = "true" if enabled else "false"
+    set_setting(user_id, "memory_enabled", val)
+    log_audit(user_id, "MEMORY_TOGGLED", f"Memory enabled: {enabled}")
+    return True
+
+def get_all_facts(user_id: int, include_expired: bool = False, fact_type: Optional[str] = None):
+    """Returns persistent facts for this user with decrypted text and provenance metadata."""
     with get_db_session() as session:
-        query = select(Fact).where(Fact.user_id == user_id).order_by(Fact.id.desc())
+        query = select(Fact).where(Fact.user_id == user_id)
+        if fact_type:
+            query = query.where(Fact.fact_type == fact_type)
+        query = query.order_by(Fact.id.desc())
         facts = session.scalars(query).all()
-        return [
-            {
+        now = utc_now()
+        res = []
+        for f in facts:
+            exp = f.expires_at
+            if exp and not include_expired:
+                if exp.tzinfo is None:
+                    exp = exp.replace(tzinfo=timezone.utc)
+                if now > exp:
+                    continue
+            res.append({
                 "id": f.id,
                 "fact": decrypt_text(f.fact),
-                "category": f.category,
-                "created_at": f.created_at.isoformat() if f.created_at else ""
-            }
-            for f in facts
-        ]
+                "category": f.category or "general",
+                "fact_type": getattr(f, "fact_type", "stable_fact") or "stable_fact",
+                "source": getattr(f, "source", "user_explicit") or "user_explicit",
+                "confidence": getattr(f, "confidence", 100) if getattr(f, "confidence", 100) is not None else 100,
+                "is_sensitive": bool(getattr(f, "is_sensitive", False)),
+                "created_at": f.created_at.isoformat() if f.created_at else "",
+                "last_confirmed_at": f.last_confirmed_at.isoformat() if getattr(f, "last_confirmed_at", None) else (f.created_at.isoformat() if f.created_at else ""),
+                "expires_at": f.expires_at.isoformat() if f.expires_at else None,
+            })
+        return res
 
-def add_fact(user_id: int, fact_text: str, category: str = "general") -> int:
-    """Adds a new fact to continuous memory, encrypted at rest."""
+def add_fact(
+    user_id: int,
+    fact_text: str,
+    category: str = "general",
+    fact_type: str = "stable_fact",
+    source: str = "user_explicit",
+    confidence: int = 100,
+    is_sensitive: bool = False,
+    expires_at: Optional[datetime] = None
+) -> int:
+    """Adds a new fact to continuous memory, encrypted at rest with provenance metadata."""
+    if not is_memory_enabled(user_id):
+        return -1
     clean = fact_text.strip()
     if not clean:
         return -1
@@ -1133,18 +1259,41 @@ def add_fact(user_id: int, fact_text: str, category: str = "general") -> int:
         user_facts = session.scalars(select(Fact).where(Fact.user_id == user_id)).all()
         for uf in user_facts:
             if decrypt_text(uf.fact).strip().lower() == clean.lower():
+                uf.last_confirmed_at = utc_now()
+                uf.confidence = confidence
                 return uf.id
 
         encrypted = encrypt_text(clean)
-        fact = Fact(user_id=user_id, fact=encrypted, category=category, created_at=utc_now())
+        now = utc_now()
+        fact = Fact(
+            user_id=user_id,
+            fact=encrypted,
+            category=category or "general",
+            fact_type=fact_type or "stable_fact",
+            source=source or "user_explicit",
+            confidence=confidence,
+            is_sensitive=is_sensitive,
+            created_at=now,
+            last_confirmed_at=now,
+            expires_at=expires_at
+        )
         session.add(fact)
         session.flush()
         # Requirement 6: Never log raw fact text in audit log
-        log_audit(user_id, "FACT_SAVED", f"Recorded new memory fact #{fact.id}", session=session)
+        log_audit(user_id, "FACT_SAVED", f"Recorded new memory fact #{fact.id} (type={fact_type})", session=session)
         return fact.id
 
-def update_fact(user_id: int, fact_id: int, new_text: str) -> bool:
-    """Updates an existing fact with encrypted text."""
+def update_fact(
+    user_id: int,
+    fact_id: int,
+    new_text: str,
+    category: Optional[str] = None,
+    fact_type: Optional[str] = None,
+    confidence: Optional[int] = None,
+    is_sensitive: Optional[bool] = None,
+    expires_at: Optional[datetime] = None
+) -> bool:
+    """Updates an existing fact with encrypted text and updates last_confirmed_at."""
     clean = new_text.strip()
     if not clean:
         return False
@@ -1155,6 +1304,17 @@ def update_fact(user_id: int, fact_id: int, new_text: str) -> bool:
         if not fact:
             return False
         fact.fact = encrypt_text(clean)
+        fact.last_confirmed_at = utc_now()
+        if category is not None:
+            fact.category = category
+        if fact_type is not None:
+            fact.fact_type = fact_type
+        if confidence is not None:
+            fact.confidence = confidence
+        if is_sensitive is not None:
+            fact.is_sensitive = is_sensitive
+        if expires_at is not None:
+            fact.expires_at = expires_at
         log_audit(user_id, "FACT_UPDATED", f"Modified memory fact #{fact_id}", session=session)
         return True
 
@@ -1170,6 +1330,28 @@ def delete_fact(user_id: int, fact_id: int) -> bool:
         log_audit(user_id, "FACT_DELETED", f"Deleted memory fact #{fact_id}", session=session)
         return True
 
+def export_user_memory(user_id: int) -> dict:
+    """Exports user's structured memory and personal profile as clean JSON."""
+    facts = get_all_facts(user_id, include_expired=True)
+    with get_db_session() as session:
+        user = session.scalar(select(User).where(User.id == user_id))
+        return {
+            "user_id": user_id,
+            "email": user.email if user else "",
+            "exported_at": utc_now().isoformat(),
+            "facts_count": len(facts),
+            "memory_enabled": is_memory_enabled(user_id),
+            "facts": facts,
+        }
+
+def wipe_user_memory(user_id: int) -> bool:
+    """Completely wipes all personal memory facts and pending proposals for this user."""
+    with get_db_session() as session:
+        session.execute(delete(Fact).where(Fact.user_id == user_id))
+        session.execute(delete(PendingAction).where(PendingAction.user_id == user_id))
+        log_audit(user_id, "MEMORY_WIPED", "User triggered complete memory wipe", session=session)
+        return True
+
 def update_or_add_fact(user_id: int, fact_text: str, category: str = "general") -> dict:
     """Intelligently updates an existing related fact or inserts a new encrypted one."""
     clean = fact_text.strip()
@@ -1183,6 +1365,7 @@ def update_or_add_fact(user_id: int, fact_text: str, category: str = "general") 
         for uf in user_facts:
             decrypted = decrypt_text(uf.fact)
             if decrypted.strip().lower() == clean.lower():
+                uf.last_confirmed_at = utc_now()
                 return {"action": "none", "fact_id": uf.id, "fact": decrypted}
 
         # Check for key phrases like "name is", "lives in"
@@ -1201,11 +1384,23 @@ def update_or_add_fact(user_id: int, fact_text: str, category: str = "general") 
                     if key in decrypted.lower():
                         old_text = decrypted
                         uf.fact = encrypt_text(clean)
+                        uf.last_confirmed_at = utc_now()
                         log_audit(user_id, "FACT_UPDATED", f"Updated attribute #{uf.id}", session=session)
                         return {"action": "updated", "fact_id": uf.id, "fact": clean, "old_fact": old_text}
 
         # Add as new
-        fact = Fact(user_id=user_id, fact=encrypt_text(clean), category=category, created_at=utc_now())
+        now = utc_now()
+        fact = Fact(
+            user_id=user_id,
+            fact=encrypt_text(clean),
+            category=category,
+            fact_type="stable_fact",
+            source="user_explicit",
+            confidence=100,
+            is_sensitive=False,
+            created_at=now,
+            last_confirmed_at=now
+        )
         session.add(fact)
         session.flush()
         log_audit(user_id, "FACT_SAVED", f"Recorded new memory fact #{fact.id}", session=session)
@@ -1417,7 +1612,28 @@ def create_task(
         session.flush()
         task_id = task.id
         log_audit(user_id, "TASK_CREATED", f"Task #{task_id} created: '{clean_title}' (Due: {due_date} {due_time or ''})", session=session)
-        return task_id
+
+    # Schedule proactive reminder if future due timestamp is set
+    if due_datetime_utc:
+        try:
+            from app.proactive_scheduler import schedule_proactive_event
+            now_dt = utc_now()
+            target_due = due_datetime_utc if due_datetime_utc.tzinfo else due_datetime_utc.replace(tzinfo=timezone.utc)
+            if target_due > now_dt:
+                # Alert ahead of due time if > 2 hours away, else alert at due time
+                lead = timedelta(hours=1) if target_due - now_dt > timedelta(hours=2) else timedelta(minutes=15)
+                alert_time = target_due - lead if target_due - lead > now_dt else target_due
+                schedule_proactive_event(
+                    user_id=user_id,
+                    event_type="deadline_alert",
+                    title=f"Task reminder: '{clean_title}' is due soon",
+                    scheduled_for_utc=alert_time,
+                    payload={"task_id": task_id, "task_title": clean_title, "due_datetime_utc": target_due.isoformat()}
+                )
+        except Exception:
+            pass
+
+    return task_id
 
 def task_sort_key(t):
     """Helper to sort tasks: Overdue first, then by date, then no-date."""
@@ -2251,7 +2467,7 @@ def approve_device_pairing(user_id: int, code: str, approver_device_id: Optional
         )
         return {
             "success": True,
-            "message": f"Device '{matched_target.name}' is now paired and trusted! 🌸",
+            "message": f"Device '{matched_target.name}' is now paired and trusted!",
             "device": _device_to_dict(matched_target)
         }
 

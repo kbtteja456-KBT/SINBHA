@@ -176,7 +176,7 @@ object AlarmScheduler {
                         context,
                         item.getInt("task_id"),
                         item.optString("task_title", "Reminder"),
-                        item.optString("label", "Due now 🌸"),
+                        item.optString("label", "Due now"),
                         item.optString("reminder_id", null),
                         triggerMillis,
                         item.optString("sound_mode", prefs.reminderSoundMode),

@@ -183,7 +183,7 @@ class TestC1AgentLoop:
                 "success": True,
                 "message": {
                     "role": "assistant",
-                    "content": "I've noted that down for you! Call dentist tomorrow at 10am 🌸",
+                    "content": "I've noted that down for you! Call dentist tomorrow at 10am",
                 },
                 "finish_reason": "stop",
             }

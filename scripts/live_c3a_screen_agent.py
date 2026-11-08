@@ -54,7 +54,7 @@ async def run_scenario_1_notepad():
     print(f"   Screen captured: {'SUCCESS' if ok else 'FAILED'} (Base64 size: {len(b64) if b64 else 0} bytes)")
 
     print("👉 Action 3: Native typing: 'Hello from SINBHA Screen Agent C3a!'")
-    test_note = "Hello from SINBHA Screen Agent C3a! 🌸\nTime: " + time.strftime("%Y-%m-%d %H:%M:%S")
+    test_note = "Hello from SINBHA Screen Agent C3a!\nTime: " + time.strftime("%Y-%m-%d %H:%M:%S")
     safe, reason = validate_safe_typing(test_note)
     assert safe, f"Validation failed: {reason}"
     execute_native_action({"action": "type", "text": test_note})
@@ -105,13 +105,13 @@ async def run_scenario_3_slack_gated():
 
 async def main():
     print("=" * 65)
-    print("🌸 SINBHA C3a Windows Screen Agent Live Verification Script")
+    print("SINBHA C3a Windows Screen Agent Live Verification Script")
     print("=" * 65)
     await run_scenario_1_notepad()
     await run_scenario_2_claude()
     await run_scenario_3_slack_gated()
     print("\n" + "=" * 65)
-    print("🌸 ALL 3 SCENARIOS VERIFIED CLEANLY!")
+    print("ALL 3 SCENARIOS VERIFIED CLEANLY!")
     print("=" * 65)
 
 

@@ -542,8 +542,11 @@ html, body {
   cursor: pointer;
   padding: 6px 10px;
   border-radius: 8px;
-  min-width: 40px;
-  min-height: 40px;
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  min-height: 48px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1137,8 +1140,11 @@ html, body {
   cursor: pointer;
   padding: 6px 10px;
   border-radius: 8px;
-  min-width: 40px;
-  min-height: 40px;
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  min-height: 48px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3180,8 +3186,10 @@ html, body {
 
 .auth-checkbox-label {
   display: flex;
-  align-items: flex-start;
-  gap: 9px;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 4px 0;
   font-size: 0.82rem;
   color: #4b3641;
   cursor: pointer;
@@ -3191,9 +3199,11 @@ html, body {
 
 .auth-checkbox-label input[type="checkbox"] {
   accent-color: #db2777;
-  width: 17px;
-  height: 17px;
-  margin-top: 1px;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  min-height: 22px;
+  margin: 0;
   flex-shrink: 0;
   cursor: pointer;
 }
@@ -3201,13 +3211,19 @@ html, body {
 .text-link-btn {
   background: none;
   border: none;
-  padding: 0;
+  padding: 4px 6px;
+  min-height: 48px;
+  min-width: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: #db2777;
   font-weight: 700;
   text-decoration: underline;
   cursor: pointer;
   font-size: inherit;
   font-family: inherit;
+  touch-action: manipulation;
 }
 
 .text-link-btn:hover {
@@ -3228,6 +3244,7 @@ html, body {
 /* Submit Button */
 .auth-submit-btn {
   width: 100%;
+  min-height: 48px;
   padding: 12px 18px;
   margin-top: 6px;
   border: none;
@@ -3629,6 +3646,124 @@ html, body {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+/* ========================================================
+   MOBILE THUMB-FRIENDLY BOTTOM NAVIGATION (Phase 6)
+   ======================================================== */
+.mobile-bottom-nav {
+  display: none;
+}
+
+@media (max-width: 600px) {
+  .mobile-bottom-nav {
+    display: flex;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 60px;
+    background: rgba(255, 255, 255, 0.96);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-top: 1.5px solid #fce7f3;
+    padding-bottom: max(6px, env(safe-area-inset-bottom, 6px));
+    z-index: 100;
+    justify-content: space-around;
+    align-items: center;
+    box-shadow: 0 -3px 12px rgba(244, 114, 182, 0.08);
+  }
+
+  .bottom-nav-item {
+    min-width: 48px;
+    min-height: 48px;
+    padding: 6px 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    color: #6b7280;
+    font-size: 0.72rem;
+    font-weight: 600;
+    gap: 3px;
+    transition: all 0.15s ease;
+    border-radius: 12px;
+  }
+
+  .bottom-nav-item .nav-icon {
+    font-size: 1.25rem;
+    line-height: 1;
+  }
+
+  .bottom-nav-item.active,
+  .bottom-nav-item:hover {
+    color: #e11d48;
+    background: #fff1f2;
+  }
+
+  /* Ensure chat input sits above the bottom nav on mobile */
+  .chat-footer {
+    padding-bottom: max(68px, calc(env(safe-area-inset-bottom, 14px) + 64px));
+  }
+
+  /* Touch targets >= 48px for all mobile interactive controls */
+  .send-btn {
+    min-width: 48px !important;
+    min-height: 48px !important;
+  }
+
+  .header-btn {
+    min-height: 48px;
+    min-width: 48px;
+    padding: 8px 12px;
+  }
+
+  .auth-tab-btn {
+    min-height: 48px;
+  }
+
+  .confirm-btn-primary,
+  .confirm-btn-secondary,
+  .purge-trigger-btn {
+    min-height: 48px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+/* User Memory Fact List Item */
+.user-memory-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 8px 10px;
+  background: #ffffff;
+  border: 1px solid #f3f4f6;
+  border-radius: 6px;
+  margin-bottom: 6px;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  gap: 8px;
+}
+
+.user-memory-item .memory-meta {
+  font-size: 0.7rem;
+  color: #9ca3af;
+  margin-top: 2px;
+}
+
+.user-memory-item .memory-badge {
+  font-size: 0.68rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #eff6ff;
+  color: #1e40af;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 

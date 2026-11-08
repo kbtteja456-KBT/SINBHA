@@ -83,13 +83,17 @@ def validate_production_config():
         errors.append("AI API Key is missing. Please configure GROQ_API_KEY or OPENROUTER_API_KEY.")
 
     # 2. Database URL
-    db_url = os.getenv("DATABASE_URL", "").strip().lower()
+    db_url = os.getenv("DATABASE_URL", "").strip()
     if not db_url:
         errors.append("DATABASE_URL is missing in production.")
-    elif db_url.startswith("sqlite"):
+    elif db_url.lower().startswith("sqlite"):
         errors.append("DATABASE_URL cannot be SQLite in production. PostgreSQL is required.")
-    elif "sslmode=" not in db_url:
-        errors.append("DATABASE_URL must require SSL (missing sslmode=require parameter).")
+    else:
+        # Automatically enforce and append ?sslmode=require if not explicitly present
+        if "sslmode=" not in db_url.lower():
+            sep = "&" if "?" in db_url else "?"
+            db_url = f"{db_url}{sep}sslmode=require"
+            os.environ["DATABASE_URL"] = db_url
 
     # 3. Data Encryption Key
     enc_key = os.getenv("DATA_ENCRYPTION_KEY", "").strip()
@@ -147,9 +151,15 @@ def get_client_ip(request: Request) -> str:
 def check_endpoint_rate_limits(request: Request, user_id: int = None):
     """
     Applies endpoint-specific rate limits.
+    Exempts static assets, health monitoring, and version checks to prevent false lockouts.
     """
-    ip = get_client_ip(request)
     path = request.url.path
+
+    # Completely exempt read-only health checks, version gates, and static assets from rate limits
+    if path in ("/api/health", "/api/app/version-check", "/") or path.startswith("/static/"):
+        return
+
+    ip = get_client_ip(request)
 
     # Login rate limit: 10 requests / 5 minutes per IP
     if path == "/api/auth/login" and request.method == "POST":
@@ -194,10 +204,19 @@ def check_endpoint_rate_limits(request: Request, user_id: int = None):
         if not allowed:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Whoa, you're typing really fast! Let's pause for a breath and try again in a few seconds. 🌸"
+                detail="Whoa, you're typing really fast! Let's pause for a breath and try again in a few seconds."
             )
 
-    # General endpoints: 120 requests / minute per IP
+    # Authenticated user requests (including background device sync): 240 requests / minute
+    elif user_id:
+        allowed, retry_after = limiter.check(f"general_user_{user_id}", max_requests=240, window_seconds=60)
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Rate limit exceeded. Please wait {retry_after} seconds."
+            )
+
+    # General unauthenticated IP requests: 120 requests / minute per IP
     else:
         allowed, retry_after = limiter.check(f"general_ip_{ip}", max_requests=120, window_seconds=60)
         if not allowed:
@@ -232,7 +251,7 @@ def check_ai_usage_caps(user_today_count: int, global_today_count: int):
         return (
             False,
             "SINBHA is taking a short rest right now to cool down its circuits! "
-            "Please check back in a little while, or manage your tasks normally. 🌸"
+            "Please check back in a little while, or manage your tasks normally."
         )
 
     # 2. Per-User Daily Limit
@@ -240,7 +259,7 @@ def check_ai_usage_caps(user_today_count: int, global_today_count: int):
         return (
             False,
             "I want to make sure you get some restful time today! We've had a wonderful "
-            "conversation today, so let's pause and continue tomorrow. You can still check your tasks and notes! 🌸"
+            "conversation today, so let's pause and continue tomorrow. You can still check your tasks and notes!"
         )
 
     return True, ""

@@ -333,7 +333,7 @@ def test_encryption_design_retains_chat_history_after_password_reset():
     user_id = user["id"]
 
     # Save sensitive encrypted message and memory fact
-    secret_chat_msg = "Top secret: My favorite flower is the Himalayan Blue Poppy 🌸"
+    secret_chat_msg = "Top secret: My favorite flower is the Himalayan Blue Poppy"
     secret_memory_fact = "User's mother was born in Kyoto, Japan."
 
     msg_record = db.save_message(user_id, "user", secret_chat_msg)

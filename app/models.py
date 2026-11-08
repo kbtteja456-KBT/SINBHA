@@ -58,6 +58,7 @@ class User(Base):
     device_tokens = relationship("DeviceToken", back_populates="user", cascade="all, delete-orphan")
     devices = relationship("Device", back_populates="user", cascade="all, delete-orphan")
     device_commands = relationship("DeviceCommand", back_populates="user", cascade="all, delete-orphan")
+    proactive_events = relationship("ProactiveEvent", back_populates="user", cascade="all, delete-orphan")
 
 class Session(Base):
     __tablename__ = "sessions"
@@ -164,6 +165,14 @@ class Fact(Base):
     fact = Column(Text, nullable=False)
     category = Column(String(64), default="general", nullable=False)
     created_at = Column(DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False)
+
+    # Pillar 3: Privacy-First Enhanced Personal Memory & Provenance
+    fact_type = Column(String(32), default="stable_fact", nullable=False)  # stable_fact, current_goal, temporary_context, preference
+    source = Column(String(64), default="user_explicit", nullable=False)   # user_explicit, user_stated_emotion, profile, calendar, system
+    confidence = Column(Integer, default=100, nullable=False)              # 0 to 100 percentage
+    is_sensitive = Column(Boolean, default=False, nullable=False)
+    last_confirmed_at = Column(DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
 
     user = relationship("User", back_populates="facts")
 
@@ -292,4 +301,31 @@ class SearchUsageLog(Base):
     __table_args__ = (
         Index("ix_search_usage_user_time", "user_id", "timestamp"),
     )
+
+class ProactiveEvent(Base):
+    """
+    Pillar 2: Durable Proactive Scheduler Event.
+    Persisted in database to survive server and companion restarts.
+    """
+    __tablename__ = "proactive_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_type = Column(String(64), nullable=False, index=True)  # study_checkin, revision_reminder, next_step, deadline_alert
+    title = Column(String(512), nullable=False)
+    payload_json = Column(Text, nullable=True)
+    scheduled_for_utc = Column(DateTime(timezone=True), nullable=False, index=True)
+    status = Column(String(32), default="pending", nullable=False, index=True)  # pending, fired, delivered, snoozed, dismissed, deferred_quiet_hours
+    snoozed_until = Column(DateTime(timezone=True), nullable=True)
+    dismissed_until = Column(DateTime(timezone=True), nullable=True)
+    delivered_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False)
+
+    user = relationship("User", back_populates="proactive_events")
+
+    __table_args__ = (
+        Index("ix_proactive_user_sched_status", "user_id", "scheduled_for_utc", "status"),
+    )
+
 

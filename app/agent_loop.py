@@ -16,6 +16,7 @@ Security invariants:
 - Web content treated as untrusted; web-sourced tool calls blocked
 """
 
+import os
 import json
 import time
 import re
@@ -182,8 +183,9 @@ def _build_agent_system_prompt(
         "- When the user's request maps to a tool, call the appropriate tool with the right arguments.\n"
         "- You can call multiple tools in a single turn if needed.\n"
         "- For any reminder, alarm, or task request (e.g. 'remind me to...', 'remind me in 20 minutes', 'remind me with a song/voice', 'set an alarm', 'add a task'): you MUST ALWAYS call the create_task tool with a clear title and due_date in natural language (e.g. 'in 20 minutes', 'tomorrow at 8am', 'Friday at 5pm'). NEVER just reply in text that you will remind them without calling the create_task tool!\n"
-        "- OPENING APPS ON PHONE OR LAPTOP:\n"
-        "  * When the user asks to open, launch, or switch to an app on their phone or computer (e.g. 'open files in my phone', 'open snapchat', 'open instagram', 'open whatsapp', 'open settings', 'open youtube', 'open camera'), you MUST ALWAYS call the open_app tool with the app name and target_device='phone' (or 'laptop')!\n"
+        "- OPENING APPS & SETTINGS ON PHONE OR LAPTOP:\n"
+        "  * When the user asks to open, launch, or switch to an app or settings on their phone or computer (e.g. 'open settings in my laptop', 'open youtube in my phone', 'open files', 'open whatsapp'), you MUST ALWAYS call the open_app or open_settings tool with target_device='phone' or 'laptop'!\n"
+        "  * NEVER claim or hallucinate that Settings or an app is already open without having executed the tool and received a verified confirmation receipt.\n"
         "  * NEVER say you cannot launch apps, file managers, or settings on their phone or ask them to open it manually. You HAVE the open_app tool specifically to launch apps directly on their device!\n"
         "- For remembering facts: call remember_fact when the user shares personal info worth saving.\n"
         "- ALWAYS include a warm, friendly text response alongside tool calls — never respond with ONLY tool calls and no text.\n"
@@ -207,7 +209,7 @@ def _build_agent_system_prompt(
         facts_list_text = "\n".join([f"- {f['fact']}" for f in remembered_facts])
         system_content += f"\n\nSAVED FACTS ABOUT YOUR FRIEND (MEMORIES):\n{facts_list_text}\n(Bring these up naturally when helpful. Never recite as a robotic checklist.)"
     else:
-        system_content += "\n\nSAVED FACTS ABOUT YOUR FRIEND (MEMORIES):\nNone saved yet. If they ask what you remember, let them know your memory is a clean slate right now 🌸"
+        system_content += "\n\nSAVED FACTS ABOUT YOUR FRIEND (MEMORIES):\nNone saved yet. If they ask what you remember, let them know your memory is a clean slate right now"
 
     if user_devices is not None:
         active_devices = [d for d in user_devices if d.get("status") not in ("revoked", "removed")]
@@ -258,6 +260,18 @@ async def _call_llm_with_tools(
     - Classifies failures: rate_limit, timeout, malformed_tool_call, empty_answer, invalid_api_key, insufficient_credits, server_error.
     - Privacy-safe logging without private text.
     """
+    if os.getenv("SINBHA_TEST_MODE") == "1" or os.getenv("MOCK_LLM_PROVIDERS") == "1":
+        last_msg = messages[-1].get("content", "") if messages else ""
+        return {
+            "success": True,
+            "message": {
+                "role": "assistant",
+                "content": f"Mock assistant response to: '{str(last_msg)[:60]}'. Safe test mode active.",
+                "tool_calls": None,
+            },
+            "finish_reason": "stop",
+        }
+
     provider = creds.get("provider", "unknown").lower()
     model = creds.get("model", "unknown")
 
@@ -381,6 +395,8 @@ async def _call_llm_with_tools(
                     await asyncio.sleep(1.5)
                     continue
                 telemetry.mark_lockout(f"{provider}:{model}", 180.0, "rate_limit")
+                if provider == "groq":
+                    telemetry.mark_lockout("groq", 60.0, "rate_limit")
                 return {"success": False, "error": "rate_limit", "status": 429, "provider": provider, "model": model, "daily_limit": False}
 
             elif response.status_code == 401:
@@ -462,39 +478,50 @@ class AgentResult:
 
 # --------------- Main Agent Loop ---------------
 
-def _get_fallback_candidates(creds: dict) -> List[dict]:
+def _get_fallback_candidates(creds: dict, error_type: Optional[str] = None) -> List[dict]:
     """
     Returns ordered list of fallback credentials to attempt if primary call fails.
-    Prioritizes models with separate quotas on the verified active provider before alternate providers.
+    If the failure is a rate limit, prioritizes alternate providers (separate quotas)
+    ahead of secondary models on the same provider.
     Uses build_ordered_provider_chain to respect lockouts, health, and priorities.
     """
     candidates = []
     provider = creds.get("provider", "").lower()
     model = creds.get("model", "")
+    full_chain = build_ordered_provider_chain(active_pref="auto")
 
-    # 1. Secondary models on current provider with separate quotas
-    if provider == "groq":
+    # If rate limit or invalid key/credit error, prioritize alternate providers from full_chain FIRST
+    if error_type in ("rate_limit", "insufficient_credits", "invalid_api_key"):
+        for c in full_chain:
+            if c.get("provider") != provider and not telemetry.is_locked_out(c.get("provider")):
+                if not any(cand.get("provider") == c.get("provider") and cand.get("model") == c.get("model") for cand in candidates):
+                    candidates.append(c)
+
+    # Secondary models on current provider (if current provider is not locked out)
+    if provider == "groq" and not telemetry.is_locked_out("groq"):
         for sec_model in ("openai/gpt-oss-20b", "openai/gpt-oss-120b"):
             if sec_model != model and not telemetry.is_locked_out(f"groq:{sec_model}"):
                 fb = dict(creds)
                 fb["model"] = sec_model
                 fb["reasoning_effort"] = "low"
-                candidates.append(fb)
-    elif provider == "gemini":
-        for sec_model in ("gemini-3-flash-preview", "gemini-2.5-flash"):
+                if not any(cand.get("provider") == "groq" and cand.get("model") == sec_model for cand in candidates):
+                    candidates.append(fb)
+    elif provider == "gemini" and not telemetry.is_locked_out("gemini"):
+        for sec_model in ("gemini-3-flash-preview",):
             if sec_model != model and not telemetry.is_locked_out(f"gemini:{sec_model}"):
                 fb = dict(creds)
                 fb["model"] = sec_model
-                candidates.append(fb)
-    elif provider == "openrouter":
+                if not any(cand.get("provider") == "gemini" and cand.get("model") == sec_model for cand in candidates):
+                    candidates.append(fb)
+    elif provider == "openrouter" and not telemetry.is_locked_out("openrouter"):
         for sec_model in ("google/gemini-2.5-flash", "meta-llama/llama-3.3-70b-instruct"):
             if sec_model != model and not telemetry.is_locked_out(f"openrouter:{sec_model}"):
                 fb = dict(creds)
                 fb["model"] = sec_model
-                candidates.append(fb)
+                if not any(cand.get("provider") == "openrouter" and cand.get("model") == sec_model for cand in candidates):
+                    candidates.append(fb)
 
-    # 2. Add alternate providers from the ordered provider chain
-    full_chain = build_ordered_provider_chain(active_pref="auto")
+    # Remaining alternate providers from the ordered provider chain
     for c in full_chain:
         if c.get("provider") == provider and c.get("model") == model:
             continue
@@ -542,8 +569,16 @@ async def run_agent_loop(
     active_provider = db_module.get_active_ai_provider(user_id) if hasattr(db_module, "get_active_ai_provider") else "auto"
     if active_provider == "disabled":
         return AgentResult(
-            reply="External AI model processing is currently disabled in your Settings. You can re-enable it in Settings at any time! 🌸",
+            reply="External AI model processing is currently disabled in your Settings. You can re-enable it in Settings at any time!",
             error="ai_disabled",
+        )
+
+    if os.getenv("SINBHA_TEST_MODE") == "1" or os.getenv("MOCK_LLM_PROVIDERS") == "1":
+        return AgentResult(
+            reply=f"Hello! I am your test-mode assistant responding to: '{user_message[:60]}'. Isolated test environment active.",
+            tool_calls_log=[],
+            step_log=[],
+            new_facts=[],
         )
 
     # Check daily spending cap and per-user token limits (Step C2.13 Item 7)
@@ -559,7 +594,7 @@ async def run_agent_loop(
     creds = get_llm_credentials(active_provider)
     if not creds:
         return AgentResult(
-            reply="I'm not quite connected to my brain yet! 🌸 Please check your AI API key in your settings or .env file.",
+            reply="I'm not quite connected to my brain yet! Please check your AI API key in your settings or .env file.",
             error="missing_api_key",
         )
 
@@ -598,7 +633,8 @@ async def run_agent_loop(
         "remember_fact", "forget_fact", "search_web",
         "fetch_page", "list_devices", "open_settings",
         "read_whatsapp_messages", "draft_whatsapp_reply", "get_inbox_notifications",
-        "get_youtube_channel_stats", "read_gmail_messages", "draft_gmail_message", "get_google_testing_info"
+        "get_youtube_channel_stats", "read_gmail_messages", "draft_gmail_message", "get_google_testing_info",
+        "manage_study_plan", "recommend_study_resource", "track_job_application"
     }
     supported_device_tools = set()
     if user_devices and relay_manager and hasattr(relay_manager, "get_device_supported_tools"):
@@ -649,7 +685,7 @@ async def run_agent_loop(
         elapsed = time.time() - start_time
         if elapsed > AGENT_TIMEOUT_SECONDS:
             return AgentResult(
-                reply="I took a little too long thinking about that! Please try again 🌸",
+                reply="I took a little too long thinking about that! Please try again",
                 tool_calls_log=tool_calls_log,
                 step_log=step_log,
                 error="agent_timeout",
@@ -668,9 +704,10 @@ async def run_agent_loop(
 
         # Step C2.7 Item 5: If LLM returns an empty or failed answer, retry automatically with second model/provider
         if not llm_result["success"]:
-            fallback_candidates = _get_fallback_candidates(creds)
+            err_type = llm_result.get("error")
+            fallback_candidates = _get_fallback_candidates(creds, error_type=err_type)
             for fallback_creds in fallback_candidates:
-                logger.info(f"LLM call failed with {llm_result.get('error')}; retrying with fallback {fallback_creds.get('provider')}/{fallback_creds.get('model')}")
+                logger.info(f"LLM call failed with {err_type}; retrying with fallback {fallback_creds.get('provider')}/{fallback_creds.get('model')}")
                 fallback_result = await _call_llm_with_tools(messages, current_tools, fallback_creds)
                 if fallback_result["success"]:
                     llm_result = fallback_result
@@ -782,9 +819,9 @@ async def run_agent_loop(
                     last_res = last_tc.get("result")
                     last_msg = last_res.get("message") if isinstance(last_res, dict) else None
                     if last_msg:
-                        content = f"{last_msg} 🌸"
+                        content = f"{last_msg}"
                     else:
-                        content = "Done! I took care of that for you 🌸"
+                        content = "Done! I took care of that for you"
                 else:
                     log_llm_reliability("empty_answer", creds.get("provider"), creds.get("model"))
                     trace_data = {
@@ -1002,7 +1039,7 @@ async def run_agent_loop(
 
     # Exceeded max steps — return whatever we have
     return AgentResult(
-        reply="I tried my best but ran out of thinking steps! Let me know if you need anything else 🌸",
+        reply="I tried my best but ran out of thinking steps! Let me know if you need anything else",
         tool_calls_log=tool_calls_log,
         proposal=proposal,
         confirmation_card=confirmation_card,

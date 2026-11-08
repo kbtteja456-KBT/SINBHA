@@ -83,9 +83,32 @@ function createMainWindow() {
   });
 
   // Requirement 3: If server is sleeping or connection fails, show waking screen
-  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
-    console.log(`Failed to load ${config.BACKEND_URL} (${errorCode}: ${errorDescription}). Showing waking recovery screen.`);
-    mainWindow.loadFile(path.join(__dirname, 'waking.html'));
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, _validatedURL, isMainFrame) => {
+    if (isMainFrame !== false) {
+      console.log(`Failed to load ${config.BACKEND_URL} (${errorCode}: ${errorDescription}). Showing waking recovery screen.`);
+      mainWindow.loadFile(path.join(__dirname, 'waking.html'), {
+        query: {
+          status: String(errorCode),
+          error: errorDescription || 'Connection could not be established.'
+        }
+      });
+    }
+  });
+
+  // Intercept HTTP status codes (HTTP 429, 5xx) on main window navigation
+  session.defaultSession.webRequest.onCompleted({ urls: [config.BACKEND_URL + '*'] }, (details) => {
+    if (details.resourceType === 'mainFrame' && mainWindow && !mainWindow.isDestroyed()) {
+      const code = details.statusCode;
+      if (code === 429 || code >= 500) {
+        console.warn(`[Electron Navigation] Server returned HTTP ${code}. Showing waking recovery screen.`);
+        mainWindow.loadFile(path.join(__dirname, 'waking.html'), {
+          query: {
+            status: String(code),
+            error: code === 429 ? 'Rate limit reached. Backing off.' : 'Server is waking up or temporarily unavailable.'
+          }
+        });
+      }
+    }
   });
 
   // Requirement 7: Electron Security Hardening
@@ -181,7 +204,7 @@ function updateTrayMenu() {
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: `🌸 Open SINBHA (v${app.getVersion()})`,
+      label: `Open SINBHA (v${app.getVersion()})`,
       click: () => showMainWindow()
     },
     { type: 'separator' },
@@ -386,8 +409,12 @@ async function sendDesktopHeartbeat(cookieHeader) {
 }
 
 // ----------------- Desktop Remote Command Poller Loop -----------------
+let desktopCommandBackoffUntil = 0;
+
 async function checkPendingDesktopCommandsLoop() {
   try {
+    if (Date.now() < desktopCommandBackoffUntil) return;
+
     const cookieHeader = await getSessionCookieHeader();
     if (!cookieHeader) return;
 
@@ -405,11 +432,26 @@ async function checkPendingDesktopCommandsLoop() {
     const res = await fetch(url, {
       headers: {
         'Cookie': cookieHeader,
-        'X-Requested-With': 'XMLHttpRequest'
+        'X-Requested-With': 'XMLHttpRequest',
+        'X-Client-Platform': 'desktop-electron',
+        'X-Client-Version': app.getVersion()
       }
     });
 
-    if (res.ok) {
+    if (res.status === 429) {
+      const retryHeader = res.headers.get('Retry-After');
+      const retrySec = retryHeader ? parseInt(retryHeader, 10) : 30;
+      desktopCommandBackoffUntil = Date.now() + (retrySec * 1000);
+      console.log(`Desktop command poller backed off for ${retrySec}s due to HTTP 429`);
+      return;
+    }
+
+    if (!res.ok) {
+      if (res.status >= 500) {
+        desktopCommandBackoffUntil = Date.now() + 15000;
+      }
+      return;
+    }
       const data = await res.json();
       if (data && Array.isArray(data.commands) && data.commands.length > 0) {
         for (const cmd of data.commands) {
@@ -476,7 +518,6 @@ async function checkPendingDesktopCommandsLoop() {
           }
         }
       }
-    }
   } catch (e) {}
 }
 
@@ -525,7 +566,7 @@ function showWhatsNewWindow(version) {
   whatsNewWin.loadFile(path.join(__dirname, 'whats_new.html'));
   whatsNewWin.webContents.on('did-finish-load', () => {
     const features = config.WHATS_NEW[version] || [
-      '🌸 Improvements to habit memory & task intelligence',
+      'Improvements to habit memory & task intelligence',
       '⚡ Faster cloud synchronization & automated reminders'
     ];
     whatsNewWin.webContents.send('whats-new-data', { version, features });
@@ -546,7 +587,7 @@ function setupAutoUpdater() {
   autoUpdater.on('update-downloaded', (info) => {
     dialog.showMessageBox({
       type: 'info',
-      title: 'Update Ready 🌸',
+      title: 'Update Ready',
       message: `SINBHA v${info.version} is downloaded and ready!`,
       detail: 'Restart the app now to apply the update and see what\'s new.',
       buttons: ['Restart Now', 'Later'],
@@ -618,7 +659,7 @@ async function checkMinimumSupportedVersion(isManual = false) {
       const downloadLink = data.download_url_desktop || 'https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA-Setup.exe';
       const choice = await dialog.showMessageBox({
         type: isMandatory ? 'warning' : 'info',
-        title: isMandatory ? 'Update Required 🌸' : 'New Version Available! 🌸',
+        title: isMandatory ? 'Update Required' : 'New Version Available!',
         message: isMandatory ? 'Please update SINBHA to continue.' : `A newer version of SINBHA (v${latestAvail}) is available!`,
         detail: isMandatory
           ? `Your version (${currentVersion}) is no longer supported. Minimum required version is ${minRequired}.`
@@ -636,7 +677,7 @@ async function checkMinimumSupportedVersion(isManual = false) {
     } else if (isManual) {
       dialog.showMessageBox({
         type: 'info',
-        title: 'SINBHA is Up to Date 🌸',
+        title: 'SINBHA is Up to Date',
         message: `You're on the latest version of SINBHA (v${currentVersion})! ✨`,
         detail: 'Everything is up to date with your companion.',
         buttons: ['OK']
@@ -904,9 +945,9 @@ if (!gotTheLock) {
     setTimeout(checkDueRemindersLoop, 3000);
     setInterval(checkDueRemindersLoop, config.REMINDER_POLL_INTERVAL_SECONDS * 1000);
 
-    // Real-time remote command poller (2.0s loop for guaranteed sub-3s delivery)
+    // Fallback remote command poller (10s loop with 429 backoff)
     setTimeout(checkPendingDesktopCommandsLoop, 1500);
-    setInterval(checkPendingDesktopCommandsLoop, 2000);
+    setInterval(checkPendingDesktopCommandsLoop, 10000);
 
     // Auto-update & What's New checks
     setupAutoUpdater();

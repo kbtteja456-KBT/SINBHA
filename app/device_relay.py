@@ -72,11 +72,15 @@ class CommandRelayManager:
 
     DEFAULT_SUPPORTED_TOOLS = {
         "windows": [
-            "find_installed_app", "open_app", "open_url", "send_note",
-            "type_text", "press_keys", "lock_screen", "sync_tasks"
+            "find_installed_app", "open_app", "close_app", "switch_app", "manage_window",
+            "get_active_window", "click_element", "scroll_window", "open_url", "open_settings",
+            "send_note", "type_text", "press_keys", "lock_screen", "lock_workstation",
+            "create_folder", "write_text_file", "search_files", "open_path", "get_file_info",
+            "delete_file", "desktop_screen_capture", "sync_tasks"
         ],
         "android": [
-            "open_app", "open_url", "send_note", "ring_phone", "sync_tasks"
+            "open_app", "open_url", "open_settings", "send_note", "ring_phone", "sync_tasks",
+            "android_screen_task", "accessibility_action", "get_notifications", "get_inbox"
         ],
         "web": [
             "send_note", "open_url", "sync_tasks"
@@ -347,7 +351,7 @@ class CommandRelayManager:
                 app_disp = (late_info.get("app_name") if late_info else None) or (
                     entry.get("result", {}).get("app") if isinstance(entry.get("result"), dict) else "app"
                 )
-                update_msg = f"Update: {app_disp} did open 🌸" if (app_disp and app_disp != "app") else "Update: it did open 🌸"
+                update_msg = f"Update: {app_disp} did open" if (app_disp and app_disp != "app") else "Update: it did open"
 
                 try:
                     if late_info and late_info.get("message_id"):
@@ -576,6 +580,18 @@ class CommandRelayManager:
                 except Exception:
                     pass
 
+    async def broadcast_to_user(self, user_id: int, packet: dict):
+        """
+        Broadcasts JSON packet to all active connected websockets for this user.
+        """
+        msg = json.dumps(packet)
+        for (uid, dev_id), ws in list(self.active_websockets.items()):
+            if uid == user_id:
+                try:
+                    await ws.send_text(msg)
+                except Exception:
+                    pass
+
     async def notify_screen_agent_state(self, user_id: int, active: bool, goal: str):
         """
         Step C3a: Broadcasts screen agent state (active, goal) to connected clients
@@ -587,6 +603,18 @@ class CommandRelayManager:
             "goal": goal,
             "timestamp": time.time(),
         }
+        msg = json.dumps(packet)
+        for (uid, dev_id), ws in list(self.active_websockets.items()):
+            if uid == user_id:
+                try:
+                    await ws.send_text(msg)
+                except Exception:
+                    pass
+
+    async def broadcast_to_user(self, user_id: int, packet: dict):
+        """
+        Broadcasts JSON packet to all active connected websockets for this user.
+        """
         msg = json.dumps(packet)
         for (uid, dev_id), ws in list(self.active_websockets.items()):
             if uid == user_id:
@@ -610,19 +638,61 @@ class CommandRelayManager:
             db_cmds = (db_cmds + mem_cmds)[:10]
         return db_cmds
 
-    def on_emergency_stop(self, user_id: int):
-        """Halts all remote commands immediately, marks pending as failed in DB, alerts clients."""
+    def on_emergency_stop(self, user_id: int) -> dict:
+        """
+        Halts all remote commands immediately, marks pending as failed in DB,
+        alerts connected devices, and truthfully reports offline devices.
+        """
+        canceled_count = 0
         try:
             from sqlalchemy import update, and_
             with db.get_db_session() as session:
-                session.execute(
+                res = session.execute(
                     update(db.DeviceCommand)
                     .where(and_(db.DeviceCommand.user_id == user_id, db.DeviceCommand.status.in_(["queued", "delivered"])))
                     .values(status="failed", error="Emergency STOP active", updated_at=db.utc_now())
                 )
                 session.commit()
+                canceled_count = res.rowcount if hasattr(res, "rowcount") else 0
         except Exception:
             pass
+
+        offline_devices = []
+        online_devices = []
+        try:
+            devices = [d for d in db.get_user_devices(user_id) if d.get("status") not in ("revoked", "removed")]
+            for d in devices:
+                dev_id = d.get("device_id")
+                if self.is_device_connected(user_id, dev_id):
+                    online_devices.append(d)
+                    ws = self.active_websockets.get((user_id, dev_id))
+                    if ws:
+                        stop_pkt = json.dumps({"type": "control", "action": "stop", "user_id": user_id})
+                        try:
+                            import inspect
+                            send_res = ws.send_text(stop_pkt)
+                            if inspect.iscoroutine(send_res):
+                                import asyncio
+                                try:
+                                    loop = asyncio.get_event_loop()
+                                    if loop.is_running():
+                                        loop.create_task(send_res)
+                                    else:
+                                        asyncio.run(send_res)
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                else:
+                    offline_devices.append(d)
+        except Exception:
+            pass
+
+        return {
+            "canceled_commands_count": canceled_count,
+            "offline_devices": offline_devices,
+            "online_devices": online_devices
+        }
 
     def on_disconnect_all(self, user_id: int):
         """Revokes all live device channels for user and sets websocket_connected=False."""

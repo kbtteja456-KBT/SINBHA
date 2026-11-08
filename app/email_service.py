@@ -74,12 +74,78 @@ def send_email_sync(
 
     # Step 1C Item 2: In tests or offline dev mode, NEVER use real SMTP credentials
     import sys
-    is_test = "pytest" in sys.modules or bool(os.getenv("PYTEST_CURRENT_TEST")) or os.getenv("MOCK_EMAIL", "").lower() == "true"
-    if is_test or not smtp_user or not smtp_pass:
+    is_test = (
+        "pytest" in sys.modules
+        or bool(os.getenv("PYTEST_CURRENT_TEST"))
+        or os.getenv("MOCK_EMAIL", "").lower() == "true"
+        or os.getenv("SINBHA_TEST_MODE", "").lower() in ("1", "true")
+    )
+    if is_test:
+        print(f"[EMAIL SERVICE - TEST MODE] To: {to_email} | Subject: '{subject}' | Recorded to outbox.")
+        return True
+
+    # 1. Primary Cloud Route: Resend HTTP API (Port 443 - never blocked by Render)
+    resend_api_key = os.getenv("RESEND_API_KEY", "").strip()
+    if resend_api_key:
+        try:
+            import httpx
+            resend_from = os.getenv("RESEND_FROM", "").strip() or f"{from_name} <onboarding@resend.dev>"
+            r = httpx.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {resend_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "from": resend_from,
+                    "to": [to_email],
+                    "subject": subject,
+                    "text": text_content,
+                    "html": html_content or text_content,
+                },
+                timeout=12.0,
+            )
+            if r.status_code in (200, 201):
+                print(f"[EMAIL SERVICE - RESEND API] Successfully sent email to {to_email}: '{subject}'")
+                return True
+            else:
+                print(f"[EMAIL SERVICE - RESEND API ERROR] HTTP {r.status_code}: {r.text}")
+        except Exception as e:
+            print(f"[EMAIL SERVICE - RESEND EXCEPTION] {e}")
+
+    # 2. Secondary Cloud Route: Brevo HTTP API (Port 443)
+    brevo_api_key = os.getenv("BREVO_API_KEY", "").strip()
+    if brevo_api_key:
+        try:
+            import httpx
+            r = httpx.post(
+                "https://api.brevo.com/v3/smtp/email",
+                headers={
+                    "api-key": brevo_api_key,
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "sender": {"name": from_name, "email": from_email},
+                    "to": [{"email": to_email}],
+                    "subject": subject,
+                    "textContent": text_content,
+                    "htmlContent": html_content or text_content,
+                },
+                timeout=12.0,
+            )
+            if r.status_code in (200, 201):
+                print(f"[EMAIL SERVICE - BREVO API] Successfully sent email to {to_email}: '{subject}'")
+                return True
+            else:
+                print(f"[EMAIL SERVICE - BREVO API ERROR] HTTP {r.status_code}: {r.text}")
+        except Exception as e:
+            print(f"[EMAIL SERVICE - BREVO EXCEPTION] {e}")
+
+    if not smtp_user or not smtp_pass:
         print(f"[EMAIL SERVICE - DEV/OFFLINE] To: {to_email} | Subject: '{subject}' | Recorded to outbox.")
         return True
 
-    # Real SMTP send via configured provider (e.g. Gmail with App Password)
+    # 3. Fallback: Standard SMTP (Works on localhost or unblocked hosts)
     try:
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
@@ -153,7 +219,7 @@ def send_verification_email(to_email: str, token: str, base_url: Optional[str] =
 
     subject = "Verify your SINBHA account"
     text = (
-        f"Welcome to SINBHA! 🌸\n\n"
+        f"Welcome to SINBHA!\n\n"
         f"Please verify your email address to unlock device pairing and remote companion features.\n\n"
         f"Verification Link (valid for 24 hours):\n"
         f"{verify_link}\n\n"
@@ -163,7 +229,7 @@ def send_verification_email(to_email: str, token: str, base_url: Optional[str] =
     )
     html = f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 580px; margin: 0 auto; padding: 24px; border: 1px solid #fed7aa; border-radius: 12px; background: #fffaf5;">
-        <h2 style="color: #ea580c; margin-top: 0;">🌸 Welcome to SINBHA</h2>
+        <h2 style="color: #ea580c; margin-top: 0;">Welcome to SINBHA</h2>
         <p style="font-size: 15px; color: #431407; line-height: 1.5;">
             Thank you for creating an account. Please verify your email address to enable device pairing and remote companion actions.
         </p>

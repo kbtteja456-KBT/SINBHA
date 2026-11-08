@@ -22,6 +22,7 @@ import re
 import time
 import json
 import jsonschema
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 
@@ -1916,6 +1917,386 @@ async def handle_clear_browser_data(user_id: int, args: dict, ctx: dict) -> dict
     return clear_sinbha_browser_data(confirmed=confirmed)
 
 
+# ============================================================
+#  STUDY, CAREER & WORK ASSISTANCE HANDLERS (Phase 4)
+# ============================================================
+
+CURATED_STUDY_RESOURCES = [
+    {
+        "keywords": ["data structure", "dsa", "algorithm", "binary tree", "graph", "sort", "search"],
+        "title": "MIT OpenCourseWare 6.006: Introduction to Algorithms",
+        "url": "https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-fall-2011/",
+        "reason": "Authoritative university lectures and problem sets covering asymptotic analysis, binary trees, dynamic programming, and shortest path algorithms.",
+    },
+    {
+        "keywords": ["data structure", "dsa", "algorithm", "leetcode", "practice"],
+        "title": "GeeksforGeeks Data Structures & Algorithms",
+        "url": "https://www.geeksforgeeks.org/data-structures/",
+        "reason": "Clear code implementations, complexity breakdowns, and step-by-step interview problem walkthroughs across languages.",
+    },
+    {
+        "keywords": ["operating system", "os", "kernel", "concurrency", "thread", "virtual memory", "scheduling"],
+        "title": "OSTEP: Operating Systems - Three Easy Pieces",
+        "url": "https://pages.cs.wisc.edu/~remzi/OSTEP/",
+        "reason": "Widely acclaimed free textbook breaking down OS concepts into Virtualization, Concurrency, and Persistence.",
+    },
+    {
+        "keywords": ["operating system", "os", "linux", "system programming", "nptel"],
+        "title": "NPTEL: Operating Systems (IIT Madras)",
+        "url": "https://nptel.ac.in/courses/106106144",
+        "reason": "Comprehensive university-accredited curriculum covering process management, paging, deadlock prevention, and storage systems.",
+    },
+    {
+        "keywords": ["web development", "javascript", "html", "css", "frontend", "dom"],
+        "title": "MDN Web Docs",
+        "url": "https://developer.mozilla.org/",
+        "reason": "The industry standard web documentation with interactive examples for HTML, CSS, JavaScript, and Web APIs.",
+    },
+    {
+        "keywords": ["python", "python3", "scripting", "backend"],
+        "title": "Official Python Tutorial & Standard Library Docs",
+        "url": "https://docs.python.org/3/tutorial/",
+        "reason": "Official documentation covering core syntax, data structures, error handling, and standard library modules directly from Python core maintainers.",
+    },
+    {
+        "keywords": ["sql", "database", "rdbms", "postgres", "queries"],
+        "title": "PostgreSQL Official Documentation",
+        "url": "https://www.postgresql.org/docs/",
+        "reason": "Definitive technical guide for relational design, ACID guarantees, SQL optimization, and indexing strategies.",
+    },
+    {
+        "keywords": ["machine learning", "ai", "neural network", "deep learning", "andrew ng"],
+        "title": "Coursera & Stanford Machine Learning Specialization",
+        "url": "https://www.coursera.org/learn/machine-learning",
+        "reason": "Foundational course taught by Andrew Ng covering supervised learning, neural networks, and practical ML engineering advice.",
+    },
+    {
+        "keywords": ["calculus", "math", "derivatives", "integrals", "limits", "linear algebra"],
+        "title": "Khan Academy Calculus & Linear Algebra",
+        "url": "https://www.khanacademy.org/math/calculus-1",
+        "reason": "Intuitive visual lectures, step-by-step worked exercises, and mastery quizzes for mathematical foundations.",
+    },
+    {
+        "keywords": ["computer network", "networking", "tcp", "udp", "ip", "http"],
+        "title": "Stanford CS144: Introduction to Computer Networks",
+        "url": "https://cs144.github.io/",
+        "reason": "Rigorous practical coursework explaining packet switching, transport layer flow control, and Internet architecture.",
+    },
+]
+
+
+async def handle_manage_study_plan(user_id: int, args: dict, ctx: dict) -> dict:
+    """
+    Manages university/degree study plan, subjects, spaced revision schedule, and assignments.
+    Stores stable facts about degree/subjects in memory.
+    """
+    action = args.get("action", "list_plan")
+    degree = sanitize_text_arg(args.get("degree", ""), 150)
+    subjects = [sanitize_text_arg(s, 100) for s in args.get("subjects", []) if s]
+    subject = sanitize_text_arg(args.get("subject", ""), 100)
+    topic = sanitize_text_arg(args.get("topic", ""), 100)
+    assignment_title = sanitize_text_arg(args.get("assignment_title", ""), 200)
+    due_date = sanitize_text_arg(args.get("due_date", ""), 100)
+
+    from app import database as db
+
+    if degree:
+        db.add_fact(
+            user_id=user_id,
+            fact_text=f"Degree/Program: {degree}",
+            category="education",
+            fact_type="stable_fact",
+            source="user_explicit",
+            confidence=100,
+        )
+
+    if subjects:
+        for s in subjects:
+            db.add_fact(
+                user_id=user_id,
+                fact_text=f"Subject: {s}",
+                category="education",
+                fact_type="stable_fact",
+                source="user_explicit",
+                confidence=100,
+            )
+
+    if action == "organize_subjects":
+        created_tasks = []
+        subj_list = subjects or ([subject] if subject else [])
+        now_dt = db.utc_now()
+        from app.proactive_scheduler import schedule_proactive_event
+        for subj in subj_list:
+            t1 = db.create_task(user_id, f"Study & Review: {subj}", due_date="in 1 day", notes="Spaced revision milestone: Day 1 initial concept review")
+            t2 = db.create_task(user_id, f"Practice & Quiz: {subj}", due_date="in 3 days", notes="Spaced revision milestone: Day 3 active recall practice")
+            t3 = db.create_task(user_id, f"Spaced Practice: {subj}", due_date="in 7 days", notes="Spaced revision milestone: Day 7 comprehensive review")
+            created_tasks.extend([t1, t2, t3])
+            try:
+                schedule_proactive_event(
+                    user_id=user_id,
+                    event_type="study_reminder",
+                    title=f"Spaced revision (Day 1 review): {subj}",
+                    scheduled_for_utc=now_dt + timedelta(days=1),
+                    payload={"subject": subj, "stage": "day_1_review", "task_title": f"Study & Review: {subj}"}
+                )
+                schedule_proactive_event(
+                    user_id=user_id,
+                    event_type="study_reminder",
+                    title=f"Spaced revision (Day 3 quiz): {subj}",
+                    scheduled_for_utc=now_dt + timedelta(days=3),
+                    payload={"subject": subj, "stage": "day_3_quiz", "task_title": f"Practice & Quiz: {subj}"}
+                )
+                schedule_proactive_event(
+                    user_id=user_id,
+                    event_type="study_reminder",
+                    title=f"Spaced revision (Day 7 practice): {subj}",
+                    scheduled_for_utc=now_dt + timedelta(days=7),
+                    payload={"subject": subj, "stage": "day_7_practice", "task_title": f"Spaced Practice: {subj}"}
+                )
+            except Exception:
+                pass
+        return {
+            "success": True,
+            "action": "organize_subjects",
+            "degree": degree or "Not specified",
+            "subjects_organized": subj_list,
+            "revision_milestones_created": len(created_tasks),
+            "message": f"Organized study plan for {len(subj_list)} subjects with spaced repetition milestones (Day 1, 3, 7)."
+        }
+
+    elif action == "schedule_revision":
+        target_subject = subject or (subjects[0] if subjects else "General Study")
+        desc = f"{target_subject}" + (f" - {topic}" if topic else "")
+        t1 = db.create_task(user_id, f"Review: {desc}", due_date="in 1 day", notes="Spaced revision: Day 1 concept review")
+        t2 = db.create_task(user_id, f"Practice questions: {desc}", due_date="in 3 days", notes="Spaced revision: Day 3 active recall")
+        t3 = db.create_task(user_id, f"Comprehensive revision: {desc}", due_date="in 7 days", notes="Spaced revision: Day 7 retention check")
+        now_dt = db.utc_now()
+        from app.proactive_scheduler import schedule_proactive_event
+        try:
+            schedule_proactive_event(
+                user_id=user_id,
+                event_type="study_reminder",
+                title=f"Spaced revision (Day 1 review): {desc}",
+                scheduled_for_utc=now_dt + timedelta(days=1),
+                payload={"subject": target_subject, "topic": topic, "stage": "day_1_review"}
+            )
+            schedule_proactive_event(
+                user_id=user_id,
+                event_type="study_reminder",
+                title=f"Spaced revision (Day 3 practice): {desc}",
+                scheduled_for_utc=now_dt + timedelta(days=3),
+                payload={"subject": target_subject, "topic": topic, "stage": "day_3_practice"}
+            )
+            schedule_proactive_event(
+                user_id=user_id,
+                event_type="study_reminder",
+                title=f"Spaced revision (Day 7 retention): {desc}",
+                scheduled_for_utc=now_dt + timedelta(days=7),
+                payload={"subject": target_subject, "topic": topic, "stage": "day_7_retention"}
+            )
+        except Exception:
+            pass
+        return {
+            "success": True,
+            "action": "schedule_revision",
+            "subject": target_subject,
+            "topic": topic,
+            "revision_tasks": [
+                {"day": 1, "task": f"Review: {desc}", "id": t1 if isinstance(t1, int) else getattr(t1, "id", None)},
+                {"day": 3, "task": f"Practice questions: {desc}", "id": t2 if isinstance(t2, int) else getattr(t2, "id", None)},
+                {"day": 7, "task": f"Comprehensive revision: {desc}", "id": t3 if isinstance(t3, int) else getattr(t3, "id", None)},
+            ],
+            "message": f"Scheduled 3 spaced revision sessions for {desc} (Day 1, Day 3, Day 7)."
+        }
+
+    elif action == "track_assignment":
+        title = assignment_title or f"Assignment in {subject or 'Course'}"
+        target_subj = subject or "General"
+        task_title = f"[Assignment] {target_subj}: {title}"
+        task = db.create_task(user_id, task_title, due_date=due_date or "next week", notes="Coursework assignment tracked by SINBHA")
+        now_dt = db.utc_now()
+        from app.proactive_scheduler import schedule_proactive_event
+        try:
+            schedule_proactive_event(
+                user_id=user_id,
+                event_type="deadline_alert",
+                title=f"Assignment deadline alert: {title} ({target_subj})",
+                scheduled_for_utc=now_dt + timedelta(days=2),
+                payload={"subject": target_subj, "assignment": title, "due_date": due_date or "next week"}
+            )
+        except Exception:
+            pass
+        return {
+            "success": True,
+            "action": "track_assignment",
+            "subject": target_subj,
+            "assignment": title,
+            "due_date": due_date or "next week",
+            "task_id": task if isinstance(task, int) else (task.get("id") if isinstance(task, dict) else getattr(task, "id", None)),
+            "message": f"Tracked assignment '{title}' for {target_subj} due {due_date or 'next week'}."
+        }
+
+    else:  # list_plan
+        facts = db.get_all_facts(user_id)
+        degree_facts = [f["fact"] for f in facts if "degree" in f["fact"].lower() or "program" in f["fact"].lower()]
+        subject_facts = [f["fact"] for f in facts if "subject:" in f["fact"].lower()]
+        tasks = db.get_all_tasks(user_id)
+        study_tasks = [t for t in tasks if any(kw in (t.get("title") or "").lower() for kw in ["study", "review", "revision", "practice", "assignment", "quiz"])]
+        return {
+            "success": True,
+            "action": "list_plan",
+            "degree": degree_facts[0] if degree_facts else "Not recorded yet",
+            "subjects": [s.split("Subject:")[-1].strip() for s in subject_facts],
+            "pending_study_tasks": len(study_tasks),
+            "tasks": study_tasks[:10],
+        }
+
+
+async def handle_recommend_study_resource(user_id: int, args: dict, ctx: dict) -> dict:
+    """
+    Returns curated, verified learning resources with working links and 1-sentence explanations.
+    """
+    subject = sanitize_text_arg(args.get("subject", ""), 100).lower()
+    topic = sanitize_text_arg(args.get("topic", ""), 100).lower()
+    query = f"{subject} {topic}".strip()
+
+    matches = []
+    for res in CURATED_STUDY_RESOURCES:
+        if any(kw in query for kw in res["keywords"]):
+            matches.append({
+                "title": res["title"],
+                "url": res["url"],
+                "reason": res["reason"],
+            })
+
+    if not matches:
+        matches = [
+            {
+                "title": "NPTEL Online Courses & Lectures",
+                "url": "https://nptel.ac.in/",
+                "reason": "Accredited engineering and science courses recorded by faculty from Indian Institutes of Technology (IITs).",
+            },
+            {
+                "title": "MIT OpenCourseWare",
+                "url": "https://ocw.mit.edu/",
+                "reason": "Thousands of free, open syllabus courses and lecture notes from MIT across all STEM disciplines.",
+            }
+        ]
+
+    return {
+        "success": True,
+        "query": query or "General STEM",
+        "resources_count": len(matches),
+        "resources": matches[:4],
+        "message": f"Found {len(matches[:4])} curated study resources for '{query or 'General STEM'}'."
+    }
+
+
+async def handle_track_job_application(user_id: int, args: dict, ctx: dict) -> dict:
+    """
+    Handles job application tracking, drafting resume points, form prefill, and strict submission gating.
+    CRITICAL INVARIANT:
+      - 'bookmark', 'draft_resume_points', 'record_deadline', 'prefill_form' are safe tracking actions.
+      - 'submit' and 'contact_employer' are strictly ACTION GATED and require explicit confirmation.
+      - NEVER submits or contacts employers automatically.
+    """
+    action = args.get("action", "bookmark")
+    company = sanitize_text_arg(args.get("company", ""), 100)
+    role = sanitize_text_arg(args.get("role", ""), 100)
+    job_url = sanitize_text_arg(args.get("job_url", ""), 500)
+    deadline = sanitize_text_arg(args.get("deadline", ""), 100)
+    experience_summary = sanitize_text_arg(args.get("experience_summary", ""), 500)
+    user_confirmed = bool(args.get("user_confirmed", False))
+
+    if not company or not role:
+        return {"success": False, "error": "Company and role are required."}
+
+    from app import database as db
+
+    if action in ("submit", "contact_employer"):
+        if not user_confirmed:
+            return {
+                "success": False,
+                "action": action,
+                "status": "requires_user_approval",
+                "requires_confirmation": True,
+                "error": "ACTION_GATED",
+                "company": company,
+                "role": role,
+                "confirmation_template": f"Submit job application for {role} at {company}?",
+                "message": (
+                    f"Action Gated: SINBHA will NEVER submit applications or contact employers automatically. "
+                    f"Please review the application for '{role}' at '{company}' and grant explicit confirmation before submission."
+                ),
+                "review_details": {
+                    "company": company,
+                    "role": role,
+                    "job_url": job_url,
+                    "deadline": deadline,
+                }
+            }
+        else:
+            task_title = f"[Applied] {role} at {company}"
+            task = db.create_task(user_id, task_title, due_date="completed", notes=f"Application submitted with user approval. URL: {job_url}")
+            return {
+                "success": True,
+                "action": action,
+                "status": "submitted_with_approval",
+                "company": company,
+                "role": role,
+                "message": f"Successfully recorded approved submission for {role} at {company}."
+            }
+
+    elif action == "draft_resume_points":
+        bullets = [
+            f"Developed scalable solutions aligned with {role} requirements at {company}.",
+            f"Leveraged technical problem-solving and collaboration skills on key projects.",
+            f"Delivered robust code quality and demonstrated fast learning capability ({experience_summary or 'Computer Science background'})."
+        ]
+        return {
+            "success": True,
+            "action": "draft_resume_points",
+            "company": company,
+            "role": role,
+            "draft_bullets": bullets,
+            "message": f"Generated 3 draft resume bullet points tailored for {role} at {company}."
+        }
+
+    elif action == "prefill_form":
+        facts = db.get_all_facts(user_id)
+        degree_facts = [f["fact"] for f in facts if "degree" in f["fact"].lower()]
+        prefilled = {
+            "applicant_name": ctx.get("user_name", "Applicant"),
+            "degree": degree_facts[0].split("Degree/Program:")[-1].strip() if degree_facts else "BTech",
+            "target_role": role,
+            "target_company": company,
+            "job_url": job_url,
+            "review_status": "Ready for user inspection"
+        }
+        return {
+            "success": True,
+            "action": "prefill_form",
+            "company": company,
+            "role": role,
+            "prefilled_data": prefilled,
+            "message": f"Prefilled application data for {role} at {company}. Ready for your review (never auto-submitted)."
+        }
+
+    else:  # bookmark / record_deadline
+        task_title = f"[Job Tracker] {role} at {company}"
+        notes = f"Job URL: {job_url}" if job_url else "Application bookmarked"
+        task = db.create_task(user_id, task_title, due_date=deadline or "next month", notes=notes)
+        return {
+            "success": True,
+            "action": action,
+            "company": company,
+            "role": role,
+            "deadline": deadline or "not set",
+            "task_id": task.get("id") if isinstance(task, dict) else getattr(task, "id", None),
+            "message": f"Tracked {role} application for {company} (due: {deadline or 'none'})."
+        }
+
+
 _SCHEMA_BROWSER_TASK = {
     "type": "object",
     "properties": {
@@ -2182,6 +2563,59 @@ _SCHEMA_OPEN_URL = {
     "additionalProperties": False,
 }
 
+_SCHEMA_MANAGE_STUDY_PLAN = {
+    "type": "object",
+    "properties": {
+        "action": {
+            "type": "string",
+            "enum": ["organize_subjects", "schedule_revision", "track_assignment", "list_plan"],
+            "description": "Action to perform on the study plan",
+            "default": "list_plan"
+        },
+        "degree": {"type": "string", "description": "Degree or program of study (e.g. 'BTech Computer Science')", "maxLength": 150},
+        "subjects": {
+            "type": "array",
+            "items": {"type": "string", "maxLength": 100},
+            "description": "List of subjects to organize in the study plan"
+        },
+        "subject": {"type": "string", "description": "Specific subject for revision or assignment", "maxLength": 100},
+        "topic": {"type": "string", "description": "Specific topic within the subject", "maxLength": 100},
+        "assignment_title": {"type": "string", "description": "Title of the assignment to track", "maxLength": 200},
+        "due_date": {"type": "string", "description": "Due date or deadline for the assignment/revision", "maxLength": 100},
+    },
+    "additionalProperties": False,
+}
+
+_SCHEMA_RECOMMEND_STUDY_RESOURCE = {
+    "type": "object",
+    "properties": {
+        "subject": {"type": "string", "description": "Subject or academic field (e.g. 'Operating Systems', 'Algorithms', 'Web Development')", "minLength": 1, "maxLength": 100},
+        "topic": {"type": "string", "description": "Specific topic or subtopic (e.g. 'Virtual Memory', 'Binary Search Tree')", "maxLength": 100},
+    },
+    "required": ["subject"],
+    "additionalProperties": False,
+}
+
+_SCHEMA_TRACK_JOB_APPLICATION = {
+    "type": "object",
+    "properties": {
+        "action": {
+            "type": "string",
+            "enum": ["bookmark", "draft_resume_points", "record_deadline", "prefill_form", "submit", "contact_employer"],
+            "description": "Job application action. 'submit' and 'contact_employer' strictly require explicit human confirmation.",
+            "default": "bookmark"
+        },
+        "company": {"type": "string", "description": "Company or organization name", "minLength": 1, "maxLength": 100},
+        "role": {"type": "string", "description": "Job title or role", "minLength": 1, "maxLength": 100},
+        "job_url": {"type": "string", "description": "URL to the job listing", "maxLength": 500},
+        "deadline": {"type": "string", "description": "Application deadline", "maxLength": 100},
+        "experience_summary": {"type": "string", "description": "Summary of relevant experience to tailor resume points", "maxLength": 500},
+        "user_confirmed": {"type": "boolean", "description": "Explicit human confirmation flag for sensitive actions (submit/contact)", "default": False},
+    },
+    "required": ["company", "role"],
+    "additionalProperties": False,
+}
+
 
 # ============================================================
 #  BUILD THE DEFAULT REGISTRY
@@ -2431,6 +2865,31 @@ def build_default_registry() -> ToolRegistry:
         risk_level=2,
         handler=handle_clear_browser_data,
         confirmation_template="Clear SINBHA Chrome profile data (cookies, cache, history)?",
+    ))
+
+    registry.register(Tool(
+        name="manage_study_plan",
+        description="Organize subjects for degree/courses, schedule spaced repetition revisions (Day 1, 3, 7), track assignments, and view study schedule.",
+        parameters=_SCHEMA_MANAGE_STUDY_PLAN,
+        risk_level=1,
+        handler=handle_manage_study_plan,
+    ))
+
+    registry.register(Tool(
+        name="recommend_study_resource",
+        description="Get curated, high-quality educational resources with working links and explanations for specific STEM subjects and topics.",
+        parameters=_SCHEMA_RECOMMEND_STUDY_RESOURCE,
+        risk_level=0,
+        handler=handle_recommend_study_resource,
+    ))
+
+    registry.register(Tool(
+        name="track_job_application",
+        description="Track job applications, draft tailored resume bullet points, prefill forms, and manage deadlines. Submitting applications or contacting employers strictly requires explicit confirmation.",
+        parameters=_SCHEMA_TRACK_JOB_APPLICATION,
+        risk_level=2,
+        handler=handle_track_job_application,
+        confirmation_template="Process job application '{action}' for {role} at {company}?",
     ))
 
     return registry

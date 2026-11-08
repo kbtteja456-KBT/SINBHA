@@ -96,7 +96,7 @@ def test_chat_open_app_intent(auth_user):
 
     mock_llm_res = {
         "success": True,
-        "message": {"role": "assistant", "content": "Done! Opened Whatsapp on your laptop! 🌸"},
+        "message": {"role": "assistant", "content": "Done! Opened Whatsapp on your laptop!"},
         "finish_reason": "stop"
     }
 
@@ -116,7 +116,7 @@ def test_chat_lock_workstation_intent(auth_user):
 
     mock_llm_res = {
         "success": True,
-        "message": {"role": "assistant", "content": "Done! I've locked your My Laptop screen 🌸"},
+        "message": {"role": "assistant", "content": "Done! I've locked your My Laptop screen"},
         "finish_reason": "stop"
     }
 

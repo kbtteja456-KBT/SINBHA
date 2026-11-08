@@ -411,7 +411,7 @@ class SinbhaPlugin : Plugin() {
     @PluginMethod
     fun testBird(call: PluginCall) {
         val title = call.getString("title") ?: "Drink water 💧"
-        val dueText = call.getString("dueText") ?: "Due now 🌸"
+        val dueText = call.getString("dueText") ?: "Due now"
         val taskId = call.getInt("taskId", 999) ?: 999
 
         OverlayBirdService.launch(context, taskId, title, dueText)

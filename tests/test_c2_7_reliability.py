@@ -330,7 +330,7 @@ async def test_llm_automatic_fallback_on_failure(test_user):
         # Secondary succeeds
         return {
             "success": True,
-            "message": {"role": "assistant", "content": "I am here to help! 🌸"},
+            "message": {"role": "assistant", "content": "I am here to help!"},
             "finish_reason": "stop"
         }
 

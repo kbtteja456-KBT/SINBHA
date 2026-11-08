@@ -139,7 +139,7 @@ jobs:
           tag_name: ${{ steps.release_meta.outputs.tag_name }}
           name: ${{ steps.release_meta.outputs.release_title }}
           body: |
-            ## 🌸 SINBHA Android Companion Release
+            ## SINBHA Android Companion Release
             **Version:** ${{ steps.release_meta.outputs.tag_name }}
             
             ${{ inputs.release_notes || 'Official production APK with exact alarms, background reminders, and flying bird overlay companion.' }}

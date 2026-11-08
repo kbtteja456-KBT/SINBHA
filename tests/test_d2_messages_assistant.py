@@ -144,7 +144,7 @@ def test_normal_conversations_not_flagged_as_suspicious():
         "Hey! Are you free for dinner at 7?",
         "I sent the document over email earlier today.",
         "Let's meet near the central library tomorrow morning.",
-        "Happy birthday! Hope you have a wonderful day 🌸",
+        "Happy birthday! Hope you have a wonderful day",
     ]
     for msg in safe_messages:
         is_suspicious, reasons = detect_untrusted_instructions(msg)

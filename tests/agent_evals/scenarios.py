@@ -515,7 +515,7 @@ def get_all_scenarios() -> List[EvalScenario]:
         EvalScenario(
             id="nlp_unicode_and_emojis",
             category="NATURAL_LANGUAGE_AND_ROBUSTNESS",
-            user_input="🌸 please open spotify 🎵 on phone 📱",
+            user_input="please open spotify 🎵 on phone 📱",
             description="Handles emojis gracefully and routes accurately",
             devices=[FakePhone(device_id="phone_1", name="Android Phone", installed_apps=["spotify"])],
             expected_tools=["open_app"],

@@ -36,6 +36,8 @@ class TestUntrustedContentSecurityRule:
             {"device_id": "phone_1", "name": "My Phone", "platform": "android", "status": "trusted"}
         ]
         mock_relay = AsyncMock()
+        mock_relay.is_device_connected = MagicMock(return_value=True)
+        mock_relay.get_device_supported_tools = MagicMock(return_value=["send_note"])
 
         # Multi-turn mock:
         # Step 1: Agent calls search_web
@@ -111,6 +113,8 @@ class TestUntrustedContentSecurityRule:
         mock_db.get_emergency_stopped.return_value = False
         mock_db.get_active_ai_provider.return_value = "auto"
         mock_relay = AsyncMock()
+        mock_relay.is_device_connected = MagicMock(return_value=True)
+        mock_relay.get_device_supported_tools = MagicMock(return_value=["send_note"])
 
         responses = [
             # 1. Fetch page
@@ -185,6 +189,8 @@ class TestAllowWithoutAskingAndUntrustedOverride:
         mock_db.get_emergency_stopped.return_value = False
         mock_db.get_active_ai_provider.return_value = "auto"
         mock_relay = AsyncMock()
+        mock_relay.is_device_connected = MagicMock(return_value=True)
+        mock_relay.get_device_supported_tools = MagicMock(return_value=["send_note"])
 
         # Device with allow_without_asking: True
         local_laptop = {
@@ -254,6 +260,8 @@ class TestAllowWithoutAskingAndUntrustedOverride:
         mock_db.get_emergency_stopped.return_value = False
         mock_db.get_active_ai_provider.return_value = "auto"
         mock_relay = AsyncMock()
+        mock_relay.is_device_connected = MagicMock(return_value=True)
+        mock_relay.get_device_supported_tools = MagicMock(return_value=["send_note"])
 
         local_laptop = {
             "device_id": "lap_1",

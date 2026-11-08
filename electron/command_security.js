@@ -1324,6 +1324,742 @@ async function safePressKeys(keys) {
   });
 }
 
+// ========================================================
+// PHASE 2: REAL WINDOWS AUTOMATION AGENT CAPABILITIES
+// ========================================================
+
+const BLOCKED_SYSTEM_DIRS = [
+  process.env.WINDIR || 'C:\\Windows',
+  process.env.PROGRAMFILES || 'C:\\Program Files',
+  process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)',
+  process.env.PROGRAMDATA || 'C:\\ProgramData'
+];
+
+/**
+ * Resolves an input path safely within allowed user directories.
+ * Strictly prevents path traversal escapes and writing to Windows system folders.
+ */
+function resolveSafeUserPath(inputPath, defaultFolder = 'Desktop') {
+  if (!inputPath || typeof inputPath !== 'string') {
+    return { valid: false, error: 'Path must be a non-empty string' };
+  }
+  const raw = inputPath.trim();
+  if (raw.includes('\0') || /[&|;`$<>^"'\r\n\t]/.test(raw)) {
+    return { valid: false, error: 'Path contains forbidden shell or control characters' };
+  }
+
+  const userHome = os.homedir();
+  const desktopDir = path.join(userHome, 'Desktop');
+  const docsDir = path.join(userHome, 'Documents');
+  const downloadsDir = path.join(userHome, 'Downloads');
+
+  let resolved;
+  if (path.isAbsolute(raw)) {
+    resolved = path.resolve(path.normalize(raw));
+  } else {
+    const lowerRaw = raw.toLowerCase().replace(/\\/g, '/');
+    if (lowerRaw.startsWith('desktop/') || lowerRaw === 'desktop') {
+      resolved = path.resolve(userHome, raw);
+    } else if (lowerRaw.startsWith('documents/') || lowerRaw === 'documents') {
+      resolved = path.resolve(userHome, raw);
+    } else if (lowerRaw.startsWith('downloads/') || lowerRaw === 'downloads') {
+      resolved = path.resolve(userHome, raw);
+    } else {
+      const baseDir = defaultFolder === 'Documents' ? docsDir : (defaultFolder === 'Downloads' ? downloadsDir : desktopDir);
+      resolved = path.resolve(baseDir, raw);
+    }
+  }
+
+  // Reject blocked system directories
+  for (const sysDir of BLOCKED_SYSTEM_DIRS) {
+    if (resolved.toLowerCase().startsWith(sysDir.toLowerCase())) {
+      return { valid: false, error: `Modifying system directory '${sysDir}' is strictly prohibited` };
+    }
+  }
+
+  // Must reside within user home or valid user partition (never drive root)
+  if (!resolved.toLowerCase().startsWith(userHome.toLowerCase())) {
+    const root = path.parse(resolved).root;
+    if (resolved === root || path.dirname(resolved) === root) {
+      return { valid: false, error: 'Modifying drive root directory is prohibited' };
+    }
+  }
+
+  return { valid: true, resolvedPath: resolved };
+}
+
+/**
+ * Closes a running desktop application safely by process/app name.
+ */
+async function safeCloseApp(payload) {
+  const target = typeof payload === 'string' ? payload : (payload && (payload.app || payload.name || payload.target));
+  const valid = validateAppTarget(target);
+  if (!valid.valid) {
+    return { success: false, error: valid.error };
+  }
+  const appClean = valid.app;
+  const force = Boolean(payload && payload.force);
+
+  const entry = ALLOWED_APP_TARGETS[appClean];
+  let procCandidates = [];
+  if (entry && entry.expected) {
+    procCandidates = [...entry.expected].map(p => p.replace(/\.exe$/i, ''));
+  } else {
+    procCandidates = [appClean.replace(/\.exe$/i, '')];
+  }
+
+  let targetProc = null;
+  for (const proc of procCandidates) {
+    const isRunning = await checkProcessRunning(`${proc}.exe`);
+    if (isRunning) {
+      targetProc = proc;
+      break;
+    }
+  }
+
+  if (!targetProc) {
+    return {
+      success: false,
+      status: 'not_running',
+      app: appClean,
+      message: `Application '${appClean}' is not currently running.`
+    };
+  }
+
+  return new Promise((resolve) => {
+    const psCmd = force
+      ? `Stop-Process -Name '${targetProc}' -Force -ErrorAction SilentlyContinue`
+      : `$procs = Get-Process -Name '${targetProc}' -ErrorAction SilentlyContinue; foreach ($p in $procs) { $p.CloseMainWindow() | Out-Null }; Start-Sleep -Milliseconds 600; if (Get-Process -Name '${targetProc}' -ErrorAction SilentlyContinue) { Stop-Process -Name '${targetProc}' -Force -ErrorAction SilentlyContinue }`;
+
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', psCmd],
+      { shell: false, windowsHide: true, timeout: 5000 },
+      async () => {
+        const stillRunning = await checkProcessRunning(`${targetProc}.exe`);
+        if (stillRunning) {
+          resolve({
+            success: false,
+            status: 'failed',
+            error: 'process_still_running',
+            message: `Could not close '${appClean}'. The process is still running.`
+          });
+        } else {
+          resolve({
+            success: true,
+            status: 'succeeded',
+            app: appClean,
+            process: targetProc,
+            message: `Closed application '${appClean}'.`
+          });
+        }
+      }
+    );
+  });
+}
+
+/**
+ * Manages window state: minimize, maximize, restore, or focus.
+ */
+async function safeManageWindow(payload) {
+  const action = (payload && payload.action ? String(payload.action) : 'minimize').toLowerCase().trim();
+  const target = payload && (payload.target || payload.app || payload.title) ? String(payload.target || payload.app || payload.title).trim() : '';
+
+  if (!['minimize', 'maximize', 'restore', 'focus'].includes(action)) {
+    return { success: false, error: `Invalid window action '${action}'. Allowed: minimize, maximize, restore, focus.` };
+  }
+
+  const psScript = `
+Add-Type -TypeDefinition '
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public class WinControl {
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)]
+    public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+}';
+
+$target = '${target.replace(/'/g, "''")}';
+$action = '${action}';
+$hWnd = [IntPtr]::Zero;
+
+if ($target -ne '') {
+    $procs = Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and ($_.MainWindowTitle -like "*$target*" -or $_.ProcessName -like "*$target*") }
+    if ($procs) {
+        $hWnd = $procs[0].MainWindowHandle
+    }
+}
+if ($hWnd -eq [IntPtr]::Zero) {
+    $hWnd = [WinControl]::GetForegroundWindow()
+}
+
+if ($hWnd -ne [IntPtr]::Zero) {
+    $sb = New-Object System.Text.StringBuilder 256
+    [WinControl]::GetWindowText($hWnd, $sb, 256) | Out-Null
+    $title = $sb.ToString()
+
+    switch ($action) {
+        'minimize' { [WinControl]::ShowWindowAsync($hWnd, 6) | Out-Null }
+        'maximize' { [WinControl]::ShowWindowAsync($hWnd, 3) | Out-Null }
+        'restore'  { [WinControl]::ShowWindowAsync($hWnd, 9) | Out-Null }
+        'focus'    { [WinControl]::SetForegroundWindow($hWnd) | Out-Null }
+    }
+    Write-Output "OK|$title"
+} else {
+    Write-Output "NOT_FOUND|"
+}
+`;
+
+  return new Promise((resolve) => {
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', psScript],
+      { shell: false, windowsHide: true, timeout: 3500 },
+      (err, stdout) => {
+        if (err) {
+          return resolve({ success: false, error: err.message });
+        }
+        const out = (stdout || '').trim();
+        if (out.startsWith('OK|')) {
+          const winTitle = out.substring(3);
+          resolve({
+            success: true,
+            status: 'succeeded',
+            action,
+            target: winTitle || target,
+            message: `Window '${winTitle || target || 'active'}' ${action}d.`
+          });
+        } else {
+          resolve({
+            success: false,
+            status: 'window_not_found',
+            error: 'window_not_found',
+            message: `Could not find an active window matching '${target || 'foreground'}'.`
+          });
+        }
+      }
+    );
+  });
+}
+
+/**
+ * Switches to and focuses a running window/app.
+ */
+async function safeSwitchApp(payload) {
+  const target = typeof payload === 'string' ? payload : (payload && (payload.app || payload.title || payload.target));
+  return safeManageWindow({ action: 'focus', target });
+}
+
+/**
+ * Retrieves the currently focused window information with process details.
+ */
+async function safeGetActiveWindow() {
+  const psScript = `
+Add-Type -TypeDefinition '
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public class WinInfo {
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)]
+    public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+}';
+
+$h = [WinInfo]::GetForegroundWindow()
+if ($h -ne [IntPtr]::Zero) {
+    $sb = New-Object System.Text.StringBuilder 256
+    [WinInfo]::GetWindowText($h, $sb, 256) | Out-Null
+    $pidOut = 0
+    [WinInfo]::GetWindowThreadProcessId($h, [ref]$pidOut) | Out-Null
+    $procName = (Get-Process -Id $pidOut -ErrorAction SilentlyContinue).ProcessName
+    Write-Output "$($sb.ToString())|$procName|$pidOut"
+} else {
+    Write-Output "||"
+}
+`;
+
+  return new Promise((resolve) => {
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', psScript],
+      { shell: false, windowsHide: true, timeout: 2500 },
+      (err, stdout) => {
+        if (err || !stdout) {
+          return resolve({ success: false, error: err ? err.message : 'No output' });
+        }
+        const parts = stdout.trim().split('|');
+        const title = parts[0] || '';
+        const processName = parts[1] || '';
+        const pid = parseInt(parts[2], 10) || 0;
+        resolve({
+          success: true,
+          status: 'succeeded',
+          title,
+          process: processName,
+          pid,
+          message: title ? `Active window is '${title}' (${processName})` : 'No active foreground window found.'
+        });
+      }
+    );
+  });
+}
+
+/**
+ * Creates a folder safely under authorized user paths.
+ */
+async function safeCreateFolder(payload) {
+  const rawPath = typeof payload === 'string' ? payload : (payload && (payload.path || payload.folder_name));
+  const res = resolveSafeUserPath(rawPath, 'Desktop');
+  if (!res.valid) {
+    return { success: false, status: 'forbidden_path', error: res.error, message: res.error };
+  }
+  const targetDir = res.resolvedPath;
+  try {
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+    const folderName = path.basename(targetDir);
+    return {
+      success: true,
+      status: 'succeeded',
+      path: targetDir,
+      folder_name: folderName,
+      message: `Folder '${folderName}' created at ${targetDir}`
+    };
+  } catch (e) {
+    return { success: false, status: 'error', error: e.message, message: `Could not create folder: ${e.message}` };
+  }
+}
+
+/**
+ * Writes or appends text to a file safely.
+ */
+async function safeWriteTextFile(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return { success: false, error: 'Payload must be an object with path and content' };
+  }
+  const rawPath = payload.path || payload.file_name || payload.name;
+  const content = String(payload.content != null ? payload.content : (payload.text != null ? payload.text : ''));
+  const append = Boolean(payload.append);
+
+  const res = resolveSafeUserPath(rawPath, 'Desktop');
+  if (!res.valid) {
+    return { success: false, status: 'forbidden_path', error: res.error, message: res.error };
+  }
+  const targetFile = res.resolvedPath;
+
+  const ext = path.extname(targetFile).toLowerCase();
+  if (['.exe', '.bat', '.cmd', '.vbs', '.ps1', '.msi', '.dll', '.scr', '.reg'].includes(ext)) {
+    return { success: false, status: 'forbidden_extension', error: `Writing executable or script files (${ext}) is prohibited.` };
+  }
+
+  try {
+    const parentDir = path.dirname(targetFile);
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true });
+    }
+
+    if (append && fs.existsSync(targetFile)) {
+      fs.appendFileSync(targetFile, content, 'utf8');
+    } else {
+      fs.writeFileSync(targetFile, content, 'utf8');
+    }
+
+    const stat = fs.statSync(targetFile);
+    const fileName = path.basename(targetFile);
+    return {
+      success: true,
+      status: 'succeeded',
+      path: targetFile,
+      file_name: fileName,
+      size_bytes: stat.size,
+      message: `Wrote ${stat.size} bytes to '${fileName}'`
+    };
+  } catch (e) {
+    return { success: false, status: 'error', error: e.message, message: `Could not write file: ${e.message}` };
+  }
+}
+
+/**
+ * Searches for files by query in user directories.
+ */
+async function safeSearchFiles(payload) {
+  const query = typeof payload === 'string' ? payload : (payload && payload.query ? String(payload.query) : '');
+  if (!query.trim()) {
+    return { success: false, error: 'Search query must be non-empty' };
+  }
+  const targetFolder = payload && payload.folder ? String(payload.folder) : 'Desktop';
+  const res = resolveSafeUserPath(targetFolder, 'Desktop');
+  const searchRoot = res.valid ? res.resolvedPath : path.join(os.homedir(), 'Desktop');
+  const limit = Math.min(25, Math.max(1, parseInt(payload && payload.limit, 10) || 10));
+
+  const cleanQuery = query.toLowerCase().trim();
+  const matches = [];
+
+  const walk = (dir, depth = 0) => {
+    if (depth > 4 || matches.length >= limit || !fs.existsSync(dir)) return;
+    try {
+      const items = fs.readdirSync(dir, { withFileTypes: true });
+      for (const item of items) {
+        if (matches.length >= limit) break;
+        if (item.name.startsWith('.') || ['node_modules', 'appdata', '$recycle.bin'].includes(item.name.toLowerCase())) {
+          continue;
+        }
+        const fullPath = path.join(dir, item.name);
+        if (item.name.toLowerCase().includes(cleanQuery)) {
+          let stat = null;
+          try { stat = fs.statSync(fullPath); } catch (e) {}
+          matches.push({
+            name: item.name,
+            path: fullPath,
+            is_directory: item.isDirectory(),
+            size_bytes: stat ? stat.size : 0,
+            modified_at: stat ? stat.mtime.toISOString() : null
+          });
+        }
+        if (item.isDirectory()) {
+          walk(fullPath, depth + 1);
+        }
+      }
+    } catch (e) {}
+  };
+
+  walk(searchRoot);
+  if (matches.length < 3 && searchRoot.toLowerCase().includes('desktop')) {
+    walk(path.join(os.homedir(), 'Documents'));
+  }
+
+  return {
+    success: true,
+    status: 'succeeded',
+    query: cleanQuery,
+    count: matches.length,
+    matches,
+    message: matches.length > 0
+      ? `Found ${matches.length} matching files/folders for '${cleanQuery}'.`
+      : `No files found matching '${cleanQuery}'.`
+  };
+}
+
+/**
+ * Opens a file or folder safely using native system launcher.
+ */
+async function safeOpenPath(payload) {
+  const rawPath = typeof payload === 'string' ? payload : (payload && (payload.path || payload.target));
+  const res = resolveSafeUserPath(rawPath, 'Desktop');
+  if (!res.valid) {
+    return { success: false, status: 'forbidden_path', error: res.error, message: res.error };
+  }
+  const targetPath = res.resolvedPath;
+  if (!fs.existsSync(targetPath)) {
+    return { success: false, status: 'not_found', error: 'File or folder does not exist.', path: targetPath };
+  }
+
+  const err = await shell.openPath(targetPath);
+  if (err) {
+    return { success: false, status: 'failed', error: err, message: `Could not open '${targetPath}': ${err}` };
+  }
+  return {
+    success: true,
+    status: 'succeeded',
+    path: targetPath,
+    message: `Opened '${path.basename(targetPath)}'.`
+  };
+}
+
+/**
+ * Retrieves file or folder metadata.
+ */
+async function safeGetFileInfo(payload) {
+  const rawPath = typeof payload === 'string' ? payload : (payload && (payload.path || payload.target));
+  const res = resolveSafeUserPath(rawPath, 'Desktop');
+  if (!res.valid) {
+    return { success: false, status: 'forbidden_path', error: res.error, message: res.error };
+  }
+  const targetPath = res.resolvedPath;
+  if (!fs.existsSync(targetPath)) {
+    return { success: true, status: 'succeeded', exists: false, path: targetPath, message: `Path does not exist: ${targetPath}` };
+  }
+  const stat = fs.statSync(targetPath);
+  return {
+    success: true,
+    status: 'succeeded',
+    exists: true,
+    path: targetPath,
+    name: path.basename(targetPath),
+    is_directory: stat.isDirectory(),
+    is_file: stat.isFile(),
+    size_bytes: stat.size,
+    created_at: stat.birthtime.toISOString(),
+    modified_at: stat.mtime.toISOString(),
+    message: `'${path.basename(targetPath)}' (${stat.isDirectory() ? 'Directory' : `${stat.size} bytes`})`
+  };
+}
+
+/**
+ * Deletes a file with mandatory explicit confirmation.
+ */
+async function safeDeleteFile(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return { success: false, error: 'Payload must be an object' };
+  }
+  if (!payload.confirmed) {
+    return {
+      success: false,
+      status: 'needs_confirmation',
+      needs_user_confirmation: true,
+      error: 'CONFIRMATION_REQUIRED',
+      message: `Deleting files requires explicit confirmation. Please confirm to delete '${payload.path}'.`
+    };
+  }
+
+  const res = resolveSafeUserPath(payload.path, 'Desktop');
+  if (!res.valid) {
+    return { success: false, status: 'forbidden_path', error: res.error, message: res.error };
+  }
+  const targetFile = res.resolvedPath;
+  if (!fs.existsSync(targetFile)) {
+    return { success: false, status: 'not_found', error: `File not found: ${targetFile}` };
+  }
+  const stat = fs.statSync(targetFile);
+  if (stat.isDirectory()) {
+    return { success: false, status: 'directory_deletion_forbidden', error: 'Deleting entire directories is not allowed for safety.' };
+  }
+
+  try {
+    fs.unlinkSync(targetFile);
+    return {
+      success: true,
+      status: 'succeeded',
+      path: targetFile,
+      message: `Deleted file '${path.basename(targetFile)}'.`
+    };
+  } catch (e) {
+    return { success: false, status: 'error', error: e.message, message: `Could not delete file: ${e.message}` };
+  }
+}
+
+/**
+ * Clicks a UI element via Windows UI Automation or coordinate fallback.
+ */
+async function safeClickElement(payload) {
+  const target = (payload && (payload.name || payload.target || payload.id) ? String(payload.name || payload.target || payload.id).trim() : '');
+  const x = payload && payload.x != null ? parseInt(payload.x, 10) : null;
+  const y = payload && payload.y != null ? parseInt(payload.y, 10) : null;
+
+  if (!target && (x === null || y === null)) {
+    return { success: false, error: 'Either an element name/id or x,y coordinates must be provided' };
+  }
+
+  if (target) {
+    const psUIA = `
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+$desktop = [System.Windows.Automation.AutomationElement]::RootElement
+$target = '${target.replace(/'/g, "''")}'
+$condName = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, $target)
+$condId = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty, $target)
+$condOr = New-Object System.Windows.Automation.OrCondition($condName, $condId)
+$element = $desktop.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condOr)
+
+if ($element) {
+    try {
+        $invPattern = $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+        $invPattern.Invoke()
+        Write-Output "INVOKED"
+        exit 0
+    } catch {
+        $rect = $element.Current.BoundingRectangle
+        if ($rect.Width -gt 0 -and $rect.Height -gt 0) {
+            $cx = [int]($rect.X + ($rect.Width / 2))
+            $cy = [int]($rect.Y + ($rect.Height / 2))
+            Write-Output "COORDS|$cx|$cy"
+            exit 0
+        }
+    }
+}
+Write-Output "NOT_FOUND"
+`;
+
+    const uiaResult = await new Promise((resolve) => {
+      execFile(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', psUIA],
+        { shell: false, windowsHide: true, timeout: 3500 },
+        (err, stdout) => {
+          if (err || !stdout) return resolve(null);
+          const out = stdout.trim();
+          if (out === 'INVOKED') return resolve({ method: 'ui_automation_invoked' });
+          if (out.startsWith('COORDS|')) {
+            const p = out.split('|');
+            return resolve({ method: 'ui_automation_bounds', x: parseInt(p[1], 10), y: parseInt(p[2], 10) });
+          }
+          resolve(null);
+        }
+      );
+    });
+
+    if (uiaResult && uiaResult.method === 'ui_automation_invoked') {
+      return {
+        success: true,
+        status: 'succeeded',
+        method: 'ui_automation',
+        target,
+        message: `Clicked UI element '${target}' via UI Automation.`
+      };
+    }
+
+    if (uiaResult && uiaResult.x && uiaResult.y) {
+      return safeClickCoordinates(uiaResult.x, uiaResult.y, target);
+    }
+  }
+
+  if (x !== null && y !== null) {
+    return safeClickCoordinates(x, y, target || `coordinates (${x}, ${y})`);
+  }
+
+  return {
+    success: false,
+    status: 'element_not_found',
+    error: 'element_not_found',
+    message: `Could not locate UI element '${target}' on screen.`
+  };
+}
+
+function safeClickCoordinates(x, y, label) {
+  const psClick = `
+Add-Type -TypeDefinition '
+using System;
+using System.Runtime.InteropServices;
+public class MouseUtil {
+    [DllImport("user32.dll")]
+    public static extern bool SetCursorPos(int X, int Y);
+    [DllImport("user32.dll")]
+    public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, int dwExtraInfo);
+    public const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
+    public const uint MOUSEEVENTF_LEFTUP   = 0x0004;
+    public static void Click(int x, int y) {
+        SetCursorPos(x, y);
+        mouse_event(MOUSEEVENTF_LEFTDOWN, (uint)x, (uint)y, 0, 0);
+        System.Threading.Thread.Sleep(50);
+        mouse_event(MOUSEEVENTF_LEFTUP, (uint)x, (uint)y, 0, 0);
+    }
+}';
+[MouseUtil]::Click(${x}, ${y})
+`;
+
+  return new Promise((resolve) => {
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', psClick],
+      { shell: false, windowsHide: true, timeout: 2500 },
+      (err) => {
+        if (err) return resolve({ success: false, error: err.message });
+        resolve({
+          success: true,
+          status: 'succeeded',
+          method: 'coordinate_click',
+          x,
+          y,
+          message: `Clicked ${label}.`
+        });
+      }
+    );
+  });
+}
+
+/**
+ * Scrolls active window up or down.
+ */
+async function safeScrollWindow(payload) {
+  const dir = (payload && payload.direction ? String(payload.direction) : 'down').toLowerCase();
+  const isUp = dir === 'up' || dir === 'page_up';
+  const keyToPress = isUp ? 'PageUp' : 'PageDown';
+  return safePressKeys(keyToPress);
+}
+
+/**
+ * Captures primary desktop screen to base64 JPEG with sensitive window privacy defense.
+ */
+async function safeDesktopScreenCapture() {
+  const sensitive = await isForegroundSensitive();
+  if (sensitive.isSensitive) {
+    return {
+      success: false,
+      status: 'privacy_blocked',
+      error: 'PRIVACY_PROTECTED',
+      message: `Screen capture blocked: Active window '${sensitive.title}' contains sensitive information.`
+    };
+  }
+
+  const psScreen = `
+Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName System.Windows.Forms
+$bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+$bmp = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+$graphics = [System.Drawing.Graphics]::FromImage($bmp)
+$graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+$ms = New-Object System.IO.MemoryStream
+$bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+$bytes = $ms.ToArray()
+$base64 = [Convert]::ToBase64String($bytes)
+$graphics.Dispose()
+$bmp.Dispose()
+$ms.Dispose()
+Write-Output $base64
+`;
+
+  return new Promise((resolve) => {
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', psScreen],
+      { shell: false, windowsHide: true, maxBuffer: 15 * 1024 * 1024, timeout: 5000 },
+      (err, stdout) => {
+        if (err || !stdout) {
+          return resolve({ success: false, error: err ? err.message : 'Capture failed' });
+        }
+        const b64 = stdout.trim();
+        resolve({
+          success: true,
+          status: 'succeeded',
+          image_base64: b64,
+          format: 'image/jpeg',
+          message: 'Desktop screenshot captured.'
+        });
+      }
+    );
+  });
+}
+
+async function isForegroundSensitive() {
+  const win = await getActiveWindowInfo();
+  if (!win || !win.title) return { isSensitive: false, title: '' };
+  const lower = win.title.toLowerCase();
+  const sensitiveWords = ['password', 'bitwarden', '1password', 'keepass', 'bank', 'chase', 'hdfc', 'sbi', 'icici', 'paypal', 'authenticator'];
+  for (const w of sensitiveWords) {
+    if (lower.includes(w)) {
+      return { isSensitive: true, title: win.title };
+    }
+  }
+  return { isSensitive: false, title: win.title };
+}
+
 module.exports = {
   FORBIDDEN_SHELL_CHARS_REGEX,
   ALLOWED_APP_TARGETS,
@@ -1349,5 +2085,20 @@ module.exports = {
   verifyProcessAppeared,
   verifyWindowOrProcessAppeared,
   levenshteinDistance,
-  computeSimilarity
+  computeSimilarity,
+  // Phase 2 exports:
+  resolveSafeUserPath,
+  safeCloseApp,
+  safeManageWindow,
+  safeSwitchApp,
+  safeGetActiveWindow,
+  safeClickElement,
+  safeScrollWindow,
+  safeCreateFolder,
+  safeWriteTextFile,
+  safeSearchFiles,
+  safeOpenPath,
+  safeGetFileInfo,
+  safeDeleteFile,
+  safeDesktopScreenCapture
 };

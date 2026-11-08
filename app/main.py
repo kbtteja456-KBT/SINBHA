@@ -62,13 +62,37 @@ app.add_middleware(
 # Step 11: Security Headers, Request Size Limiter & CSRF Protection Middleware
 app.add_middleware(SecurityHeadersAndCSRFMiddleware)
 
+async def proactive_scheduler_background_loop(poll_interval: float = 30.0):
+    """
+    Durable background worker: wakes periodically to deliver due proactive events.
+    """
+    from app.proactive_scheduler import process_and_deliver_due_events
+    while True:
+        try:
+            await asyncio.sleep(poll_interval)
+            await process_and_deliver_due_events(relay_manager=relay_manager)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.warning(f"Proactive scheduler loop error: {e}")
+
 @app.on_event("startup")
-def on_app_startup():
+async def on_app_startup():
     """
     Requirement 1: Config safety: refuses to start in production if required secrets are missing.
     """
     validate_production_config()
     db.init_db()
+
+    # Pillar 2: Startup catch-up for proactive scheduler
+    from app.proactive_scheduler import process_and_deliver_due_events
+    try:
+        await process_and_deliver_due_events(relay_manager=relay_manager)
+    except Exception as e:
+        logger.warning(f"Startup proactive event delivery check error: {e}")
+
+    # Launch background scheduler task
+    asyncio.create_task(proactive_scheduler_background_loop())
 
 SESSION_COOKIE_NAME = "sinbha_session"
 
@@ -162,9 +186,22 @@ class TaskStatusUpdateRequest(BaseModel):
 class FactCreateRequest(BaseModel):
     fact: str
     category: Optional[str] = "general"
+    fact_type: Optional[str] = "stable_fact"
+    source: Optional[str] = "user_explicit"
+    confidence: Optional[int] = 100
+    is_sensitive: Optional[bool] = False
+    expires_at: Optional[datetime.datetime] = None
 
 class FactUpdateRequest(BaseModel):
     fact: str
+    category: Optional[str] = None
+    fact_type: Optional[str] = None
+    confidence: Optional[int] = None
+    is_sensitive: Optional[bool] = None
+    expires_at: Optional[datetime.datetime] = None
+
+class MemoryToggleRequest(BaseModel):
+    enabled: bool
 
 # Step 16 / 16b: Device & Command Request Models
 class DeviceRegisterRequest(BaseModel):
@@ -202,6 +239,12 @@ class DeviceCommandAckRequest(BaseModel):
     details: Optional[str] = ""
     result: Optional[dict] = None
     error: Optional[str] = None
+
+class ProactiveEventSnoozeRequest(BaseModel):
+    snooze_minutes: Optional[int] = 30
+
+class ProactiveEventRescheduleRequest(BaseModel):
+    new_scheduled_for_utc: str
 
 def get_local_ip():
     """Finds the local network IP so you can open the app on your phone."""
@@ -367,7 +410,7 @@ async def signup_endpoint(payload: SignupRequest, request: Request, response: Re
                 "email": user["email"],
                 "is_verified": False
             },
-            "message": "Account created! 🌸 Please check your email to confirm your account and start chatting."
+            "message": "Account created! Please check your email to confirm your account and start chatting."
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -420,7 +463,7 @@ async def login_endpoint(payload: LoginRequest, request: Request, response: Resp
         return {
             "success": True,
             "user": user,
-            "message": "Welcome back! 🌸"
+            "message": "Welcome back!"
         }
     except ValueError as e:
         msg = str(e)
@@ -568,7 +611,7 @@ async def logout_endpoint(request: Request, response: Response):
         db.revoke_device_command_token(cmd_token)
 
     response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
-    return {"success": True, "message": "Logged out successfully 🌸"}
+    return {"success": True, "message": "Logged out successfully"}
 
 @app.get("/api/auth/me")
 async def get_me_endpoint(request: Request):
@@ -672,7 +715,7 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
     if len(user_msg) > 2000:
         raise HTTPException(
             status_code=400,
-            detail="Message is too long. Please keep your message under 2,000 characters. 🌸"
+            detail="Message is too long. Please keep your message under 2,000 characters."
         )
 
     # Requirement 4: Rate limit check
@@ -680,7 +723,7 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
 
     if not user_msg:
         return JSONResponse({
-            "reply": "I'm listening whenever you want to talk 🌸",
+            "reply": "I'm listening whenever you want to talk",
             "proposal": None
         })
 
@@ -706,7 +749,7 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
         db.cancel_pending_proposal(user_id, reason="Emergency STOP command received in chat")
         db.cancel_pending_task_action(user_id, reason="Emergency STOP command received in chat")
         
-        stop_reply = "🛑 STOP command received. All operations halted immediately. Type any message or click 'Resume Chat' to continue whenever you're ready 🌸"
+        stop_reply = "🛑 STOP command received. All operations halted immediately. Type any message or click 'Resume Chat' to continue whenever you're ready"
         db.save_message(user_id, "assistant", stop_reply)
         db.log_audit(user_id, "STOP_TRIGGERED", "User commanded STOP in chat.")
         return JSONResponse({
@@ -732,9 +775,9 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
             if res:
                 db.save_message(user_id, "user", user_msg)
                 if res["action_type"] == "task_complete":
-                    reply_msg = f"Woohoo! 🎉 Marked '{res['task_title']}' as completed! Amazing job! 🌸"
+                    reply_msg = f"Woohoo! 🎉 Marked '{res['task_title']}' as completed! Amazing job!"
                 else:
-                    reply_msg = f"I've removed '{res['task_title']}' from your tasks 🌸"
+                    reply_msg = f"I've removed '{res['task_title']}' from your tasks"
                 db.save_message(user_id, "assistant", reply_msg)
                 return JSONResponse({
                     "reply": reply_msg,
@@ -744,7 +787,7 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
         elif is_cancel:
             db.cancel_pending_task_action(user_id, reason="User cancelled in chat")
             db.save_message(user_id, "user", user_msg)
-            reply_msg = "No problem at all! Kept it just as it is 🌸"
+            reply_msg = "No problem at all! Kept it just as it is"
             db.save_message(user_id, "assistant", reply_msg)
             return JSONResponse({
                 "reply": reply_msg,
@@ -766,7 +809,7 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
             confirmed = db.confirm_pending_proposal(user_id)
             if confirmed:
                 db.save_message(user_id, "user", user_msg)
-                reply_msg = f"Saved! I've added '{confirmed['title']}' to your tasks. You've got this! 🌸"
+                reply_msg = f"Saved! I've added '{confirmed['title']}' to your tasks. You've got this!"
                 db.save_message(user_id, "assistant", reply_msg)
                 return JSONResponse({
                     "reply": reply_msg,
@@ -776,7 +819,7 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
         elif is_task_cancel:
             db.cancel_pending_proposal(user_id, reason="User cancelled in chat")
             db.save_message(user_id, "user", user_msg)
-            reply_msg = "No problem at all! I dropped that task proposal 🌸"
+            reply_msg = "No problem at all! I dropped that task proposal"
             db.save_message(user_id, "assistant", reply_msg)
             return JSONResponse({
                 "reply": reply_msg,
@@ -799,7 +842,7 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
             db.save_message(user_id, "user", user_msg)
             db.delete_fact(user_id, target_id)
             db.clear_pending_action(user_id)
-            reply = "I've forgotten that for you! It's wiped from my memory 🌸"
+            reply = "I've forgotten that for you! It's wiped from my memory"
             db.save_message(user_id, "assistant", reply)
             return JSONResponse({
                 "reply": reply,
@@ -810,7 +853,7 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
         elif is_no:
             db.save_message(user_id, "user", user_msg)
             db.clear_pending_action(user_id)
-            reply = "No problem at all! I'll keep remembering it 🌸"
+            reply = "No problem at all! I'll keep remembering it"
             db.save_message(user_id, "assistant", reply)
             return JSONResponse({
                 "reply": reply,
@@ -832,7 +875,7 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
             relay_res = await relay_manager.relay_command(user_id, cmd_data)
             db.save_message(user_id, "user", user_msg)
             if relay_res.get("success"):
-                reply = f"🌸 Remote action sent to your device! ({cmd_data.get('type')})"
+                reply = f"Remote action sent to your device! ({cmd_data.get('type')})"
             else:
                 reply = f"Could not execute remote command: {relay_res.get('message', 'Rejected')}"
             db.save_message(user_id, "assistant", reply)
@@ -844,7 +887,7 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
         elif is_no:
             db.save_message(user_id, "user", user_msg)
             db.clear_pending_action(user_id)
-            reply = "Remote action cancelled 🌸"
+            reply = "Remote action cancelled"
             db.save_message(user_id, "assistant", reply)
             return JSONResponse({
                 "reply": reply,
@@ -913,7 +956,7 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
         )
     except Exception as e:
         logger.error(f"Agent loop error: {e}", exc_info=True)
-        fallback_reply = "I had trouble reaching my AI brain just now. Please try again or tap Retry 🌸"
+        fallback_reply = "I had trouble reaching my AI brain just now. Please try again or tap Retry"
         db.save_message(user_id, "assistant", fallback_reply)
         return JSONResponse({
             "reply": fallback_reply,
@@ -1056,10 +1099,10 @@ async def confirm_task_endpoint(payload: TaskConfirmWithRemindersRequest = None,
     if not confirmed:
         return JSONResponse({
             "success": False,
-            "reply": "This task proposal has expired or was already resolved 🌸"
+            "reply": "This task proposal has expired or was already resolved"
         })
 
-    reply_msg = f"Saved! I've added '{confirmed['title']}' to your tasks. You've got this! 🌸"
+    reply_msg = f"Saved! I've added '{confirmed['title']}' to your tasks. You've got this!"
     db.save_message(user_id, "assistant", reply_msg)
     return JSONResponse({
         "success": True,
@@ -1073,7 +1116,7 @@ async def cancel_task_endpoint(user: dict = Depends(get_current_user)):
     """Cancels pending task proposal for the logged-in user."""
     user_id = user["id"]
     db.cancel_pending_proposal(user_id, reason="User clicked Cancel")
-    reply_msg = "No problem at all! I dropped that task proposal 🌸"
+    reply_msg = "No problem at all! I dropped that task proposal"
     db.save_message(user_id, "assistant", reply_msg)
     return JSONResponse({
         "success": True,
@@ -1095,6 +1138,14 @@ async def check_reminders_endpoint(tz_offset_minutes: Optional[int] = None, user
         client_now = utc_now - datetime.timedelta(minutes=tz_offset_minutes)
         now_dt = client_now.replace(tzinfo=None)
 
+    # Proactive event delivery check for polling device
+    delivered_proactive = []
+    try:
+        from app.proactive_scheduler import process_and_deliver_due_events
+        delivered_proactive = await process_and_deliver_due_events(user_id=user_id, relay_manager=relay_manager)
+    except Exception:
+        pass
+
     needing = db.check_due_reminders(user_id, now_dt)
     if needing:
         first = needing[0]
@@ -1109,6 +1160,7 @@ async def check_reminders_endpoint(tz_offset_minutes: Optional[int] = None, user
             "speech_text": first.get("speech_text", ""),
             "needing_bird": needing,
             "count": len(needing),
+            "proactive_events": delivered_proactive,
             "emergency_stopped": False
         }
     return {
@@ -1116,6 +1168,7 @@ async def check_reminders_endpoint(tz_offset_minutes: Optional[int] = None, user
         "task": None,
         "needing_bird": [],
         "count": 0,
+        "proactive_events": delivered_proactive,
         "emergency_stopped": False
     }
 
@@ -1575,7 +1628,7 @@ async def confirm_action_endpoint(payload: ActionConfirmRequest, user: dict = De
         if action == "confirm":
             res = db.confirm_pending_task_action(user_id)
             if res:
-                reply = f"Woohoo! 🎉 Marked '{res['task_title']}' as completed! Amazing job! 🌸" if res["action_type"] == "task_complete" else f"I've removed '{res['task_title']}' from your tasks 🌸"
+                reply = f"Woohoo! 🎉 Marked '{res['task_title']}' as completed! Amazing job!" if res["action_type"] == "task_complete" else f"I've removed '{res['task_title']}' from your tasks"
                 db.save_message(user_id, "assistant", reply)
                 return JSONResponse({
                     "success": True,
@@ -1586,20 +1639,20 @@ async def confirm_action_endpoint(payload: ActionConfirmRequest, user: dict = De
                 })
         else:
             db.cancel_pending_task_action(user_id, reason="User clicked Cancel")
-            reply = "No problem at all! Kept it just as it is 🌸"
+            reply = "No problem at all! Kept it just as it is"
             db.save_message(user_id, "assistant", reply)
             return JSONResponse({"success": True, "reply": reply, "action_performed": "cancelled"})
 
     pending = db.get_pending_action(user_id)
     if not pending:
-        return JSONResponse({"success": False, "reply": "No pending action found 🌸"})
+        return JSONResponse({"success": False, "reply": "No pending action found"})
 
     if action == "confirm":
         if pending["action_type"] == "forget_fact":
             target_id = pending["target_id"]
             db.delete_fact(user_id, target_id)
             db.clear_pending_action(user_id)
-            reply = "I've forgotten that for you! It's wiped from my memory 🌸"
+            reply = "I've forgotten that for you! It's wiped from my memory"
             db.save_message(user_id, "assistant", reply)
             return JSONResponse({
                 "success": True,
@@ -1609,12 +1662,12 @@ async def confirm_action_endpoint(payload: ActionConfirmRequest, user: dict = De
             })
     else:
         db.clear_pending_action(user_id)
-        reply = "No problem at all! I'll keep remembering it 🌸"
+        reply = "No problem at all! I'll keep remembering it"
         db.save_message(user_id, "assistant", reply)
         return JSONResponse({"success": True, "reply": reply, "action_performed": "cancelled"})
 
     db.clear_pending_action(user_id)
-    return JSONResponse({"success": True, "reply": "Action completed 🌸"})
+    return JSONResponse({"success": True, "reply": "Action completed"})
 
 # ----------------- Emergency STOP / Resume Endpoints (Per-User) -----------------
 
@@ -1623,14 +1676,22 @@ async def stop_endpoint(user: dict = Depends(get_current_user)):
     """Per-user emergency stop switch."""
     user_id = user["id"]
     db.set_emergency_stopped(user_id, True)
-    relay_manager.on_emergency_stop(user_id)
+    stop_summary = relay_manager.on_emergency_stop(user_id)
     db.cancel_pending_proposal(user_id, reason="Emergency STOP button clicked in header")
     db.cancel_pending_task_action(user_id, reason="Emergency STOP button clicked in header")
     db.log_audit(user_id, "STOP_TRIGGERED", "Emergency STOP button clicked in header.")
     
+    offline_devices = (stop_summary or {}).get("offline_devices", [])
+    if offline_devices:
+        dev_names = ", ".join([d.get("name") or d.get("device_id") for d in offline_devices])
+        msg = f"🛑 Emergency STOP active. Pending actions halted on server. Note: {dev_names} is currently offline and cannot receive STOP until it reconnects."
+    else:
+        msg = "🛑 Emergency STOP triggered. All processing halted immediately."
+
     return JSONResponse({
         "status": "stopped",
-        "message": "🛑 Emergency STOP triggered. All processing halted immediately."
+        "message": msg,
+        "offline_devices": offline_devices
     })
 
 @app.post("/api/resume")
@@ -1641,39 +1702,140 @@ async def resume_endpoint(user: dict = Depends(get_current_user)):
     db.log_audit(user_id, "STOP_RESUMED", "Resume button clicked.")
     return JSONResponse({
         "status": "resumed",
-        "message": "🌸 Welcome back! Everything is quiet and ready."
+        "message": "Welcome back! Everything is quiet and ready."
     })
 
-# ----------------- Memory & Admin/Dev Endpoints (Requirement 4) -----------------
+# ----------------- Proactive Assistance & Lifecycle Endpoints -----------------
+
+@app.get("/api/proactive/events")
+async def get_proactive_events_endpoint(user: dict = Depends(get_current_user), status: Optional[str] = None):
+    """Lists proactive events for current user, optionally filtered by status."""
+    from app.proactive_scheduler import list_user_proactive_events
+    events = list_user_proactive_events(user["id"], status=status)
+    return {"events": events, "count": len(events)}
+
+@app.post("/api/proactive/events/{event_id}/snooze")
+async def snooze_proactive_event_endpoint(
+    event_id: int,
+    payload: Optional[ProactiveEventSnoozeRequest] = None,
+    user: dict = Depends(get_current_user)
+):
+    """Snoozes a proactive event for N minutes."""
+    from app.proactive_scheduler import snooze_proactive_event
+    mins = payload.snooze_minutes if payload and payload.snooze_minutes else 30
+    success = snooze_proactive_event(user["id"], event_id, mins)
+    if not success:
+        raise HTTPException(status_code=404, detail="Proactive event not found or unauthorized.")
+    return {"success": True, "event_id": event_id, "snoozed_minutes": mins}
+
+@app.post("/api/proactive/events/{event_id}/dismiss")
+async def dismiss_proactive_event_endpoint(event_id: int, user: dict = Depends(get_current_user)):
+    """Dismisses a proactive event and enforces 24-hour anti-nagging cooldown."""
+    from app.proactive_scheduler import dismiss_proactive_event
+    success = dismiss_proactive_event(user["id"], event_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Proactive event not found or unauthorized.")
+    return {"success": True, "event_id": event_id, "cooldown_hours": 24}
+
+@app.post("/api/proactive/events/{event_id}/complete")
+async def complete_proactive_event_endpoint(event_id: int, user: dict = Depends(get_current_user)):
+    """Marks a proactive event as completed."""
+    from app.proactive_scheduler import complete_proactive_event
+    success = complete_proactive_event(user["id"], event_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Proactive event not found or unauthorized.")
+    return {"success": True, "event_id": event_id, "status": "completed"}
+
+@app.post("/api/proactive/events/{event_id}/reschedule")
+async def reschedule_proactive_event_endpoint(
+    event_id: int,
+    payload: ProactiveEventRescheduleRequest,
+    user: dict = Depends(get_current_user)
+):
+    """Reschedules a proactive event to a new UTC time."""
+    from app.proactive_scheduler import reschedule_proactive_event
+    try:
+        new_dt = datetime.datetime.fromisoformat(payload.new_scheduled_for_utc)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ISO 8601 datetime format for new_scheduled_for_utc.")
+    success = reschedule_proactive_event(user["id"], event_id, new_dt)
+    if not success:
+        raise HTTPException(status_code=404, detail="Proactive event not found or unauthorized.")
+    return {"success": True, "event_id": event_id, "rescheduled_to": new_dt.isoformat()}
+
+# ----------------- Memory & Admin/Dev Endpoints (Requirement 4 & Pillar 3) -----------------
 
 @app.get("/api/facts")
-async def get_facts_endpoint(user: dict = Depends(get_current_user)):
-    """Returns remembered facts for the logged-in user."""
-    return {"facts": db.get_all_facts(user["id"])}
+@app.get("/api/user/memory")
+async def get_facts_endpoint(user: dict = Depends(get_current_user), fact_type: Optional[str] = None):
+    """Returns remembered facts and personal context with provenance for the logged-in user."""
+    return {
+        "facts": db.get_all_facts(user["id"], fact_type=fact_type),
+        "memory_enabled": db.is_memory_enabled(user["id"])
+    }
 
 @app.post("/api/facts")
 async def add_fact_endpoint(payload: FactCreateRequest, user: dict = Depends(get_current_user)):
-    """Manually add a fact to memory for the logged-in user."""
-    new_id = db.add_fact(user["id"], payload.fact, payload.category or "general")
-    if not new_id:
-        raise HTTPException(status_code=400, detail="Fact cannot be empty.")
-    return {"success": True, "id": new_id}
+    """Manually add a fact with provenance and confidence to memory."""
+    if not db.is_memory_enabled(user["id"]):
+        raise HTTPException(status_code=403, detail="Memory storage is currently disabled in your settings.")
+    new_id = db.add_fact(
+        user_id=user["id"],
+        fact_text=payload.fact,
+        category=payload.category or "general",
+        fact_type=payload.fact_type or "stable_fact",
+        source=payload.source or "user_explicit",
+        confidence=payload.confidence if payload.confidence is not None else 100,
+        is_sensitive=bool(payload.is_sensitive),
+        expires_at=payload.expires_at
+    )
+    if new_id == -1:
+        raise HTTPException(status_code=400, detail="Fact cannot be empty or memory is disabled.")
+    return {"success": True, "id": new_id, "fact_id": new_id}
 
 @app.put("/api/facts/{fact_id}")
+@app.put("/api/user/memory/{fact_id}")
 async def update_fact_endpoint(fact_id: int, payload: FactUpdateRequest, user: dict = Depends(get_current_user)):
-    """Edit an existing fact for the logged-in user."""
-    ok = db.update_fact(user["id"], fact_id, payload.fact)
+    """Edit an existing fact and update its provenance for the logged-in user."""
+    ok = db.update_fact(
+        user_id=user["id"],
+        fact_id=fact_id,
+        new_text=payload.fact,
+        category=payload.category,
+        fact_type=payload.fact_type,
+        confidence=payload.confidence,
+        is_sensitive=payload.is_sensitive,
+        expires_at=payload.expires_at
+    )
     if not ok:
         raise HTTPException(status_code=404, detail="Fact not found.")
     return {"success": True}
 
 @app.delete("/api/facts/{fact_id}")
+@app.delete("/api/user/memory/{fact_id}")
 async def delete_fact_endpoint(fact_id: int, user: dict = Depends(get_current_user)):
-    """Delete a fact for the logged-in user."""
+    """Delete a fact for the logged-in user (Right to be Forgotten)."""
     ok = db.delete_fact(user["id"], fact_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Fact not found.")
     return {"success": True}
+
+@app.get("/api/user/memory/export")
+async def export_memory_endpoint(user: dict = Depends(get_current_user)):
+    """Export the user's full personal memory as clean structured JSON."""
+    return db.export_user_memory(user["id"])
+
+@app.delete("/api/user/memory")
+async def wipe_memory_endpoint(user: dict = Depends(get_current_user)):
+    """Complete personal memory wipe (Right to be Forgotten)."""
+    db.wipe_user_memory(user["id"])
+    return {"success": True, "message": "All your personal memory facts have been permanently wiped."}
+
+@app.post("/api/user/memory/toggle")
+async def toggle_memory_endpoint(payload: MemoryToggleRequest, user: dict = Depends(get_current_user)):
+    """Enables or disables persistent memory storage for the logged-in user."""
+    db.toggle_user_memory(user["id"], payload.enabled)
+    return {"success": True, "memory_enabled": payload.enabled}
 
 @app.post("/api/purge")
 async def purge_data_endpoint(user: dict = Depends(get_current_user)):
@@ -2055,7 +2217,7 @@ async def device_websocket_endpoint(websocket: WebSocket):
         await websocket.send_text(json.dumps({
             "type": "ready",
             "device_id": device_id,
-            "message": "Secure channel connected 🌸"
+            "message": "Secure channel connected"
         }))
 
         # Drain and deliver unexpired offline commands
@@ -2977,7 +3139,7 @@ async def health_check():
             "ai_cost_cap_reached": ai_cap_reached,
             "ai_today_messages": global_ai_count,
             "ai_daily_cap": global_ai_cap,
-            "version": "1.0.0"
+            "version": get_app_version()
         }
     )
 
@@ -3036,10 +3198,10 @@ async def verify_email_page(response: Response, token: Optional[str] = None):
         </head>
         <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #fffaf5;">
             <div style="max-width: 440px; margin: 20px; padding: 32px; background: white; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); text-align: center; border: 1px solid #fed7aa;">
-                <h1 style="color: #ea580c; margin-top: 0; font-size: 28px;">🌸 Email Verified!</h1>
+                <h1 style="color: #ea580c; margin-top: 0; font-size: 28px;">Email Verified!</h1>
                 <p style="color: #431407; font-size: 16px; line-height: 1.5;">Your email has been confirmed. You are now logged in!</p>
                 <div style="margin-top: 24px;">
-                    <a href="/?verified=true" style="display: inline-block; background: #f97316; color: white; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 600; font-size: 16px;">Open SINBHA & Start Chatting 🌸</a>
+                    <a href="/?verified=true" style="display: inline-block; background: #f97316; color: white; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 600; font-size: 16px;">Open SINBHA & Start Chatting</a>
                 </div>
                 <p style="color: #9a3412; font-size: 13px; margin-top: 16px;">Opening your app directly...</p>
             </div>
@@ -3154,7 +3316,7 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     local_ip = get_local_ip()
     print("=" * 60)
-    print("🌸 SINBHA is running!")
+    print("SINBHA is running!")
     print(f"👉 On your computer:  http://localhost:{port}")
     print(f"👉 On your phone:     http://{local_ip}:{port}")
     print("=" * 60)

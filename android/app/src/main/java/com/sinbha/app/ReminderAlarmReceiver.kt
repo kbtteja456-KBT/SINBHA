@@ -54,7 +54,7 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
 
         val taskId = intent.getIntExtra(AlarmScheduler.EXTRA_TASK_ID, -1)
         val taskTitle = intent.getStringExtra(AlarmScheduler.EXTRA_TASK_TITLE) ?: "Task Reminder"
-        val dueText = intent.getStringExtra(AlarmScheduler.EXTRA_DUE_TEXT) ?: "Due now 🌸"
+        val dueText = intent.getStringExtra(AlarmScheduler.EXTRA_DUE_TEXT) ?: "Due now"
         val reminderId = intent.getStringExtra(AlarmScheduler.EXTRA_REMINDER_ID)
         val soundMode = intent.getStringExtra(AlarmScheduler.EXTRA_SOUND_MODE) ?: prefs.reminderSoundMode
         val customSongUri = intent.getStringExtra(AlarmScheduler.EXTRA_CUSTOM_SONG_URI) ?: prefs.customSongUri

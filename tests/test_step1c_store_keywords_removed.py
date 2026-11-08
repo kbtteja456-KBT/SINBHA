@@ -5,6 +5,7 @@ are completely removed from AI tools, and test fixtures are only reachable via e
 """
 import pytest
 from unittest.mock import patch
+import app.browser_agent
 from app.agent_tools import handle_browser_task
 
 @pytest.mark.asyncio

@@ -76,7 +76,6 @@ DEFAULT_MODELS = {
     ],
     "gemini": [
         {"id": "gemini-3-flash-preview", "supports_tools": True, "tpm": 1000000, "tpd": 1500, "cost_in": 0.0, "cost_out": 0.0},
-        {"id": "gemini-2.5-flash", "supports_tools": True, "tpm": 1000000, "tpd": 1500, "cost_in": 0.0, "cost_out": 0.0},
     ],
     "openrouter": [
         {"id": "google/gemini-2.5-flash", "supports_tools": True, "tpm": 500000, "tpd": 1000000, "cost_in": 0.15, "cost_out": 0.60},

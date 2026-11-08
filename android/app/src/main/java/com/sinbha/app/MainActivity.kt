@@ -15,7 +15,7 @@ class MainActivity : BridgeActivity() {
 
     companion object {
         const val TRUSTED_HOST = "sinbha-backend.onrender.com"
-        const val FALLBACK_URL = "file:///android_asset/public/index.html"
+        const val FALLBACK_URL = "file:///android_asset/public/waking.html"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -93,9 +93,35 @@ class MainActivity : BridgeActivity() {
                     error: WebResourceError?
                 ) {
                     super.onReceivedError(view, request, error)
-                    // If main page fails to load (e.g. cold start / offline), load friendly waking page
+                    // If main page fails to load (e.g. cold start / offline), load friendly waking page with diagnostics
                     if (request?.isForMainFrame == true) {
-                        view?.loadUrl(FALLBACK_URL)
+                        val desc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                            error?.description?.toString() ?: "Network connection error"
+                        } else {
+                            "Network connection error"
+                        }
+                        val errCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                            error?.errorCode ?: -1
+                        } else {
+                            -1
+                        }
+                        val targetUrl = "$FALLBACK_URL?status=$errCode&error=${android.net.Uri.encode(desc)}"
+                        view?.loadUrl(targetUrl)
+                    }
+                }
+
+                override fun onReceivedHttpError(
+                    view: WebView?,
+                    request: WebResourceRequest?,
+                    errorResponse: android.webkit.WebResourceResponse?
+                ) {
+                    super.onReceivedHttpError(view, request, errorResponse)
+                    val statusCode = errorResponse?.statusCode ?: 0
+                    // Catch HTTP 429 (rate-limit) and 5xx (server error / cold start) on main frame
+                    if (request?.isForMainFrame == true && (statusCode == 429 || statusCode >= 500)) {
+                        val reason = errorResponse?.reasonPhrase ?: "HTTP $statusCode"
+                        val targetUrl = "$FALLBACK_URL?status=$statusCode&error=${android.net.Uri.encode(reason)}"
+                        view?.loadUrl(targetUrl)
                     }
                 }
             }

@@ -38,7 +38,7 @@ class AlarmActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private var taskId: Int = -1
     private var taskTitle: String = "Task Reminder"
-    private var dueText: String = "Due now 🌸"
+    private var dueText: String = "Due now"
     private var reminderId: String? = null
     private var soundMode: String = "alarm_tone"
     private var customSongUri: String? = null
@@ -71,7 +71,7 @@ class AlarmActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         // Read intent extras
         taskId = intent.getIntExtra(AlarmScheduler.EXTRA_TASK_ID, -1)
         taskTitle = intent.getStringExtra(AlarmScheduler.EXTRA_TASK_TITLE) ?: "Task Reminder"
-        dueText = intent.getStringExtra(AlarmScheduler.EXTRA_DUE_TEXT) ?: "Due now 🌸"
+        dueText = intent.getStringExtra(AlarmScheduler.EXTRA_DUE_TEXT) ?: "Due now"
         reminderId = intent.getStringExtra(AlarmScheduler.EXTRA_REMINDER_ID)
         soundMode = intent.getStringExtra(AlarmScheduler.EXTRA_SOUND_MODE) ?: prefs.reminderSoundMode
         customSongUri = intent.getStringExtra(AlarmScheduler.EXTRA_CUSTOM_SONG_URI) ?: prefs.customSongUri

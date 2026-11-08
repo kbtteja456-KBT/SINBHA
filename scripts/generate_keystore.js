@@ -13,7 +13,7 @@ const ANDROID_DIR = path.resolve(__dirname, '..', 'android');
 const KEYSTORE_PATH = path.join(ANDROID_DIR, 'sinbha-release.keystore');
 const SIGNING_PROPERTIES_PATH = path.join(ANDROID_DIR, 'signing.properties');
 
-console.log('🌸 SINBHA Release Key Setup...\n');
+console.log('SINBHA Release Key Setup...\n');
 
 function findKeytool() {
   if (process.env.JAVA_HOME) {

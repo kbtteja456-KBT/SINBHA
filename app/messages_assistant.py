@@ -244,8 +244,22 @@ async def draft_whatsapp_reply(
 
     # Style modeling reference
     style_guide = "casual, polite, concise"
+    is_formal = False
     if sent_messages_sample:
         style_guide = " | ".join(sent_messages_sample[:3])
+        if any(w in style_guide.lower() for w in ("regards", "sincerely", "dear", "formal")):
+            is_formal = True
+    elif user_id:
+        try:
+            from app import database as db
+            facts = db.get_all_facts(user_id, fact_type="preference")
+            style_facts = [f["fact"] for f in facts if any(k in f["fact"].lower() for k in ("style", "tone", "communication", "formal", "professional"))]
+            if style_facts:
+                style_guide = "; ".join(style_facts)
+                if any("formal" in sf.lower() or "professional" in sf.lower() for sf in style_facts):
+                    is_formal = True
+        except Exception:
+            pass
 
     # Draft reply based on instruction or incoming message
     clean_instruction = instruction.strip() or f"Polite acknowledgment to {clean_contact}"
@@ -253,14 +267,24 @@ async def draft_whatsapp_reply(
     # Generate draft content
     # In production, uses active LLM prompt with ephemeral memory
     draft_body = ""
-    if "late" in clean_instruction.lower():
-        draft_body = f"Hey {clean_contact}, running a bit late! Will be there shortly."
-    elif "yes" in clean_instruction.lower() or "confirm" in clean_instruction.lower():
-        draft_body = f"Sounds great {clean_contact}, let's do it!"
-    elif "no" in clean_instruction.lower() or "busy" in clean_instruction.lower():
-        draft_body = f"Hey {clean_contact}, won't be able to make it today, let's catch up later!"
+    if is_formal:
+        if "late" in clean_instruction.lower():
+            draft_body = f"Dear {clean_contact}, I am running behind schedule and will arrive shortly. Apologies for the delay."
+        elif "yes" in clean_instruction.lower() or "confirm" in clean_instruction.lower():
+            draft_body = f"Dear {clean_contact}, confirmed. I look forward to proceeding."
+        elif "no" in clean_instruction.lower() or "busy" in clean_instruction.lower():
+            draft_body = f"Dear {clean_contact}, I will unfortunately not be able to attend today. Let us reconnect at a convenient time."
+        else:
+            draft_body = f"Dear {clean_contact}, thank you for reaching out. {clean_instruction}."
     else:
-        draft_body = f"Hey {clean_contact}, got your message! {clean_instruction}."
+        if "late" in clean_instruction.lower():
+            draft_body = f"Hey {clean_contact}, running a bit late! Will be there shortly."
+        elif "yes" in clean_instruction.lower() or "confirm" in clean_instruction.lower():
+            draft_body = f"Sounds great {clean_contact}, let's do it!"
+        elif "no" in clean_instruction.lower() or "busy" in clean_instruction.lower():
+            draft_body = f"Hey {clean_contact}, won't be able to make it today, let's catch up later!"
+        else:
+            draft_body = f"Hey {clean_contact}, got your message! {clean_instruction}."
 
     privacy_note = get_messages_privacy_note()
 

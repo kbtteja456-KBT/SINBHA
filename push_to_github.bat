@@ -1,7 +1,7 @@
 @echo off
 title Push SINBHA to GitHub
 echo ========================================================
-echo 🌸 Pushing SINBHA to GitHub: https://github.com/kbtteja456-KBT/SINBHA.git
+echo Pushing SINBHA to GitHub: https://github.com/kbtteja456-KBT/SINBHA.git
 echo ========================================================
 echo.
 "%LOCALAPPDATA%\Programs\Git\cmd\git.exe" push -u origin main
