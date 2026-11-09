@@ -5,9 +5,10 @@ import socket
 import re
 import datetime
 import logging
+import urllib.request
 from fastapi import FastAPI, HTTPException, Depends, Request, Response, status, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 from typing import Optional, Any, Union, List
 from dotenv import load_dotenv
@@ -1389,10 +1390,83 @@ def is_semver_higher(v1: str, v2: str) -> bool:
     except Exception:
         return False
 
+_release_asset_cache = {
+    "fetched_at": 0.0,
+    "android_url": "https://github.com/kbtteja456-KBT/sinbha-releases/releases/download/android-v1.4.28/SINBHA.apk",
+    "desktop_url": "https://github.com/kbtteja456-KBT/sinbha-releases/releases/download/windows-v1.4.28/SINBHA-Setup.exe"
+}
+
+def resolve_latest_release_assets():
+    """
+    Dynamically discovers the latest working assets from GitHub releases.
+    Caches for 10 minutes to prevent API exhaustion and eliminates 404 download errors.
+    """
+    global _release_asset_cache
+    now = time.time()
+    if now - _release_asset_cache["fetched_at"] < 600.0:
+        return _release_asset_cache
+
+    try:
+        req = urllib.request.Request(
+            "https://api.github.com/repos/kbtteja456-KBT/sinbha-releases/releases?per_page=50",
+            headers={"User-Agent": "SINBHA-Server/1.4"}
+        )
+        with urllib.request.urlopen(req, timeout=3.5) as resp:
+            releases = json.loads(resp.read().decode())
+            sorted_releases = sorted(releases, key=lambda r: r.get("published_at") or "", reverse=True)
+            android_url = None
+            desktop_url = None
+            for r in sorted_releases:
+                for a in r.get("assets", []):
+                    name = a.get("name", "")
+                    url = a.get("browser_download_url", "")
+                    if name == "SINBHA.apk" and not android_url:
+                        android_url = url
+                    if name == "SINBHA-Setup.exe" and not desktop_url:
+                        desktop_url = url
+                if android_url and desktop_url:
+                    break
+            if android_url:
+                _release_asset_cache["android_url"] = android_url
+            if desktop_url:
+                _release_asset_cache["desktop_url"] = desktop_url
+            _release_asset_cache["fetched_at"] = now
+    except Exception as e:
+        logger.debug("Background GitHub release asset resolution deferred: %s", e)
+
+    return _release_asset_cache
+
+@app.get("/api/app/download/android")
+async def download_android_app():
+    """Redirects directly to latest working Android APK asset, preventing 404 errors."""
+    assets = resolve_latest_release_assets()
+    url = assets.get("android_url") or "https://github.com/kbtteja456-KBT/sinbha-releases/releases/download/android-v1.4.28/SINBHA.apk"
+    return RedirectResponse(url=url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+@app.get("/api/app/download/desktop")
+async def download_desktop_app():
+    """Redirects directly to latest working Windows Installer (.exe), preventing 404 errors."""
+    assets = resolve_latest_release_assets()
+    url = assets.get("desktop_url") or "https://github.com/kbtteja456-KBT/sinbha-releases/releases/download/windows-v1.4.28/SINBHA-Setup.exe"
+    return RedirectResponse(url=url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+@app.get("/api/app/download/latest")
+async def download_latest_smart(request: Request):
+    """Smart download endpoint: routes mobile devices to APK and desktop to Windows installer."""
+    ua = request.headers.get("user-agent", "").lower()
+    assets = resolve_latest_release_assets()
+    if "android" in ua:
+        url = assets.get("android_url") or "https://github.com/kbtteja456-KBT/sinbha-releases/releases/download/android-v1.4.28/SINBHA.apk"
+    elif "windows" in ua or "electron" in ua:
+        url = assets.get("desktop_url") or "https://github.com/kbtteja456-KBT/sinbha-releases/releases/download/windows-v1.4.28/SINBHA-Setup.exe"
+    else:
+        url = "https://github.com/kbtteja456-KBT/sinbha-releases/releases"
+    return RedirectResponse(url=url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
 @app.get("/api/app/version-check")
 async def app_version_check_endpoint():
     """
-    Requirement 1: Links point to public sinbha-releases repository.
+    Requirement 1: Links point to public sinbha-releases repository with verified direct assets.
     Requirement 4: Accidental lockout prevention. If minimum version is higher
     than the latest published version, ignores it, clamps to latest, and logs a warning.
     """
@@ -1420,8 +1494,9 @@ async def app_version_check_endpoint():
         print(f"⚠️ [WARNING] Config error prevented: MIN_APP_VERSION_DESKTOP ({min_desktop}) was higher than LATEST_APP_VERSION_DESKTOP ({latest_desktop}). Clamping to latest to prevent accidental user lockout.")
         min_desktop = latest_desktop
 
-    default_dl_android = "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA.apk"
-    default_dl_desktop = "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA-Setup.exe"
+    assets = resolve_latest_release_assets()
+    default_dl_android = assets.get("android_url") or "https://github.com/kbtteja456-KBT/sinbha-releases/releases/download/android-v1.4.28/SINBHA.apk"
+    default_dl_desktop = assets.get("desktop_url") or "https://github.com/kbtteja456-KBT/sinbha-releases/releases/download/windows-v1.4.28/SINBHA-Setup.exe"
     download_android = os.getenv("DOWNLOAD_URL_ANDROID", default_dl_android)
     download_desktop = os.getenv("DOWNLOAD_URL_DESKTOP", default_dl_desktop)
 
@@ -1433,7 +1508,7 @@ async def app_version_check_endpoint():
         "download_url_android": download_android,
         "download_url_desktop": download_desktop,
         "releases_repo": "https://github.com/kbtteja456-KBT/sinbha-releases",
-        "message": "A newer version of SINBHA is available. Please update to continue enjoying your companion."
+        "message": "A newer version of SINBHA is available. Please update to continue enjoying your companion 🐘"
     }
 
 @app.post("/api/devices/notifications/sync")

@@ -155,8 +155,8 @@ def check_endpoint_rate_limits(request: Request, user_id: int = None):
     """
     path = request.url.path
 
-    # Completely exempt read-only health checks, version gates, and static assets from rate limits
-    if path in ("/api/health", "/api/app/version-check", "/") or path.startswith("/static/"):
+    # Completely exempt read-only health checks, version gates, downloads, and static assets from rate limits
+    if path in ("/api/health", "/api/app/version-check", "/") or path.startswith("/static/") or path.startswith("/api/app/download/"):
         return
 
     ip = get_client_ip(request)

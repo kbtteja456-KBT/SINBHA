@@ -2871,7 +2871,7 @@ document.addEventListener("DOMContentLoaded", () => {
           platformName = "Windows";
           minRequired = data.min_version_desktop || "1.0.0";
           latestAvail = data.latest_version_desktop || "1.0.7";
-          downloadUrl = data.download_url_desktop || "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA-Setup.exe";
+          downloadUrl = data.download_url_desktop || "/api/app/download/desktop";
           try {
             const st = await window.electronAPI.getAppStatus();
             current = (st && st.version) ? st.version : "1.0.7";
@@ -2883,7 +2883,7 @@ document.addEventListener("DOMContentLoaded", () => {
           platformName = "Android";
           minRequired = data.min_version_android || "1.0.0";
           latestAvail = data.latest_version_android || "1.0.7";
-          downloadUrl = data.download_url_android || "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA.apk";
+          downloadUrl = data.download_url_android || "/api/app/download/android";
           try {
             if (window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative && typeof window.Capacitor.Plugins.SinbhaNative.getAppVersion === "function") {
               const vInfo = await window.Capacitor.Plugins.SinbhaNative.getAppVersion();
@@ -2893,11 +2893,19 @@ document.addEventListener("DOMContentLoaded", () => {
             current = "1.0.7";
           }
         } else {
-          // Web Client
-          current = "1.0.7";
-          minRequired = data.min_version_desktop || "1.0.0";
-          latestAvail = data.latest_version_desktop || "1.0.7";
-          downloadUrl = data.download_url_desktop || "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA-Setup.exe";
+          // Web Client / Mobile Browser
+          const isAndroidDevice = /Android/i.test(navigator.userAgent || "");
+          if (isAndroidDevice) {
+            platformName = "Android (Web)";
+            minRequired = data.min_version_android || "1.0.0";
+            latestAvail = data.latest_version_android || "1.0.7";
+            downloadUrl = data.download_url_android || "/api/app/download/android";
+          } else {
+            platformName = "Web";
+            minRequired = data.min_version_desktop || "1.0.0";
+            latestAvail = data.latest_version_desktop || "1.0.7";
+            downloadUrl = data.download_url_desktop || "/api/app/download/desktop";
+          }
         }
 
         // Update settings card badges
@@ -2932,18 +2940,19 @@ document.addEventListener("DOMContentLoaded", () => {
           if (gateModal && (isMandatory || isManual)) {
             gateModal.style.display = "flex";
             if (gateTitle) {
-              gateTitle.textContent = isMandatory ? `Update Required for ${platformName}` : `New ${platformName} Version Available!`;
+              gateTitle.textContent = isMandatory ? `Update Required for ${platformName} 🐘` : `New ${platformName} Version Available! 🐘`;
             }
             if (gateDesc) {
               gateDesc.innerHTML = isMandatory
                 ? `SINBHA v${minRequired} is required to continue.<br>Your installed app (v${current}) is outdated. Please update now to continue using remote commands.`
-                : `A newer version of SINBHA (v${latestAvail}) is available.<br>You have v${current}. Tap "Update Now" to get the latest companion features!`;
+                : `A newer version of SINBHA (v${latestAvail}) is available. 🐘<br>You have v${current}. Tap "Update Now" to get the latest companion features!`;
             }
             if (gateLink) {
               gateLink.href = downloadUrl;
             }
             if (laterBtn) {
-              laterBtn.style.display = isMandatory ? "none" : "block";
+              laterBtn.style.display = "block";
+              laterBtn.textContent = "Maybe Later / Continue to App 🐘";
               laterBtn.onclick = () => {
                 gateModal.style.display = "none";
               };

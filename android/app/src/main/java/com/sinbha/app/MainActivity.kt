@@ -124,6 +124,14 @@ class MainActivity : BridgeActivity() {
                         view?.loadUrl(targetUrl)
                     }
                 }
+
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    val title = view?.title ?: ""
+                    if (title.contains("524") || title.contains("502") || title.contains("503") || title.contains("Cloudflare") || title.contains("Attention Required")) {
+                        view?.loadUrl("$FALLBACK_URL?status=524&error=" + android.net.Uri.encode("Cloudflare timeout while contacting server."))
+                    }
+                }
             }
         }
 

@@ -17,7 +17,7 @@ def test_api_health_version_matches_package_json():
     with open(pkg_path, "r", encoding="utf-8") as f:
         pkg_data = json.load(f)
     expected_version = pkg_data.get("version")
-    assert expected_version == "1.4.29"
+    assert expected_version == "1.4.30"
 
     # Verify get_app_version() helper matches
     assert get_app_version() == expected_version

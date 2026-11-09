@@ -251,7 +251,7 @@ class SinbhaApiClient(private val context: Context) {
                 VersionInfo(
                     minVersionAndroid = obj.optString("min_version_android", "1.0.0"),
                     latestVersionAndroid = obj.optString("latest_version_android", "1.0.0"),
-                    downloadUrl = obj.optString("download_url_android", "https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest"),
+                    downloadUrl = obj.optString("download_url_android", "https://github.com/kbtteja456-KBT/sinbha-releases/releases"),
                     message = obj.optString("message", "A newer version of SINBHA is available.")
                 )
             } else {

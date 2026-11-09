@@ -111,6 +111,20 @@ function createMainWindow() {
     }
   });
 
+  // Catch Cloudflare edge error pages (524, 502, 503) that rendered an HTML error body
+  mainWindow.webContents.on('did-finish-load', () => {
+    const title = mainWindow.webContents.getTitle() || '';
+    if (title.includes('524') || title.includes('502') || title.includes('503') || title.includes('Cloudflare') || title.toLowerCase().includes('timeout occurred')) {
+      console.warn(`[Electron Navigation] Cloudflare edge error detected in title ("${title}"). Redirecting to waking recovery screen.`);
+      mainWindow.loadFile(path.join(__dirname, 'waking.html'), {
+        query: {
+          status: '524',
+          error: 'Cloudflare timeout while contacting backend server. Server may be spinning up.'
+        }
+      });
+    }
+  });
+
   // Requirement 7: Electron Security Hardening
   // 1. Block navigation outside trusted domain
   mainWindow.webContents.on('will-navigate', (event, url) => {
@@ -188,6 +202,10 @@ function showMainWindow() {
   } else {
     try {
       if (mainWindow.isMinimized()) mainWindow.restore();
+      const currentUrl = mainWindow.webContents.getURL() || '';
+      if (currentUrl.includes('waking.html') || currentUrl.startsWith('file://')) {
+        mainWindow.loadURL(config.BACKEND_URL);
+      }
       mainWindow.show();
       mainWindow.focus();
     } catch (e) {
@@ -656,23 +674,18 @@ async function checkMinimumSupportedVersion(isManual = false) {
     const isUpdateAvailable = isOlderVersion(currentVersion, latestAvail);
 
     if (isMandatory || isUpdateAvailable) {
-      const downloadLink = data.download_url_desktop || 'https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA-Setup.exe';
+      const downloadLink = data.download_url_desktop || `${config.BACKEND_URL}/api/app/download/desktop`;
       const choice = await dialog.showMessageBox({
         type: isMandatory ? 'warning' : 'info',
-        title: isMandatory ? 'Update Required' : 'New Version Available!',
-        message: isMandatory ? 'Please update SINBHA to continue.' : `A newer version of SINBHA (v${latestAvail}) is available!`,
-        detail: isMandatory
-          ? `Your version (${currentVersion}) is no longer supported. Minimum required version is ${minRequired}.`
-          : `You are currently using v${currentVersion}. Click "Download Update" to install the newest update.`,
-        buttons: isMandatory ? ['Download Update ⚡', 'Close SINBHA'] : ['Download Update ⚡', 'Maybe Later'],
+        title: isMandatory ? 'Update Recommended 🐘' : 'New Version Available! 🐘',
+        message: isMandatory ? 'A newer version of SINBHA is available.' : `A newer version of SINBHA (v${latestAvail}) is available! 🐘`,
+        detail: `You are currently using v${currentVersion}. Click "Download Update" to install the newest update, or "Continue" to keep using SINBHA.`,
+        buttons: ['Download Update ⚡ 🐘', 'Continue to App 🐘'],
         defaultId: 0,
         cancelId: 1
       });
       if (choice.response === 0) {
         shell.openExternal(downloadLink);
-      }
-      if (isMandatory) {
-        app.exit(0);
       }
     } else if (isManual) {
       dialog.showMessageBox({
@@ -932,6 +945,13 @@ if (!gotTheLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      const currentUrl = mainWindow.webContents.getURL() || '';
+      if (currentUrl.includes('waking.html') || currentUrl.startsWith('file://')) {
+        console.log('[Electron] Re-activating window from waking screen, attempting reload of backend URL.');
+        mainWindow.loadURL(config.BACKEND_URL);
+      }
+    }
     showMainWindow();
   });
 

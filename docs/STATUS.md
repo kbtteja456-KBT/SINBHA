@@ -1,9 +1,9 @@
 # SINBHA Codebase Status & Honest Implementation Audit
 
-**Current Version:** `v1.4.29` (Android `versionCode: 56`)  
+**Current Version:** `v1.4.30` (Android `versionCode: 57`)  
 **Date of Audit:** November 8, 2026  
 **Test Suite Status:** 318 passed across all unit/integration suites; 14/14 passed in Electron Security Suite; 12/12 JavaScript syntax checked.  
-**Build & CI Status:** GitHub Actions for both Android APK (`android-release.yml`) and Windows Installer (`windows-release.yml`) configured for `v1.4.29`.
+**Build & CI Status:** GitHub Actions for both Android APK (`android-release.yml`) and Windows Installer (`windows-release.yml`) configured for `v1.4.30`.
 
 ---
 

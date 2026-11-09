@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="theme-color" content="#fff5f7">
-  <title>SINBHA - Your Personal Companion</title>
+  <title>SINBHA 🐘 - Your Cute Personal Companion</title>
   <link rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="shortcut icon" href="/static/favicon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -23,7 +23,7 @@
     <!-- Top-Left Branding with Cute Elephant Logo -->
     <div class="auth-topleft-branding">
       <img src="/static/elephant_logo.png" alt="SINBHA Cute Elephant Logo" class="auth-elephant-logo" />
-      <span class="auth-branding-title">SINBHA</span>
+      <span class="auth-branding-title">SINBHA 🐘</span>
     </div>
 
     <!-- Center Card -->
@@ -32,7 +32,7 @@
         <div class="auth-logo-circle">
           <img src="/static/elephant_logo.png" alt="SINBHA Elephant Mascot" class="auth-card-elephant" />
         </div>
-        <h2 class="auth-card-title">Welcome to SINBHA</h2>
+        <h2 class="auth-card-title">Welcome to SINBHA 🐘</h2>
         <p class="auth-card-subtitle">Your calm, mindful companion for tasks & habits</p>
       </div>
 
@@ -103,7 +103,7 @@
           <span class="status-dot" id="statusDot" title="Online"></span>
         </div>
         <div class="companion-details">
-          <h1 class="companion-name">SINBHA</h1>
+          <h1 class="companion-name">SINBHA 🐘</h1>
           <span class="companion-status" id="companionStatus">Here for you</span>
         </div>
       </div>
@@ -194,7 +194,7 @@
         <div class="input-card">
           <textarea
             id="messageInput"
-            placeholder="Message SINBHA... (or type STOP to halt)"
+            placeholder="Message SINBHA... 🐘 (or type STOP to halt)"
             rows="1"
             maxlength="2000"
             autocomplete="off"
@@ -1151,11 +1151,11 @@
         A new version of SINBHA is available with important companion enhancements and stability fixes.
       </p>
       <div style="display: flex; flex-direction: column; gap: 10px;">
-        <a id="appUpdateDownloadLink" href="https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA.apk" target="_blank" class="confirm-btn-primary" style="text-decoration: none; justify-content: center; padding: 12px; font-weight: 700; font-size: 0.95rem;">
-          Update Now ⚡
+        <a id="appUpdateDownloadLink" href="/api/app/download/latest" target="_blank" class="confirm-btn-primary" style="text-decoration: none; justify-content: center; padding: 12px; font-weight: 700; font-size: 0.95rem;">
+          Update Now ⚡ 🐘
         </a>
-        <button id="appUpdateLaterBtn" type="button" class="confirm-btn-secondary" style="justify-content: center; padding: 10px; font-size: 0.88rem; display: none;">
-          Maybe Later
+        <button id="appUpdateLaterBtn" type="button" class="confirm-btn-secondary" style="justify-content: center; padding: 10px; font-size: 0.88rem; display: block;">
+          Maybe Later / Continue to App 🐘
         </button>
       </div>
     </div>
@@ -1351,7 +1351,7 @@
             platform = 'Windows';
             minRequired = data.min_version_desktop || '1.0.0';
             latest = data.latest_version_desktop || '1.0.6';
-            downloadUrl = data.download_url_desktop || 'https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA-Setup.exe';
+            downloadUrl = data.download_url_desktop || '/api/app/download/desktop';
             try {
               const st = await window.electronAPI.getAppStatus();
               current = (st && st.version) ? st.version : '1.0.0';
@@ -1363,7 +1363,7 @@
             platform = 'Android';
             minRequired = data.min_version_android || '1.0.0';
             latest = data.latest_version_android || '1.0.6';
-            downloadUrl = data.download_url_android || 'https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA.apk';
+            downloadUrl = data.download_url_android || '/api/app/download/android';
             try {
               if (window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative && typeof window.Capacitor.Plugins.SinbhaNative.getAppVersion === 'function') {
                 const vInfo = await window.Capacitor.Plugins.SinbhaNative.getAppVersion();
@@ -1397,12 +1397,12 @@
               const laterBtn = document.getElementById('appUpdateLaterBtn');
 
               if (title) {
-                title.textContent = isMandatory ? ('Update Required for ' + platform) : ('New ' + platform + ' Version Available!');
+                title.textContent = isMandatory ? ('Update Required for ' + platform + ' 🐘') : ('New ' + platform + ' Version Available! 🐘');
               }
               if (desc) {
                 desc.innerHTML = isMandatory
                   ? ('SINBHA v' + minRequired + ' is required to continue.<br>Your installed app (v' + current + ') is outdated. Please update now.')
-                  : ('A newer version of SINBHA (v' + latest + ') is available.<br>You currently have v' + current + '. Tap "Update Now" to install the update!');
+                  : ('A newer version of SINBHA (v' + latest + ') is available. 🐘<br>You currently have v' + current + '. Tap "Update Now" to install the update!');
               }
               if (link) {
                 link.href = downloadUrl;

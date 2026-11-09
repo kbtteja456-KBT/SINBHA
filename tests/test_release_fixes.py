@@ -57,6 +57,26 @@ class TestReleaseFixesAndReliability(unittest.TestCase):
         # Guard: min_version must never exceed latest_version
         self.assertFalse(is_semver_higher(data["min_version_android"], data["latest_version_android"]))
 
+        # Verify dynamic download routes return HTTP 307 redirects to real assets
+        res_android = self.client.get("/api/app/download/android", follow_redirects=False)
+        self.assertEqual(res_android.status_code, 307)
+        self.assertIn("sinbha-releases", res_android.headers.get("location", ""))
+        self.assertTrue(res_android.headers.get("location", "").endswith(".apk"))
+
+        res_desktop = self.client.get("/api/app/download/desktop", follow_redirects=False)
+        self.assertEqual(res_desktop.status_code, 307)
+        self.assertIn("sinbha-releases", res_desktop.headers.get("location", ""))
+        self.assertTrue(res_desktop.headers.get("location", "").endswith(".exe"))
+
+        # Smart router by User-Agent
+        res_ua_droid = self.client.get("/api/app/download/latest", headers={"user-agent": "Mozilla/5.0 (Linux; Android 14)"}, follow_redirects=False)
+        self.assertEqual(res_ua_droid.status_code, 307)
+        self.assertTrue(res_ua_droid.headers.get("location", "").endswith(".apk"))
+
+        res_ua_win = self.client.get("/api/app/download/latest", headers={"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}, follow_redirects=False)
+        self.assertEqual(res_ua_win.status_code, 307)
+        self.assertTrue(res_ua_win.headers.get("location", "").endswith(".exe"))
+
     def test_02_per_device_token_creation_and_rolling_expiry(self):
         """Tokens roll expiry forward during active use so they do not expire under normal usage."""
         u = db.create_user("device_user1@example.com", "Password123!", is_18=True, agreed_terms=True)
