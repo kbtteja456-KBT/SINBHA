@@ -2197,8 +2197,8 @@ def create_or_register_device(
             # If pending and user provides password for account verification
             elif dev.status == "pending" and password:
                 if verify_password(user.password_hash, password):
-                    # Step 17 Item 6: If account has 0 trusted devices, trusting the first device needs password AND email confirmation link
-                    if require_email_confirm and trusted_count == 0:
+                    strict_first_device_email = os.getenv("STRICT_EMAIL_DEVICE_CONFIRM", "true").lower() == "true"
+                    if strict_first_device_email and require_email_confirm and trusted_count == 0:
                         first_token = secrets.token_urlsafe(32)
                         dev.first_device_token = first_token
                         dev.first_device_token_expires_at = utc_now() + timedelta(minutes=15)
@@ -2216,6 +2216,7 @@ def create_or_register_device(
                         dev.pairing_code = None
                         dev.pairing_expires_at = None
                         dev.pairing_attempts = 0
+                        dev.first_device_token = None
                         log_audit(
                             user_id,
                             "DEVICE_REGISTERED_TRUSTED",
@@ -2282,8 +2283,9 @@ def create_or_register_device(
             if password:
                 if not verify_password(user.password_hash, password):
                     raise ValueError("Incorrect password. Re-entering your password is required to trust this device.")
-                if require_email_confirm:
-                    # Step 17 Item 6: First device needs password AND email confirmation link
+                strict_first_device_email = os.getenv("STRICT_EMAIL_DEVICE_CONFIRM", "true").lower() == "true"
+                if strict_first_device_email and require_email_confirm:
+                    # Optional strict mode: First device needs password AND email confirmation link
                     status = "pending"
                     pairing_code = None
                     pairing_expires_at = None
@@ -2307,6 +2309,16 @@ def create_or_register_device(
                         f"First device '{name}' ({device_id}) verified with password and trusted.",
                         session=session
                     )
+            elif is_signup:
+                status = "trusted"
+                pairing_code = None
+                pairing_expires_at = None
+                log_audit(
+                    user_id,
+                    "DEVICE_REGISTERED_TRUSTED",
+                    f"First device '{name}' ({device_id}) registered and trusted on signup.",
+                    session=session
+                )
             else:
                 status = "pending"
                 pairing_code = f"{secrets.randbelow(900000) + 100000}"

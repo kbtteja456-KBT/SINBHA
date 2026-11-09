@@ -204,8 +204,9 @@
       <span id="statusText">Connecting in <b id="countdown">5</b>s...</span>
     </div>
 
-    <div>
-      <button id="retryBtn" class="retry-btn">Retry Connection ⚡</button>
+    <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+      <button id="retryBtn" class="retry-btn">Retry Cloud ⚡</button>
+      <button id="localModeBtn" class="retry-btn" style="background: linear-gradient(135deg, #059669, #10b981);">Use Local Mode (Port 8008) 💻</button>
     </div>
 
     <details class="diagnostics-panel" id="diagBox">
@@ -309,6 +310,18 @@
       clearInterval(timer);
       checkHealth();
     });
+
+    const localBtn = document.getElementById('localModeBtn');
+    if (localBtn) {
+      localBtn.addEventListener('click', () => {
+        clearInterval(timer);
+        if (window.electronAPI && typeof window.electronAPI.switchBackendUrl === 'function') {
+          window.electronAPI.switchBackendUrl('http://127.0.0.1:8008');
+        } else {
+          window.location.href = 'http://127.0.0.1:8008';
+        }
+      });
+    }
 
     window.addEventListener('online', () => {
       diagOnline.textContent = 'Yes';

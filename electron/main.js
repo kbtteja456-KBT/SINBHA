@@ -61,6 +61,7 @@ function createMainWindow() {
     height: 820,
     minWidth: 380,
     minHeight: 520,
+    backgroundColor: '#0f1117',
     title: 'SINBHA - Personal Habit & Task Companion',
     icon: path.join(__dirname, 'icon.png'),
     autoHideMenuBar: true,
@@ -72,8 +73,34 @@ function createMainWindow() {
     }
   });
 
-  // Load the hosted cloud backend
-  mainWindow.loadURL(config.BACKEND_URL);
+  // Zero-blank-screen protection: Load local waking screen in 0ms
+  mainWindow.loadFile(path.join(__dirname, 'waking.html'));
+
+  // Connect to backend once healthy
+  let initialLoaded = false;
+  async function connectBackend() {
+    if (initialLoaded || !mainWindow || mainWindow.isDestroyed()) return;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 6000);
+      const res = await fetch(`${config.BACKEND_URL}/api/health`, { signal: controller.signal });
+      clearTimeout(timer);
+      if (res.ok && !initialLoaded && mainWindow && !mainWindow.isDestroyed()) {
+        initialLoaded = true;
+        mainWindow.loadURL(config.BACKEND_URL);
+      }
+    } catch (_) {}
+  }
+
+  // Poll connection every 2 seconds
+  const connInterval = setInterval(() => {
+    if (initialLoaded) {
+      clearInterval(connInterval);
+    } else {
+      connectBackend();
+    }
+  }, 2000);
+  connectBackend();
 
   // Requirement 1: Reset notification flag as soon as the user logs in again
   session.defaultSession.cookies.on('changed', (_event, cookie, cause, removed) => {
@@ -810,6 +837,16 @@ function setupIpcHandlers() {
       paused: remindersPaused,
       startWithWindows: app.getLoginItemSettings().openAtLogin
     };
+  });
+
+  ipcMain.handle('switch-backend-url', async (_event, newUrl) => {
+    if (mainWindow && !mainWindow.isDestroyed() && newUrl) {
+      config.BACKEND_URL = newUrl;
+      console.log(`[Backend Switch] Switching backend URL to: ${newUrl}`);
+      mainWindow.loadURL(newUrl);
+      return true;
+    }
+    return false;
   });
 
   ipcMain.handle('set-dnd', (_event, enabled) => {
