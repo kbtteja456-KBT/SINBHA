@@ -73,6 +73,9 @@ function createMainWindow() {
     }
   });
 
+  // Permanently remove unwanted default application menu (File, Edit, View, Window)
+  mainWindow.setMenu(null);
+
   // Zero-blank-screen protection: Load local waking screen in 0ms
   mainWindow.loadFile(path.join(__dirname, 'waking.html'));
 
@@ -152,10 +155,25 @@ function createMainWindow() {
     }
   });
 
+  // Intercept downloads: never pop up internal Save As dialog inside Electron window
+  session.defaultSession.on('will-download', (event, item) => {
+    const downloadUrl = item.getURL();
+    console.log(`[Download Intercepted] URL: ${downloadUrl}`);
+    if (downloadUrl.includes('SINBHA-Setup') || downloadUrl.includes('releases/download') || downloadUrl.endsWith('.exe')) {
+      event.preventDefault();
+      shell.openExternal(downloadUrl);
+    }
+  });
+
   // Requirement 7: Electron Security Hardening
-  // 1. Block navigation outside trusted domain
+  // 1. Block navigation outside trusted domain & handle downloads cleanly
   mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (!url.startsWith(config.BACKEND_URL) && !url.startsWith('file://')) {
+    if (url.includes('/api/app/download') || url.includes('/releases/download') || url.endsWith('.exe')) {
+      event.preventDefault();
+      shell.openExternal(url);
+      return;
+    }
+    if (!url.startsWith(config.BACKEND_URL) && !url.startsWith('file://') && !url.startsWith('http://127.0.0.1:8008') && !url.startsWith('http://localhost:8008')) {
       event.preventDefault();
       shell.openExternal(url);
     }
@@ -844,6 +862,14 @@ function setupIpcHandlers() {
       config.BACKEND_URL = newUrl;
       console.log(`[Backend Switch] Switching backend URL to: ${newUrl}`);
       mainWindow.loadURL(newUrl);
+      return true;
+    }
+    return false;
+  });
+
+  ipcMain.handle('open-external-url', async (_event, targetUrl) => {
+    if (targetUrl && (targetUrl.startsWith('https://') || targetUrl.startsWith('http://'))) {
+      shell.openExternal(targetUrl);
       return true;
     }
     return false;

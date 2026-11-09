@@ -627,15 +627,41 @@ async def run_agent_loop(
     # Add current user message
     messages.append({"role": "user", "content": user_message})
 
-    # Tool definitions for LLM (Step C2.5 Item 2: Capability Handshake)
-    base_tools = {
+    # Tool definitions for LLM (Step C2.5 Item 2: Capability Handshake & Adaptive Optimization)
+    # Always include core high-frequency companion tools
+    core_tools = {
         "create_task", "complete_task", "delete_task",
         "remember_fact", "forget_fact", "search_web",
-        "fetch_page", "list_devices", "open_settings",
-        "read_whatsapp_messages", "draft_whatsapp_reply", "get_inbox_notifications",
-        "get_youtube_channel_stats", "read_gmail_messages", "draft_gmail_message", "get_google_testing_info",
-        "manage_study_plan", "recommend_study_resource", "track_job_application"
+        "list_devices", "open_settings", "open_app", "ring_phone"
     }
+
+    # Dynamically attach specialized tools only when relevant to the user query to keep inference ultra-fast (<1s)
+    msg_lower = (user_message or "").lower()
+    specialized_tools = set()
+
+    if any(k in msg_lower for k in ("whatsapp", "wa ", "chat msg")):
+        specialized_tools.update({"read_whatsapp_messages", "draft_whatsapp_reply"})
+    if any(k in msg_lower for k in ("gmail", "email", "mail", "inbox")):
+        specialized_tools.update({"read_gmail_messages", "draft_gmail_message", "get_inbox_notifications"})
+    if any(k in msg_lower for k in ("youtube", "video", "subscriber", "channel")):
+        specialized_tools.add("get_youtube_channel_stats")
+    if any(k in msg_lower for k in ("study", "syllabus", "exam", "course", "resource", "learn")):
+        specialized_tools.update({"manage_study_plan", "recommend_study_resource"})
+    if any(k in msg_lower for k in ("job", "career", "interview", "application", "resume")):
+        specialized_tools.add("track_job_application")
+    if any(k in msg_lower for k in ("type", "write", "key", "press")):
+        specialized_tools.update({"type_text", "press_keys"})
+    if any(k in msg_lower for k in ("url", "link", "website", "open page", "fetch", "read page")):
+        specialized_tools.update({"open_url", "fetch_page"})
+    if any(k in msg_lower for k in ("find app", "installed app", "search app")):
+        specialized_tools.add("find_installed_app")
+    if any(k in msg_lower for k in ("note", "send note", "memo")):
+        specialized_tools.add("send_note")
+    if any(k in msg_lower for k in ("google testing", "track test", "tester")):
+        specialized_tools.add("get_google_testing_info")
+
+    base_tools = core_tools | specialized_tools
+
     supported_device_tools = set()
     if user_devices and relay_manager and hasattr(relay_manager, "get_device_supported_tools"):
         for dev in user_devices:
@@ -653,7 +679,7 @@ async def run_agent_loop(
     else:
         supported_device_tools = {"open_app", "open_url", "open_settings", "find_installed_app", "type_text", "press_keys", "send_note", "ring_phone"}
 
-    allowed_tool_names = base_tools | supported_device_tools
+    allowed_tool_names = (base_tools & supported_device_tools) | base_tools
     tools_list = [t for t in registry.openai_tools_list() if t.get("function", {}).get("name") in allowed_tool_names]
 
     # Agent loop state

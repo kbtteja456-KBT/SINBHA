@@ -43,5 +43,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getDesktopBattery: () => ipcRenderer.invoke('get-desktop-battery'),
 
   // Backend connection control & Local presentation switch
-  switchBackendUrl: (url) => ipcRenderer.invoke('switch-backend-url', url)
+  switchBackendUrl: (url) => ipcRenderer.invoke('switch-backend-url', url),
+
+  // External URL opening
+  openExternalUrl: (url) => ipcRenderer.invoke('open-external-url', url)
 });

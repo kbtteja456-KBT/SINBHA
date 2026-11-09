@@ -2949,6 +2949,14 @@ document.addEventListener("DOMContentLoaded", () => {
             }
             if (gateLink) {
               gateLink.href = downloadUrl;
+              gateLink.onclick = (e) => {
+                if (window.electronAPI && typeof window.electronAPI.openExternalUrl === "function") {
+                  e.preventDefault();
+                  window.electronAPI.openExternalUrl(downloadUrl);
+                  showToast("Opening update download in your browser... 🐘");
+                  gateModal.style.display = "none";
+                }
+              };
             }
             if (laterBtn) {
               laterBtn.style.display = "block";
