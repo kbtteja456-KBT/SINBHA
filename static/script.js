@@ -4907,6 +4907,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // First Device Trust Modal Form Submission (Requirement 4: Prominent full-screen prompt with password)
     const firstTrustForm = document.getElementById("firstDeviceTrustForm");
+    const firstTrustDismissBtn = document.getElementById("firstDeviceModalDismissBtn");
+    if (firstTrustDismissBtn) {
+      firstTrustDismissBtn.addEventListener("click", () => {
+        closeFirstDeviceTrustModal();
+      });
+    }
+
     if (firstTrustForm) {
       firstTrustForm.addEventListener("submit", async (e) => {
         e.preventDefault();
@@ -4917,7 +4924,11 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!pwd) return;
 
         if (err) err.style.display = "none";
-        if (submitBtn) submitBtn.disabled = true;
+        const originalText = submitBtn ? submitBtn.textContent : "✓ Verify & Trust Device 🐘";
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.textContent = "⏳ Verifying & Trusting...";
+        }
 
         const myId = getOrCreateDeviceId();
         const { platform, name } = await getDevicePlatformAndName();
@@ -4934,27 +4945,66 @@ document.addEventListener("DOMContentLoaded", () => {
             })
           });
           const data = await res.json();
-          if (data.success && data.device && data.device.status === "trusted") {
-            currentDeviceData = data.device;
-            closeFirstDeviceTrustModal();
-            updateCurrentDeviceUI(currentDeviceData);
-            showToast("Device verified with password and trusted!");
-            connectDeviceWebSocket(myId);
-            loadDevices();
-          } else {
-            if (err) {
-              err.textContent = data.detail || data.message || "Incorrect password. Please try again.";
-              err.style.display = "block";
+          if (data.success && data.device) {
+            // Case 1: Immediately trusted
+            if (data.device.status === "trusted") {
+              currentDeviceData = data.device;
+              closeFirstDeviceTrustModal();
+              updateCurrentDeviceUI(currentDeviceData);
+              showToast("Device verified with password and trusted! 🐘");
+              connectDeviceWebSocket(myId);
+              loadDevices();
+              return;
             }
-            if (input) input.focus();
+
+            // Case 2: Generated token for password-verified first device
+            const token = data.device.first_device_token || (data.confirmation_token);
+            if (token) {
+              try {
+                // Auto-confirm token immediately so user is never stuck
+                const confRes = await fetch(`/api/devices/confirm-first-device?token=${encodeURIComponent(token)}`, {
+                  method: "POST"
+                });
+                const confData = await confRes.json();
+                if (confData.success) {
+                  currentDeviceData = { ...data.device, status: "trusted" };
+                  closeFirstDeviceTrustModal();
+                  updateCurrentDeviceUI(currentDeviceData);
+                  showToast("Device verified with password and trusted! 🐘");
+                  connectDeviceWebSocket(myId);
+                  loadDevices();
+                  return;
+                }
+              } catch (cfErr) {
+                console.warn("Auto-confirm error:", cfErr);
+              }
+
+              if (err) {
+                err.innerHTML = `✉️ Authorization link sent! <a href="/api/devices/confirm-first-device?token=${encodeURIComponent(token)}" style="color: #2563eb; font-weight: 700; text-decoration: underline;">Click here to trust immediately 🐘</a>`;
+                err.style.color = "#059669";
+                err.style.display = "block";
+              }
+              return;
+            }
           }
+
+          if (err) {
+            err.textContent = data.detail || data.message || "Incorrect password. Please try again.";
+            err.style.color = "#dc2626";
+            err.style.display = "block";
+          }
+          if (input) input.focus();
         } catch (ex) {
           if (err) {
             err.textContent = "Error trusting device: " + ex.message;
+            err.style.color = "#dc2626";
             err.style.display = "block";
           }
         } finally {
-          if (submitBtn) submitBtn.disabled = false;
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = originalText;
+          }
         }
       });
     }

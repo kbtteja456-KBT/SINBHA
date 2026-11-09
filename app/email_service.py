@@ -19,6 +19,7 @@ Supports:
 import os
 import smtplib
 import asyncio
+import threading
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone
@@ -146,56 +147,64 @@ def send_email_sync(
         return True
 
     # 3. Fallback: Standard SMTP (Works on localhost or unblocked hosts)
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = f"{from_name} <{from_email}>"
-        msg["To"] = to_email
-
-        # Attach text part
-        part1 = MIMEText(text_content, "plain", "utf-8")
-        msg.attach(part1)
-
-        # Attach html part if provided
-        if html_content:
-            part2 = MIMEText(html_content, "html", "utf-8")
-            msg.attach(part2)
-
-        sent = False
+    def _do_smtp_delivery():
         try:
-            if smtp_port == 465:
-                with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=12) as server:
-                    server.login(smtp_user, smtp_pass)
-                    server.send_message(msg)
-                    sent = True
-            else:
-                with smtplib.SMTP(smtp_host, smtp_port, timeout=12) as server:
-                    server.ehlo()
-                    server.starttls()
-                    server.ehlo()
-                    server.login(smtp_user, smtp_pass)
-                    server.send_message(msg)
-                    sent = True
-        except Exception as e_initial:
-            # If port 587 timed out or blocked, try port 465 SSL fallback
-            if smtp_port != 465:
-                try:
-                    with smtplib.SMTP_SSL(smtp_host, 465, timeout=12) as server:
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"] = f"{from_name} <{from_email}>"
+            msg["To"] = to_email
+
+            # Attach text part
+            part1 = MIMEText(text_content, "plain", "utf-8")
+            msg.attach(part1)
+
+            # Attach html part if provided
+            if html_content:
+                part2 = MIMEText(html_content, "html", "utf-8")
+                msg.attach(part2)
+
+            sent = False
+            try:
+                if smtp_port == 465:
+                    with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=2.5) as server:
                         server.login(smtp_user, smtp_pass)
                         server.send_message(msg)
                         sent = True
-                except Exception:
-                    raise e_initial
-            else:
-                raise e_initial
+                else:
+                    with smtplib.SMTP(smtp_host, smtp_port, timeout=2.5) as server:
+                        server.ehlo()
+                        server.starttls()
+                        server.ehlo()
+                        server.login(smtp_user, smtp_pass)
+                        server.send_message(msg)
+                        sent = True
+            except Exception as e_initial:
+                # If port 587 timed out or blocked, try port 465 SSL fallback
+                if smtp_port != 465:
+                    try:
+                        with smtplib.SMTP_SSL(smtp_host, 465, timeout=2.5) as server:
+                            server.login(smtp_user, smtp_pass)
+                            server.send_message(msg)
+                            sent = True
+                    except Exception:
+                        pass
+                else:
+                    pass
 
-        if sent:
-            print(f"[EMAIL SERVICE - REAL SMTP] Successfully sent email to {to_email}: '{subject}'")
-            return True
-        return False
-    except Exception as e:
-        print(f"[EMAIL SERVICE ERROR] Failed to send email to {to_email}: {e}")
-        return False
+            if sent:
+                print(f"[EMAIL SERVICE - REAL SMTP] Successfully sent email to {to_email}: '{subject}'")
+                return True
+            return False
+        except Exception as e:
+            print(f"[EMAIL SERVICE ERROR] Failed to send email to {to_email}: {e}")
+            return False
+
+    # In production on cloud hosts (Render), dispatch network SMTP in a background thread to prevent freezing HTTP responses
+    if os.getenv("RENDER") or os.getenv("ENV") == "production":
+        threading.Thread(target=_do_smtp_delivery, daemon=True).start()
+        return True
+
+    return _do_smtp_delivery()
 
 async def send_email_async(
     to_email: str,
