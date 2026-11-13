@@ -39,7 +39,7 @@ module.exports = {
       '🔄 Automatic background updates & seamless upgrade delivery'
     ],
     '1.0.0': [
-      '🌸 Initial desktop release connected to cloud backend',
+      '🐘 Initial desktop release connected to cloud backend',
       '🕊️ Transparent desktop bird companion with reminder flights',
       '💬 Instant AI chat with habit & task intelligence',
       '🔒 Secure cloud synchronization & zero-knowledge database storage',

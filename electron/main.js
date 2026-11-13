@@ -61,6 +61,7 @@ function createMainWindow() {
     height: 820,
     minWidth: 380,
     minHeight: 520,
+    backgroundColor: '#0f1117',
     title: 'SINBHA - Personal Habit & Task Companion',
     icon: path.join(__dirname, 'icon.png'),
     autoHideMenuBar: true,
@@ -72,8 +73,36 @@ function createMainWindow() {
     }
   });
 
-  // Load the hosted cloud backend
-  mainWindow.loadURL(config.BACKEND_URL);
+  mainWindow.setMenu(null);
+
+  // Zero-blank-screen protection: Load local waking screen in 0ms
+  mainWindow.loadFile(path.join(__dirname, 'waking.html'));
+
+  // Connect to backend once healthy
+  let initialLoaded = false;
+  async function connectBackend() {
+    if (initialLoaded || !mainWindow || mainWindow.isDestroyed()) return;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 6000);
+      const res = await fetch(`${config.BACKEND_URL}/api/health`, { signal: controller.signal });
+      clearTimeout(timer);
+      if (res.ok && !initialLoaded && mainWindow && !mainWindow.isDestroyed()) {
+        initialLoaded = true;
+        mainWindow.loadURL(config.BACKEND_URL);
+      }
+    } catch (_) {}
+  }
+
+  // Poll connection every 2 seconds
+  const connInterval = setInterval(() => {
+    if (initialLoaded) {
+      clearInterval(connInterval);
+    } else {
+      connectBackend();
+    }
+  }, 2000);
+  connectBackend();
 
   // Requirement 1: Reset notification flag as soon as the user logs in again
   session.defaultSession.cookies.on('changed', (_event, cookie, cause, removed) => {
@@ -181,7 +210,7 @@ function updateTrayMenu() {
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: `🌸 Open SINBHA (v${app.getVersion()})`,
+      label: `🐘 Open SINBHA (v${app.getVersion()})`,
       click: () => showMainWindow()
     },
     { type: 'separator' },
@@ -525,7 +554,7 @@ function showWhatsNewWindow(version) {
   whatsNewWin.loadFile(path.join(__dirname, 'whats_new.html'));
   whatsNewWin.webContents.on('did-finish-load', () => {
     const features = config.WHATS_NEW[version] || [
-      '🌸 Improvements to habit memory & task intelligence',
+      '🐘 Improvements to habit memory & task intelligence',
       '⚡ Faster cloud synchronization & automated reminders'
     ];
     whatsNewWin.webContents.send('whats-new-data', { version, features });
@@ -546,7 +575,7 @@ function setupAutoUpdater() {
   autoUpdater.on('update-downloaded', (info) => {
     dialog.showMessageBox({
       type: 'info',
-      title: 'Update Ready 🌸',
+      title: 'Update Ready 🐘',
       message: `SINBHA v${info.version} is downloaded and ready!`,
       detail: 'Restart the app now to apply the update and see what\'s new.',
       buttons: ['Restart Now', 'Later'],
@@ -618,7 +647,7 @@ async function checkMinimumSupportedVersion(isManual = false) {
       const downloadLink = data.download_url_desktop || 'https://github.com/kbtteja456-KBT/sinbha-releases/releases/latest/download/SINBHA-Setup.exe';
       const choice = await dialog.showMessageBox({
         type: isMandatory ? 'warning' : 'info',
-        title: isMandatory ? 'Update Required 🌸' : 'New Version Available! 🌸',
+        title: isMandatory ? 'Update Required 🐘' : 'New Version Available! 🐘',
         message: isMandatory ? 'Please update SINBHA to continue.' : `A newer version of SINBHA (v${latestAvail}) is available!`,
         detail: isMandatory
           ? `Your version (${currentVersion}) is no longer supported. Minimum required version is ${minRequired}.`
@@ -636,7 +665,7 @@ async function checkMinimumSupportedVersion(isManual = false) {
     } else if (isManual) {
       dialog.showMessageBox({
         type: 'info',
-        title: 'SINBHA is Up to Date 🌸',
+        title: 'SINBHA is Up to Date 🐘',
         message: `You're on the latest version of SINBHA (v${currentVersion})! ✨`,
         detail: 'Everything is up to date with your companion.',
         buttons: ['OK']
@@ -756,6 +785,16 @@ function setupIpcHandlers() {
       paused: remindersPaused,
       startWithWindows: app.getLoginItemSettings().openAtLogin
     };
+  });
+
+  ipcMain.handle('switch-backend-url', async (_event, newUrl) => {
+    if (mainWindow && !mainWindow.isDestroyed() && newUrl) {
+      config.BACKEND_URL = newUrl;
+      console.log(`[Backend Switch] Switching backend URL to: ${newUrl}`);
+      mainWindow.loadURL(newUrl);
+      return true;
+    }
+    return false;
   });
 
   ipcMain.handle('set-dnd', (_event, enabled) => {

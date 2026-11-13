@@ -315,12 +315,56 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Add an AI bubble to chat (with optional proposal action card and web search sources)
-  function appendAiMessage(text, timeStr = null, proposal = null, webSearch = null, trace = null) {
+  // Add an AI bubble to chat (with optional proposal action card, web search sources, and action receipts)
+  function appendAiMessage(text, timeStr = null, proposal = null, webSearch = null, trace = null, actionReceipt = null) {
     const group = document.createElement("div");
     group.className = "message-group ai-group";
     
-    let proposalHtml = "";
+    // Step M1+M2 Item 4: App-built action receipt
+    let receiptHtml = "";
+    let displayText = text;
+
+    if (actionReceipt && actionReceipt.tool) {
+      const st = String(actionReceipt.status || "unconfirmed").toLowerCase();
+      const isSuccess = st === "succeeded";
+      const isNeedsTap = st === "needs_tap";
+      const isNotInstalled = st === "not_installed";
+      const isUnverified = st === "sent_not_verified" || st === "unconfirmed";
+      
+      const badgeBg = isSuccess ? "#dcfce7" : (isNeedsTap ? "#fef3c7" : (isNotInstalled ? "#f3e8ff" : "#fee2e2"));
+      const badgeColor = isSuccess ? "#15803d" : (isNeedsTap ? "#b45309" : (isNotInstalled ? "#7e22ce" : "#b91c1c"));
+      const badgeLabel = isSuccess ? "✓ Succeeded" : (isNeedsTap ? "👆 Needs Tap" : (isNotInstalled ? "❓ Not Installed" : (isUnverified ? "⚠️ Sent (Not Verified)" : "✕ Failed")));
+      
+      const routeName = escapeHtml(actionReceipt.route || "direct");
+      const devName = escapeHtml(actionReceipt.device || "Companion Device");
+      const evidence = escapeHtml(actionReceipt.evidence || (isSuccess ? "Verified via window/process check" : "Awaiting verification"));
+      const timeElapsed = actionReceipt.elapsed_ms ? `${actionReceipt.elapsed_ms}ms` : "";
+
+      receiptHtml = `
+        <div class="action-receipt-card" style="margin-top: 8px; background: #fff; border: 1.5px solid ${badgeColor}; border-radius: 8px; padding: 10px; font-size: 0.8rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <span style="font-weight: 700; color: #1f2937;">Action Receipt: <span style="font-family: ui-monospace, monospace; color: #be185d;">${escapeHtml(actionReceipt.tool)}</span></span>
+            <span style="background: ${badgeBg}; color: ${badgeColor}; font-weight: 700; font-size: 0.72rem; padding: 2px 8px; border-radius: 10px;">${badgeLabel}</span>
+          </div>
+          <div style="color: #4b5563; line-height: 1.4; font-size: 0.76rem;">
+            <div><strong>Device:</strong> ${devName}</div>
+            <div><strong>Route:</strong> <span style="font-family: ui-monospace, monospace; color: #2563eb;">${routeName}</span></div>
+            <div><strong>Evidence:</strong> ${evidence}</div>
+            ${timeElapsed ? `<div><strong>Duration:</strong> ${timeElapsed}</div>` : ''}
+          </div>
+        </div>
+      `;
+
+      // If AI text contradicts receipt (e.g. AI says "Settings is open" when receipt status is not succeeded), suppress AI text
+      if (!isSuccess && displayText) {
+        const lower = displayText.toLowerCase();
+        if (lower.includes("is open") || lower.includes("opened ") || lower.includes("have opened")) {
+          displayText = isNeedsTap 
+            ? "Your phone requires a tap to open this app from the background. Check your notification shade 🐘"
+            : (isNotInstalled ? displayText : "The command was transmitted, but device launch could not be confirmed.");
+        }
+      }
+    }
     if (proposal) {
       if (proposal.type === "task_proposal") {
         // Step 5 & 6B: Task proposal card with suggested reminders & Confirm / Cancel gate
@@ -444,6 +488,27 @@ document.addEventListener("DOMContentLoaded", () => {
             </div>
           </div>
         `;
+      } else if (proposal.type && proposal.type.startsWith("confirm_")) {
+        // Step C2.12 Item 6: Structured Safety Confirmation Card
+        const title = proposal.action_title || proposal.prompt || "Action Confirmation";
+        const msg = proposal.message || "";
+        const warning = proposal.warning ? `<div style="color: #ea580c; font-size: 0.85rem; margin-top: 6px;">⚠️ ${escapeHtml(proposal.warning)}</div>` : "";
+        proposalHtml = `
+          <div class="task-action-card" id="safety-card-${Math.random().toString(36).substring(7)}" style="background: #fffaf5; border: 1.5px solid #fed7aa; border-radius: 12px; padding: 14px; margin-top: 10px;">
+            <div class="task-action-header" style="display:flex;align-items:center;gap:6px; font-weight:600; color: #9a3412;">
+              <span>🛡️</span>
+              <span>${escapeHtml(title)}</span>
+            </div>
+            <div class="task-action-prompt" style="margin-top:6px; color: #431407; font-size: 0.92rem;">
+              ${escapeHtml(msg)}
+              ${warning}
+            </div>
+            <div class="task-action-actions" style="margin-top:12px; display: flex; gap: 8px;">
+              <button class="generic-confirm-btn primary-btn" style="padding:7px 16px; border-radius:8px; font-weight:600; font-size:0.88rem; cursor:pointer;">✓ Yes, proceed</button>
+              <button class="generic-cancel-btn secondary-btn" style="padding:7px 16px; border-radius:8px; font-size:0.88rem; cursor:pointer;">✕ Cancel</button>
+            </div>
+          </div>
+        `;
       }
     }
 
@@ -478,9 +543,10 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     group.innerHTML = `
-      <div class="message-avatar">🌸</div>
+      <div class="message-avatar">🐘</div>
       <div class="message-bubble ai-bubble">
-        <p>${escapeHtml(text)}</p>
+        <p>${escapeHtml(displayText)}</p>
+        ${receiptHtml}
         ${webSearchHtml}
         ${proposalHtml}
         ${isDevMode && trace && (trace.provider || trace.tool_calls?.length > 0) ? `
@@ -583,6 +649,35 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
 
+    // Attach event listeners to generic safety confirmation cards (Step C2.12)
+    if (proposal && proposal.type && proposal.type.startsWith("confirm_") && proposal.type !== "confirm_forget") {
+      const card = group.querySelector(".task-action-card");
+      const confirmBtn = group.querySelector(".generic-confirm-btn");
+      const cancelBtn = group.querySelector(".generic-cancel-btn");
+
+      if (confirmBtn && cancelBtn) {
+        confirmBtn.addEventListener("click", () => {
+          confirmBtn.disabled = true;
+          cancelBtn.disabled = true;
+          const actionsDiv = card.querySelector(".task-action-actions");
+          if (actionsDiv) actionsDiv.innerHTML = `<div class="task-proposal-resolved confirmed" style="color:#16a34a; font-weight:600; font-size:0.88rem;">✓ Confirmed</div>`;
+          const input = document.getElementById("messageInput");
+          if (input) {
+            input.value = "yes, proceed";
+            const form = document.getElementById("chatForm");
+            if (form) form.dispatchEvent(new Event("submit"));
+          }
+        });
+
+        cancelBtn.addEventListener("click", () => {
+          confirmBtn.disabled = true;
+          cancelBtn.disabled = true;
+          const actionsDiv = card.querySelector(".task-action-actions");
+          if (actionsDiv) actionsDiv.innerHTML = `<div class="task-proposal-resolved cancelled" style="color:#dc2626; font-size:0.88rem;">✕ Cancelled</div>`;
+        });
+      }
+    }
+
     scrollToBottom();
   }
 
@@ -660,7 +755,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (data.reply) {
           appendAiMessage(data.reply);
         }
-        showToast("🌸 Task saved to your list!");
+        showToast("🐘 Task saved to your list!");
         loadTasks();
         if (isDevMode) loadDevData();
       } else {
@@ -771,7 +866,7 @@ document.addEventListener("DOMContentLoaded", () => {
     notice.innerHTML = `
       <div>${escapeHtml(text)}</div>
       <div class="system-bubble-actions">
-        <button class="resume-btn inline-resume-btn">🌸 Resume Chat</button>
+        <button class="resume-btn inline-resume-btn">🐘 Resume Chat</button>
       </div>
     `;
     chatMessages.appendChild(notice);
@@ -811,7 +906,7 @@ document.addEventListener("DOMContentLoaded", () => {
       setStopUiState(data.emergency_stopped);
 
       if (!data.messages || data.messages.length === 0) {
-        appendAiMessage("Hey there! I'm SINBHA 🌸 I'm here to listen, support you, and keep your days calm and organized. How are you feeling right now?");
+        appendAiMessage("Hey there! I'm SINBHA 🐘 I'm here to listen, support you, and keep your days calm and organized. How are you feeling right now?");
       } else {
         data.messages.forEach(msg => {
           if (msg.role === "user") {
@@ -868,7 +963,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Render pending tasks list
     pendingTaskList.innerHTML = "";
     if (pendingTasks.length === 0) {
-      pendingTaskList.innerHTML = `<li style="font-size: 0.84rem; color: #9ca3af; text-align: center; padding: 14px 0;">All caught up! No pending tasks 🌸</li>`;
+      pendingTaskList.innerHTML = `<li style="font-size: 0.84rem; color: #9ca3af; text-align: center; padding: 14px 0;">All caught up! No pending tasks 🐘</li>`;
     } else {
       pendingTasks.forEach(t => {
         const li = document.createElement("li");
@@ -907,7 +1002,7 @@ document.addEventListener("DOMContentLoaded", () => {
           li.classList.add("completing");
           setTimeout(async () => {
             await updateTaskStatus(t.id, "completed");
-            showToast("🌸 Great job! Task marked as done!");
+            showToast("🐘 Great job! Task marked as done!");
           }, 240);
         });
 
@@ -961,7 +1056,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const chk = li.querySelector(".task-checkbox");
         chk.addEventListener("change", async () => {
           await updateTaskStatus(t.id, "pending");
-          showToast("Task brought back to pending 🌸");
+          showToast("Task brought back to pending 🐘");
         });
 
         // Delete button
@@ -1120,7 +1215,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const indicatorGroup = document.createElement("div");
     indicatorGroup.className = "message-group ai-group searching-indicator-group";
     indicatorGroup.innerHTML = `
-      <div class="message-avatar">🌸</div>
+      <div class="message-avatar">🐘</div>
       <div class="searching-indicator-bubble">
         <span class="searching-indicator-spinner"></span>
         <span>${isSearchQuery ? "Searching the web…" : "Thinking…"}</span>
@@ -1153,7 +1248,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const data = await response.json();
-      appendAiMessage(data.reply, null, data.proposal, data.web_search, data.trace);
+      appendAiMessage(data.reply, null, data.proposal, data.web_search, data.trace, data.action_receipt);
       if (data.trace) {
         recordDevTrace(data.trace);
       }
@@ -1170,9 +1265,9 @@ document.addEventListener("DOMContentLoaded", () => {
           } catch (e) {}
         }
         if (data.task_action_performed) {
-          showToast("🌸 Tasks updated!");
+          showToast("🐘 Tasks updated!");
         } else {
-          showToast("🌸 Task saved to your list!");
+          showToast("🐘 Task saved to your list!");
         }
       }
 
@@ -1182,7 +1277,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     } catch (err) {
       indicatorGroup.remove();
-      appendAiMessage("I had a little hiccup connecting right now. Don't worry, please check if the server is still running on your computer 🌸");
+      appendAiMessage("I had a little hiccup connecting right now. Don't worry, please check if the server is still running on your computer 🐘");
       console.error(err);
     }
   }
@@ -1218,7 +1313,7 @@ document.addEventListener("DOMContentLoaded", () => {
       await fetch("/api/resume", { method: "POST" });
       setStopUiState(false);
       remindersPaused = false;
-      showToast("🌸 Welcome back! Chat and reminders resumed.");
+      showToast("🐘 Welcome back! Chat and reminders resumed.");
       // Check for any pending reminders right after resuming
       checkDueReminders();
     } catch (e) {
@@ -1307,7 +1402,7 @@ document.addEventListener("DOMContentLoaded", () => {
         purgeConfirmModal.style.display = "none";
         settingsModal.style.display = "none";
         chatMessages.innerHTML = "";
-        appendAiMessage("All past conversations and memory have been wiped cleanly. We have a fresh, blank canvas together 🌸");
+        appendAiMessage("All past conversations and memory have been wiped cleanly. We have a fresh, blank canvas together 🐘");
         showToast("🧹 All data wiped cleanly");
 
         loadTasks();
@@ -1823,9 +1918,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Requirement 5: SINBHA sends a short, warm, non-guilt message when bird appears
     const warmGreetings = [
-      `🕊️ A little feathered friend just arrived with a gentle note for "${task.title}" 🌸 Whenever you're ready, no pressure at all.`,
-      `🕊️ Your little winged buddy is here with a soft reminder about "${task.title}". Take your time, you're doing great 🌸`,
-      `🕊️ A gentle check-in from your bird friend for "${task.title}" 🌸 Just keeping it softly in mind whenever it suits you.`
+      `🕊️ A little feathered friend just arrived with a gentle note for "${task.title}" 🐘 Whenever you're ready, no pressure at all.`,
+      `🕊️ Your little winged buddy is here with a soft reminder about "${task.title}". Take your time, you're doing great 🐘`,
+      `🕊️ A gentle check-in from your bird friend for "${task.title}" 🐘 Just keeping it softly in mind whenever it suits you.`
     ];
     const greeting = warmGreetings[Math.floor(Math.random() * warmGreetings.length)];
     appendAiMessage(greeting);
@@ -1987,7 +2082,7 @@ document.addEventListener("DOMContentLoaded", () => {
       try {
         await updateTaskStatus(task.id, "completed");
         appendAiMessage(`Wonderful job completing "${task.title}"! 🎉 Every step forward is a victory.`);
-        showToast("🌸 Task completed!");
+        showToast("🐘 Task completed!");
         flyAwayReverseWeb();
       } catch (err) {
         console.error("Mark done error:", err);
@@ -2045,7 +2140,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const label = mins === 60 ? "1 hour" : (mins === 1440 ? "tomorrow" : `${mins} minutes`);
-      appendAiMessage(`I've snoozed "${task.title}" for ${label} 🌸 Take all the time you need, the bird will rest for now.`);
+      appendAiMessage(`I've snoozed "${task.title}" for ${label} 🐘 Take all the time you need, the bird will rest for now.`);
       showToast(`⏰ Snoozed for ${label}`);
       flyAwayReverseWeb();
     } catch (err) {
@@ -2153,12 +2248,26 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   async function checkAuthStatus() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const wasJustVerified = urlParams.get("verified") === "true";
+    if (wasJustVerified) {
+      try {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      } catch (e) {}
+    }
+
     try {
       const res = await fetch("/api/auth/me");
       if (res.ok) {
         const data = await res.json();
         if (data.user) {
           showAppScreen(data.user);
+          if (wasJustVerified) {
+            showToast("🐘 Email confirmed! Welcome to SINBHA! Let's chat!");
+            setTimeout(() => {
+              if (messageInput) messageInput.focus();
+            }, 300);
+          }
           return;
         }
       }
@@ -2176,6 +2285,8 @@ document.addEventListener("DOMContentLoaded", () => {
       tabSignupBtn.classList.remove("active");
       if (loginForm) loginForm.style.display = "flex";
       if (signupForm) signupForm.style.display = "none";
+      const noticeEl = document.getElementById("signupVerificationNotice");
+      if (noticeEl) noticeEl.style.display = "none";
       hideAuthAlert();
     });
 
@@ -2183,6 +2294,8 @@ document.addEventListener("DOMContentLoaded", () => {
       tabSignupBtn.classList.add("active");
       tabLoginBtn.classList.remove("active");
       if (signupForm) signupForm.style.display = "flex";
+      const noticeEl = document.getElementById("signupVerificationNotice");
+      if (noticeEl) noticeEl.style.display = "none";
       if (loginForm) loginForm.style.display = "none";
       hideAuthAlert();
     });
@@ -2204,7 +2317,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const submitBtn = document.getElementById("loginSubmitBtn");
       if (submitBtn) {
         submitBtn.disabled = true;
-        submitBtn.textContent = "Logging In... 🌸";
+        submitBtn.textContent = "Logging In... 🐘";
       }
 
       try {
@@ -2216,7 +2329,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const data = await res.json();
 
         if (res.ok && data.user) {
-          showToast(`🌸 Welcome back, ${data.user.email}!`);
+          showToast(`🐘 Welcome back, ${data.user.email}!`);
           showAppScreen(data.user);
         } else {
           showAuthAlert(data.detail || "Invalid login credentials. Please try again.");
@@ -2227,7 +2340,7 @@ document.addEventListener("DOMContentLoaded", () => {
       } finally {
         if (submitBtn) {
           submitBtn.disabled = false;
-          submitBtn.textContent = "Log In 🌸";
+          submitBtn.textContent = "Log In 🐘";
         }
       }
     });
@@ -2264,7 +2377,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const submitBtn = document.getElementById("signupSubmitBtn");
       if (submitBtn) {
         submitBtn.disabled = true;
-        submitBtn.textContent = "Creating Account... 🌸";
+        submitBtn.textContent = "Creating Account... 🐘";
       }
 
       try {
@@ -2281,8 +2394,36 @@ document.addEventListener("DOMContentLoaded", () => {
         });
         const data = await res.json();
 
-        if (res.ok && data.user) {
-          showToast(`🌸 Account created! Welcome to SINBHA, ${data.user.email}!`);
+        if (res.ok && data.requires_verification) {
+          if (signupForm) signupForm.style.display = "none";
+          let noticeEl = document.getElementById("signupVerificationNotice");
+          if (!noticeEl) {
+            noticeEl = document.createElement("div");
+            noticeEl.id = "signupVerificationNotice";
+            signupForm.parentNode.insertBefore(noticeEl, signupForm.nextSibling);
+          }
+          noticeEl.style.display = "block";
+          noticeEl.innerHTML = `
+            <div style="background: #fffaf5; border: 1px solid #fed7aa; border-radius: 12px; padding: 24px; text-align: center; margin-top: 15px;">
+              <div style="font-size: 36px; margin-bottom: 8px;">🐘✉️</div>
+              <h3 style="color: #ea580c; margin-bottom: 8px; font-size: 1.15rem;">Check Your Email</h3>
+              <p style="color: #431407; font-size: 0.92rem; line-height: 1.5; margin-bottom: 16px;">
+                We sent a confirmation link to <strong>${escapeHtml(email)}</strong>.<br/>
+                Please click the link in your email to confirm your account and start chatting with SINBHA!
+              </p>
+              <button type="button" id="backToLoginFromVerifyBtn" class="primary-btn" style="width: 100%; padding: 10px; border-radius: 8px; font-weight: 600;">Go to Log In 🐘</button>
+            </div>
+          `;
+          const backBtn = document.getElementById("backToLoginFromVerifyBtn");
+          if (backBtn && tabLoginBtn) {
+            backBtn.addEventListener("click", () => {
+              tabLoginBtn.click();
+              noticeEl.style.display = "none";
+            });
+          }
+          showToast("🐘 Account created! Please check your email to confirm.");
+        } else if (res.ok && data.user) {
+          showToast(`🐘 Account created! Welcome to SINBHA, ${data.user.email}!`);
           showAppScreen(data.user);
         } else {
           showAuthAlert(data.detail || "Could not complete signup. Please try another email.");
@@ -2293,7 +2434,7 @@ document.addEventListener("DOMContentLoaded", () => {
       } finally {
         if (submitBtn) {
           submitBtn.disabled = false;
-          submitBtn.textContent = "Create Account 🌸";
+          submitBtn.textContent = "Create Account 🐘";
         }
       }
     });
@@ -2322,7 +2463,7 @@ document.addEventListener("DOMContentLoaded", () => {
         console.warn("Failed to clear native session:", ce);
       }
     }
-    showToast("Logged out 🌸");
+    showToast("Logged out 🐘");
     showAuthScreen();
   }
 
@@ -2391,7 +2532,7 @@ document.addEventListener("DOMContentLoaded", () => {
           if (window.Capacitor && window.Capacitor.isNativePlatform() && window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative) {
             try { await window.Capacitor.Plugins.SinbhaNative.clearSession(); } catch (ce) {}
           }
-          showToast("🌸 Account and all data deleted permanently");
+          showToast("🐘 Account and all data deleted permanently");
           currentUser = null;
           showAuthScreen();
         } else {
@@ -2790,7 +2931,7 @@ document.addEventListener("DOMContentLoaded", () => {
           if (gateModal && (isMandatory || isManual)) {
             gateModal.style.display = "flex";
             if (gateTitle) {
-              gateTitle.textContent = isMandatory ? `Update Required for ${platformName}` : `New ${platformName} Version Available! 🌸`;
+              gateTitle.textContent = isMandatory ? `Update Required for ${platformName}` : `New ${platformName} Version Available! 🐘`;
             }
             if (gateDesc) {
               gateDesc.innerHTML = isMandatory
@@ -2817,7 +2958,7 @@ document.addEventListener("DOMContentLoaded", () => {
             statusText.style.color = "#16a34a";
           }
           if (isManual) {
-            showToast(`🌸 You're up to date! SINBHA is running the latest version (v${current}).`);
+            showToast(`🐘 You're up to date! SINBHA is running the latest version (v${current}).`);
           }
         }
       } catch (e) {
@@ -2886,7 +3027,7 @@ document.addEventListener("DOMContentLoaded", () => {
       testBirdNativeBtn.addEventListener("click", async () => {
         if (window.Capacitor?.Plugins?.SinbhaNative) {
           await window.Capacitor.Plugins.SinbhaNative.testBird({
-            title: "Evening companion check-in 🌸",
+            title: "Evening companion check-in 🐘",
             dueText: "Due right now"
           });
           showToast("🕊️ Flying companion bird launched!");
@@ -2911,7 +3052,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const detail = ev.detail || {};
       const taskId = detail.taskId;
       if (taskId) {
-        showToast(`Opening chat for task #${taskId} 🌸`);
+        showToast(`Opening chat for task #${taskId} 🐘`);
         if (messageInput) {
           messageInput.value = `Tell me about my task #${taskId}`;
           messageInput.focus();
@@ -2953,18 +3094,24 @@ document.addEventListener("DOMContentLoaded", () => {
         // Step C2.10: Display Native App Version and Web Client Version separately
         let nativeVer = "None (Pure Web Client)";
         if (isElectron && electronStatus) {
-          nativeVer = `v${electronStatus.version || "1.4.23"} (Windows Electron)`;
+          nativeVer = `v${electronStatus.version || "1.4.25"} (Windows Electron)`;
         } else if (diag) {
-          nativeVer = `v${diag.versionName || "1.4.23"} (Android Native, versionCode: ${diag.versionCode || 50})`;
+          nativeVer = `v${diag.versionName || "1.4.25"} (Android Native, versionCode: ${diag.versionCode || 52})`;
         }
         lines.push(`Native App Version: ${nativeVer}`);
-        lines.push(`Web Client Version: v1.4.23`);
+        lines.push(`Web Client Version: v1.4.25`);
 
         if (isElectron && electronStatus) {
           lines.push(`Backend URL: ${electronStatus.backendUrl || "Configured"}`);
           lines.push(`Reminders Paused: ${electronStatus.paused ? "Yes" : "No"}`);
           lines.push(`DND: ${electronStatus.dnd ? "Enabled" : "Disabled"}`);
           lines.push(`Start with Windows: ${electronStatus.startWithWindows ? "Enabled" : "Disabled"}`);
+        }
+        if (isElectron && window.electronAPI && typeof window.electronAPI.getInstalledApps === "function") {
+          try {
+            const winApps = await window.electronAPI.getInstalledApps();
+            lines.push(`Installed Apps (Windows): ${winApps ? winApps.length : 0}`);
+          } catch (e) {}
         } else if (diag) {
           if (diag.deviceInfo) {
             lines.push(`Device: ${diag.deviceInfo.manufacturer} ${diag.deviceInfo.brand} ${diag.deviceInfo.model} (SDK ${diag.deviceInfo.androidSdk})`);
@@ -2975,7 +3122,7 @@ document.addEventListener("DOMContentLoaded", () => {
           lines.push("\n--- COMMAND CHANNEL (C2.6) ---");
           const cmdChan = diag.commandChannel || {};
           const isWs = diag.wsConnected || cmdChan.wsConnected;
-          lines.push(`• WebSocket: ${isWs ? "CONNECTED 🌸 (Real-time native WebSocket)" : "DISCONNECTED (Polling fallback active)"}`);
+          lines.push(`• WebSocket: ${isWs ? "CONNECTED 🐘 (Real-time native WebSocket)" : "DISCONNECTED (Polling fallback active)"}`);
           if (diag.lastWsError && diag.lastWsError !== "None") {
             lines.push(`  WS Error: ${diag.lastWsError}`);
           }
@@ -3014,12 +3161,12 @@ document.addEventListener("DOMContentLoaded", () => {
               lines.push(`[${e.time}] ${e.message}`);
             });
           } else {
-            lines.push("No errors logged. All systems operating smoothly 🌸");
+            lines.push("No errors logged. All systems operating smoothly 🐘");
           }
         } else {
           // Web / Desktop fallback
           lines.push(`Client: Browser / Desktop Webview`);
-          lines.push(`App Version: v1.4.21`);
+          lines.push(`App Version: v1.4.25`);
           lines.push(`Online: ${navigator.onLine ? "Yes" : "No"}`);
           lines.push(`Timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`);
           lines.push(`User Agent: ${navigator.userAgent}`);
@@ -3107,13 +3254,28 @@ document.addEventListener("DOMContentLoaded", () => {
     if (btnRealDeviceCheck) {
       btnRealDeviceCheck.addEventListener("click", async () => {
         btnRealDeviceCheck.disabled = true;
-        btnRealDeviceCheck.textContent = "⏳ Running Real Device Check (6 Apps)...";
+        const chkDelay = document.getElementById("chkDelay20s");
+        const delaySeconds = (chkDelay && chkDelay.checked) ? 20 : 0;
+
         if (realDeviceResultsContainer) realDeviceResultsContainer.style.display = "block";
         if (realDeviceSummaryBadge) {
-          realDeviceSummaryBadge.textContent = "Testing...";
+          realDeviceSummaryBadge.textContent = delaySeconds > 0 ? "Countdown..." : "Testing...";
           realDeviceSummaryBadge.style.background = "#dbeafe";
           realDeviceSummaryBadge.style.color = "#1e40af";
         }
+
+        if (delaySeconds > 0) {
+          for (let sec = delaySeconds; sec > 0; sec--) {
+            btnRealDeviceCheck.textContent = `🌙 Lock phone now! Starting in ${sec}s...`;
+            if (realDeviceResultsList) {
+              realDeviceResultsList.innerHTML = `<div style="color: #2563eb; font-weight: 600;">🔒 Lock your phone now! Commands run in ${sec} seconds...</div>`;
+            }
+            await new Promise(r => setTimeout(r, 1000));
+          }
+        }
+
+        btnRealDeviceCheck.textContent = "⏳ Running Real Device Check (6 Apps)...";
+        if (realDeviceSummaryBadge) realDeviceSummaryBadge.textContent = "Testing...";
         if (realDeviceResultsList) {
           realDeviceResultsList.innerHTML = '<div style="color: #6b7280; font-style: italic;">Sending 6 commands through chat path to all connected devices...</div>';
         }
@@ -3122,7 +3284,7 @@ document.addEventListener("DOMContentLoaded", () => {
           const res = await fetch("/api/devices/real-device-check", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ rounds: 1 })
+            body: JSON.stringify({ rounds: 1, delay_seconds: delaySeconds })
           });
           const data = await res.json();
 
@@ -3168,9 +3330,9 @@ document.addEventListener("DOMContentLoaded", () => {
               const badgeBg = isOk ? "#dcfce7" : "#fee2e2";
               const badgeColor = isOk ? "#166534" : "#991b1b";
 
-              // Step C2.10 Item 3: Render stage table for failed commands
+              // Step C2.10 & C2.11 Item 3: Render stage table for every command (passed or failed) with real command_id
               let stageTableHtml = "";
-              if (!isOk && c.stage_table && Array.isArray(c.stage_table)) {
+              if (c.stage_table && Array.isArray(c.stage_table) && c.stage_table.length > 0) {
                 const stageRows = c.stage_table.map(s => {
                   const isFail = s.is_failure_point;
                   const rowBg = isFail ? "#fef2f2" : "#ffffff";
@@ -3185,11 +3347,15 @@ document.addEventListener("DOMContentLoaded", () => {
                   `;
                 }).join("");
 
+                const failureHeader = (!isOk && c.first_missing_stage) ? `
+                  <div style="color: #991b1b; font-weight: 700; font-size: 0.72rem; margin-bottom: 3px;">
+                    ⚠️ Failure point: missing stage <code>${escapeHtml(c.first_missing_stage)}</code>
+                  </div>` : "";
+
                 stageTableHtml = `
-                  <div style="margin-top: 6px; padding: 6px; background: #fff5f5; border: 1px solid #fecaca; border-radius: 6px;">
-                    <div style="color: #991b1b; font-weight: 700; font-size: 0.72rem; margin-bottom: 3px;">
-                      ⚠️ Failure point: missing stage <code>${escapeHtml(c.first_missing_stage || 'unknown')}</code>
-                    </div>
+                  <div style="margin-top: 6px; padding: 6px; background: ${isOk ? '#f0fdf4' : '#fff5f5'}; border: 1px solid ${isOk ? '#bbf7d0' : '#fecaca'}; border-radius: 6px;">
+                    ${failureHeader}
+                    <div style="font-size: 0.68rem; color: #6b7280; margin-bottom: 3px;">Command ID: <code>${escapeHtml(c.command_id || 'N/A')}</code></div>
                     <table style="width: 100%; border-collapse: collapse; font-size: 0.70rem;">
                       <thead>
                         <tr style="text-align: left; background: #f3f4f6; border-bottom: 1px solid #d1d5db;">
@@ -3211,7 +3377,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     <span style="font-size: 0.72rem; font-weight: 700; padding: 2px 6px; border-radius: 4px; background: ${badgeBg}; color: ${badgeColor};">${escapeHtml(c.result.toUpperCase())} (${c.time_taken_ms}ms)</span>
                   </div>
                   <div style="font-size: 0.72rem; color: #4b5563; margin-top: 2px;">
-                    Sent: ${c.sent ? "Yes" : "No"} | Received: ${c.received ? "Yes" : "No"} | Started: ${c.started ? "Yes" : "No"}
+                    Sent: ${c.sent ? "Yes" : "No"} | Received: ${c.received ? "Yes" : "No"} | Started: ${c.started ? "Yes" : "No"} | ID: <code>${escapeHtml(c.command_id || '')}</code>
                   </div>
                   <div style="font-size: 0.70rem; color: #6b7280; font-family: monospace; margin-top: 2px;">
                     ${escapeHtml(c.message || '')}
@@ -3255,6 +3421,112 @@ document.addEventListener("DOMContentLoaded", () => {
         } finally {
           btnRealDeviceCheck.disabled = false;
           btnRealDeviceCheck.textContent = "🔍 Run Real Device Check (Cross-Device 6-App Test)";
+        }
+      });
+    }
+
+    // Milestone M1+M2 Item 1: Background Launch Test Runner
+    const btnBackgroundLaunchTest = document.getElementById("btnBackgroundLaunchTest");
+    const bgLaunchResultsContainer = document.getElementById("bgLaunchResultsContainer");
+    const bgLaunchSummaryBadge = document.getElementById("bgLaunchSummaryBadge");
+    const bgLaunchDeviceInfo = document.getElementById("bgLaunchDeviceInfo");
+    const bgLaunchResultsList = document.getElementById("bgLaunchResultsList");
+
+    if (btnBackgroundLaunchTest) {
+      btnBackgroundLaunchTest.addEventListener("click", async () => {
+        btnBackgroundLaunchTest.disabled = true;
+        const chkDelay = document.getElementById("chkDelay20s");
+        const delaySeconds = (chkDelay && chkDelay.checked) ? 20 : 0;
+
+        if (bgLaunchResultsContainer) bgLaunchResultsContainer.style.display = "block";
+        if (bgLaunchSummaryBadge) {
+          bgLaunchSummaryBadge.textContent = delaySeconds > 0 ? "Countdown..." : "Testing...";
+          bgLaunchSummaryBadge.style.background = "#dbeafe";
+          bgLaunchSummaryBadge.style.color = "#1e40af";
+        }
+
+        if (delaySeconds > 0) {
+          for (let sec = delaySeconds; sec > 0; sec--) {
+            btnBackgroundLaunchTest.textContent = `🌙 Lock phone now! Starting in ${sec}s...`;
+            if (bgLaunchResultsList) {
+              bgLaunchResultsList.innerHTML = `<div style="color: #059669; font-weight: 600;">🔒 Screen-off mode: Lock your phone now! Starting in ${sec}s...</div>`;
+            }
+            await new Promise(r => setTimeout(r, 1000));
+          }
+        }
+
+        btnBackgroundLaunchTest.textContent = "⏳ Testing Background Launch Routes...";
+        if (bgLaunchSummaryBadge) bgLaunchSummaryBadge.textContent = "Testing...";
+        if (bgLaunchResultsList) {
+          bgLaunchResultsList.innerHTML = '<div style="color: #6b7280; font-style: italic;">Testing app, settings, url, and deep link via route ladder...</div>';
+        }
+
+        try {
+          const res = await fetch("/api/devices/background-launch-test", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ delay_seconds: delaySeconds })
+          });
+          const data = await res.json();
+
+          if (!data.success) {
+            if (bgLaunchSummaryBadge) {
+              bgLaunchSummaryBadge.textContent = data.error || "Failed";
+              bgLaunchSummaryBadge.style.background = "#fee2e2";
+              bgLaunchSummaryBadge.style.color = "#991b1b";
+            }
+            if (bgLaunchResultsList) {
+              bgLaunchResultsList.innerHTML = `<div style="color: #ef4444; font-weight: 600;">${escapeHtml(data.message || data.error || "Background test failed")}</div>`;
+            }
+            return;
+          }
+
+          if (bgLaunchDeviceInfo) {
+            bgLaunchDeviceInfo.textContent = `📱 ${data.phone_model} (Android ${data.android_version}, API ${data.sdk_int}) — Device: ${data.device_name}`;
+          }
+
+          const results = data.results || [];
+          let passedCount = 0;
+          const rowsHtml = results.map(r => {
+            const isOk = r.status === "succeeded" || r.status === "needs_tap" || r.status === "sent_not_verified";
+            if (r.status === "succeeded") passedCount++;
+            const icon = r.status === "succeeded" ? "✅" : (r.status === "needs_tap" ? "🔔" : "⚠️");
+            const badgeBg = r.status === "succeeded" ? "#dcfce7" : (r.status === "needs_tap" ? "#fef3c7" : "#fee2e2");
+            const badgeCol = r.status === "succeeded" ? "#166534" : (r.status === "needs_tap" ? "#92400e" : "#991b1b");
+            return `
+              <div style="background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 8px; display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                  <span style="font-weight: 600; color: #1f2937;">${icon} ${escapeHtml(r.name)}</span>
+                  <div style="font-size: 0.72rem; color: #6b7280;">Route: <strong style="color: #4b5563;">${escapeHtml(r.route_used)}</strong> (${r.elapsed_ms}ms)</div>
+                </div>
+                <span style="font-size: 0.72rem; font-weight: 700; padding: 2px 6px; border-radius: 4px; background: ${badgeBg}; color: ${badgeCol};">
+                  ${escapeHtml(r.status)}
+                </span>
+              </div>
+            `;
+          }).join("");
+
+          if (bgLaunchResultsList) {
+            bgLaunchResultsList.innerHTML = rowsHtml;
+          }
+
+          if (bgLaunchSummaryBadge) {
+            bgLaunchSummaryBadge.textContent = `${passedCount}/${results.length} Verified`;
+            bgLaunchSummaryBadge.style.background = passedCount === results.length ? "#dcfce7" : "#fee2e2";
+            bgLaunchSummaryBadge.style.color = passedCount === results.length ? "#166534" : "#991b1b";
+          }
+        } catch (err) {
+          if (bgLaunchSummaryBadge) {
+            bgLaunchSummaryBadge.textContent = "Error";
+            bgLaunchSummaryBadge.style.background = "#fee2e2";
+            bgLaunchSummaryBadge.style.color = "#991b1b";
+          }
+          if (bgLaunchResultsList) {
+            bgLaunchResultsList.innerHTML = `<div style="color: #ef4444;">Error: ${escapeHtml(err.message)}</div>`;
+          }
+        } finally {
+          btnBackgroundLaunchTest.disabled = false;
+          btnBackgroundLaunchTest.textContent = "📱 Run Background Launch Test (App, Settings, URL, Deep Link)";
         }
       });
     }
@@ -3518,11 +3790,34 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
 
+    async function getActiveClientVersion() {
+      try {
+        if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative && typeof window.Capacitor.Plugins.SinbhaNative.getAppVersion === "function") {
+          const vInfo = await window.Capacitor.Plugins.SinbhaNative.getAppVersion();
+          if (vInfo && (vInfo.versionName || vInfo.version)) {
+            return vInfo.versionName || vInfo.version;
+          }
+        }
+      } catch (e) {}
+
+      try {
+        if (window.electronAPI && typeof window.electronAPI.getDiagnostics === "function") {
+          const diag = await window.electronAPI.getDiagnostics();
+          if (diag && diag.version) {
+            return diag.version;
+          }
+        }
+      } catch (e) {}
+
+      return "1.4.25";
+    }
+
     // Register or handshake this device on server
     async function initDeviceChannel() {
       if (!currentUser) return;
       const deviceId = await initNativeDeviceId();
       const { platform, name } = await getDevicePlatformAndName();
+      const appVer = await getActiveClientVersion();
 
       const nameEl = document.getElementById("currentDeviceName");
       if (nameEl && (!currentDeviceData || nameEl.textContent === "Detecting...")) {
@@ -3532,11 +3827,15 @@ document.addEventListener("DOMContentLoaded", () => {
       try {
         const res = await fetch("/api/devices/register", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "X-Client-Version": appVer
+          },
           body: JSON.stringify({
             device_id: deviceId,
             name: name,
-            platform: platform
+            platform: platform,
+            client_version: appVer
           })
         });
         const data = await res.json();
@@ -3647,7 +3946,7 @@ document.addEventListener("DOMContentLoaded", () => {
             pairingPollTimer = null;
             currentDeviceData = data.device;
             updateCurrentDeviceUI(currentDeviceData);
-            showToast("🌸 Device paired and approved successfully!");
+            showToast("🐘 Device paired and approved successfully!");
             connectDeviceWebSocket(deviceId);
             loadDevices();
           }
@@ -3659,7 +3958,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let wsHeartbeatTimer = null;
     let commandPollInterval = null;
 
-    function connectDeviceWebSocket(deviceId) {
+    async function connectDeviceWebSocket(deviceId) {
       if (!deviceId) deviceId = getOrCreateDeviceId();
       if (deviceWs && (deviceWs.readyState === WebSocket.OPEN || deviceWs.readyState === WebSocket.CONNECTING)) {
         return;
@@ -3670,19 +3969,22 @@ document.addEventListener("DOMContentLoaded", () => {
       if (currentUser && currentUser.token) {
         tokenParam = `&token=${encodeURIComponent(currentUser.token)}`;
       }
-      const wsUrl = `${protocol}//${window.location.host}/api/ws/devices?device_id=${encodeURIComponent(deviceId)}${tokenParam}`;
+      const clientVer = await getActiveClientVersion();
+      const wsUrl = `${protocol}//${window.location.host}/api/ws/devices?device_id=${encodeURIComponent(deviceId)}${tokenParam}&version=${encodeURIComponent(clientVer)}`;
 
       try {
         deviceWs = new WebSocket(wsUrl);
 
         deviceWs.onopen = () => {
-          console.log("🌸 Secure device channel connected");
+          console.log("🐘 Secure device channel connected");
           try {
             if (currentUser && currentUser.token) {
               deviceWs.send(JSON.stringify({
                 type: "auth",
                 token: currentUser.token,
-                device_id: deviceId
+                device_id: deviceId,
+                version: clientVer,
+                client_version: clientVer
               }));
             }
             deviceWs.send(JSON.stringify({ type: "ping" }));
@@ -3777,15 +4079,32 @@ document.addEventListener("DOMContentLoaded", () => {
           isCharging = b.charging;
         }
 
+        let installedApps = null;
+        if (window.electronAPI && typeof window.electronAPI.getInstalledApps === "function") {
+          try {
+            installedApps = await window.electronAPI.getInstalledApps();
+          } catch (e) {}
+        } else if (window.Capacitor && window.Capacitor.isPluginAvailable && window.Capacitor.isPluginAvailable("SinbhaNative")) {
+          try {
+            const appRes = await window.Capacitor.Plugins.SinbhaNative.getInstalledApps();
+            installedApps = (appRes && appRes.apps) || null;
+          } catch (e) {}
+        }
+
         if (deviceWs && deviceWs.readyState === WebSocket.OPEN) {
-          deviceWs.send(JSON.stringify({
+          const clientVer = await getActiveClientVersion();
+          const statusPayload = {
             type: "device_status",
             battery: batteryPct,
             is_charging: isCharging,
             platform: platform,
-            version: "1.4.6",
+            version: clientVer,
             supported_tools: supportedTools
-          }));
+          };
+          if (installedApps && Array.isArray(installedApps) && installedApps.length > 0) {
+            statusPayload.installed_apps = installedApps;
+          }
+          deviceWs.send(JSON.stringify(statusPayload));
         }
       } catch (e) {}
     }
@@ -3816,7 +4135,10 @@ document.addEventListener("DOMContentLoaded", () => {
     async function pollPendingCommands(deviceId) {
       if (!deviceId) deviceId = getOrCreateDeviceId();
       try {
-        const res = await fetch(`/api/devices/commands/pending?device_id=${encodeURIComponent(deviceId)}`);
+        const clientVer = await getActiveClientVersion();
+        const res = await fetch(`/api/devices/commands/pending?device_id=${encodeURIComponent(deviceId)}&version=${encodeURIComponent(clientVer)}`, {
+          headers: { "X-Client-Version": clientVer }
+        });
         if (!res.ok) return;
         const data = await res.json();
         if (data.commands && Array.isArray(data.commands)) {
@@ -3940,100 +4262,84 @@ document.addEventListener("DOMContentLoaded", () => {
           const appName = payload.app || "";
           showToast(`🚀 Opening ${appName}...`);
 
-          const lowerApp = appName.toLowerCase();
-          let opened = false;
+          let launchStatus = "failed";
+          let launchResult = null;
+          let launchError = null;
 
           // 1. If running inside Electron desktop app (Windows)
           if (window.electronAPI && window.electronAPI.launchDesktopApp) {
             try {
               const res = await window.electronAPI.launchDesktopApp(payload);
+              launchResult = res;
               if (res && res.success) {
                 showToast(`✨ Launched ${appName} on laptop!`);
-                opened = true;
+                launchStatus = res.status || "succeeded";
+              } else if (res && (res.status === "not_installed" || res.error === "not_installed")) {
+                launchStatus = "not_installed";
+                launchError = res.error || "not_installed";
+                showToast(`App '${appName}' is not installed.`);
+              } else if (res && res.status === "sent_not_verified") {
+                launchStatus = "sent_not_verified";
+                launchError = res.error || "sent, not verified";
+                showToast(`Sent ${appName}, but verification failed.`);
               } else {
-                showToast(`Could not launch ${appName}: ${res ? res.error : "Unknown error"}`);
+                launchStatus = "failed";
+                launchError = res ? (res.error || res.message) : "Launch failed";
+                showToast(`Could not launch ${appName}: ${launchError}`);
               }
+            } catch (e) {
+              launchStatus = "failed";
+              launchError = e.message;
+            }
+          }
+          // 2. If running inside Capacitor Android app via native SinbhaPlugin
+          else if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative) {
+            try {
+              const res = await window.Capacitor.Plugins.SinbhaNative.openApp(payload);
+              launchResult = res;
+              showToast(`✨ Opened ${appName} on phone!`);
+              launchStatus = "succeeded";
+            } catch (e) {
+              const code = e && (e.code || (e.data && e.data.status));
+              const isNotInstalled = code === "APP_NOT_FOUND" || code === "not_installed" || (e.message && e.message.toLowerCase().includes("not installed"));
+              launchStatus = isNotInstalled ? "not_installed" : "failed";
+              launchError = e.message || "Failed to open app";
+              launchResult = {
+                app: appName,
+                status: launchStatus,
+                error: launchError,
+                candidates: (e.data && e.data.candidates) || []
+              };
+              showToast(`Could not launch ${appName}: ${launchError}`);
+            }
+          }
+          // 3. Fallback browser/webview: only open if explicit URL was provided; NEVER fallback to web silently!
+          else if (payload.url) {
+            window.open(payload.url.startsWith("http") ? payload.url : `https://${payload.url}`, "_blank");
+            launchStatus = "succeeded";
+            launchResult = { method: "direct_url", url: payload.url };
+          } else {
+            launchStatus = "not_installed";
+            launchError = `App '${appName}' is not installed or companion launcher is unavailable.`;
+            launchResult = { app: appName, status: "not_installed", error: launchError, candidates: [] };
+          }
+
+          if (cmdId) {
+            reportCommandLifecycle(cmdId, launchStatus, launchResult, launchError);
+            try {
+              await fetch(`/api/devices/commands/${encodeURIComponent(cmdId)}/ack`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  status: launchStatus === "succeeded" ? "executed" : launchStatus,
+                  command_id: cmdId,
+                  result: launchResult,
+                  error: launchError
+                })
+              });
             } catch (e) {}
           }
-
-          // 2. If running inside Capacitor Android app via native SinbhaPlugin
-          if (!opened && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SinbhaNative) {
-            try {
-              await window.Capacitor.Plugins.SinbhaNative.openApp(payload);
-              showToast(`✨ Opened ${appName} on phone!`);
-              opened = true;
-            } catch (e) {
-              console.warn("SinbhaNative.openApp plugin call failed, trying intent URI:", e);
-            }
-          }
-
-          // 3. Direct URL / Search Query handling in browser / WebView
-          if (!opened && (payload.url || payload.search_query)) {
-            if (payload.url) {
-              window.open(payload.url.startsWith("http") ? payload.url : `https://${payload.url}`, "_blank");
-              opened = true;
-            } else if (payload.search_query) {
-              if (lowerApp.includes("youtube")) {
-                window.open(`https://www.youtube.com/results?search_query=${encodeURIComponent(payload.search_query)}`, "_blank");
-              } else {
-                window.open(`https://www.google.com/search?q=${encodeURIComponent(payload.search_query)}`, "_blank");
-              }
-              opened = true;
-            }
-          }
-
-          // 4. Direct Android Package Intent Launcher
-          if (!opened && /Android/i.test(navigator.userAgent || "")) {
-            const androidIntentMap = {
-              whatsapp: "intent:#Intent;package=com.whatsapp;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
-              youtube: "intent:#Intent;package=com.google.android.youtube;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
-              spotify: "spotify://",
-              gmail: "intent:#Intent;package=com.google.android.gm;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
-              chrome: "intent:#Intent;package=com.android.chrome;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
-              snapchat: "intent:#Intent;package=com.snapchat.android;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
-              instagram: "intent:#Intent;package=com.instagram.android;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
-              claude: "intent:#Intent;package=com.anthropic.claude;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
-              chatgpt: "intent:#Intent;package=com.openai.chatgpt;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;end;",
-              maps: "geo:0,0",
-              camera: "intent:#Intent;action=android.media.action.IMAGE_CAPTURE;end;"
-            };
-            if (androidIntentMap[lowerApp]) {
-              try {
-                const link = document.createElement("a");
-                link.href = androidIntentMap[lowerApp];
-                link.rel = "noreferrer";
-                document.body.appendChild(link);
-                link.click();
-                setTimeout(() => { if (link.parentNode) link.parentNode.removeChild(link); }, 300);
-                showToast(`✨ Opening ${appName} on phone!`);
-                opened = true;
-              } catch (ie) {
-                window.location.href = androidIntentMap[lowerApp];
-                opened = true;
-              }
-            }
-          }
-
-          // 5. Web browser fallback: protocol or web link
-          if (!opened) {
-            const webMap = {
-              whatsapp: "https://web.whatsapp.com",
-              spotify: "https://open.spotify.com",
-              youtube: "https://youtube.com",
-              gmail: "https://mail.google.com",
-              maps: "https://maps.google.com",
-              chrome: "https://google.com",
-              snapchat: "https://web.snapchat.com",
-              instagram: "https://www.instagram.com",
-              claude: "https://claude.ai",
-              chatgpt: "https://chatgpt.com"
-            };
-            if (webMap[lowerApp]) {
-              window.open(webMap[lowerApp], "_blank");
-            } else if (lowerApp === "notepad" || lowerApp === "calculator" || lowerApp === "calc" || lowerApp === "terminal" || lowerApp === "cmd") {
-              showToast(`💡 Note: Launching local Windows apps (${appName}) requires the SINBHA Windows Desktop App!`);
-            }
-          }
+          return;
         } else if (type === "type_input" || (type === "system_control" && payload.action === "type_input")) {
           if (window.electronAPI && window.electronAPI.typeInput) {
             await window.electronAPI.typeInput(payload);
@@ -4260,7 +4566,7 @@ document.addEventListener("DOMContentLoaded", () => {
                   });
                   const data = await res.json();
                   if (res.ok && data.success) {
-                    showToast("Device renamed 🌸");
+                    showToast("Device renamed 🐘");
                     await loadDevices();
                   } else {
                     showToast(data.detail || "Failed to rename device.");
@@ -4286,12 +4592,16 @@ document.addEventListener("DOMContentLoaded", () => {
             });
           }
 
-          // Hook revoke button
+          // Hook revoke / delete button
           const rBtn = card.querySelector(".revoke-dev-btn");
           if (rBtn) {
             rBtn.addEventListener("click", async () => {
-              if (confirm(`Revoke access for '${d.name}' immediately?`)) {
-                await revokeDevice(d.device_id);
+              const isRevoked = (d.status === "revoked");
+              const promptMsg = isRevoked
+                ? `Permanently delete '${d.name}'? This removes it completely.`
+                : `Revoke access for '${d.name}' immediately?`;
+              if (confirm(promptMsg)) {
+                await revokeDevice(d.device_id, isRevoked);
               }
             });
           }
@@ -4355,20 +4665,21 @@ document.addEventListener("DOMContentLoaded", () => {
       modal.style.display = "flex";
     }
 
-    async function revokeDevice(deviceId) {
+    async function revokeDevice(deviceId, permanent = false) {
       try {
-        const res = await fetch(`/api/devices/${encodeURIComponent(deviceId)}`, {
+        const url = `/api/devices/${encodeURIComponent(deviceId)}${permanent ? "?permanent=true" : ""}`;
+        const res = await fetch(url, {
           method: "DELETE"
         });
         const data = await res.json();
         if (data.success) {
-          showToast("🗑️ Device revoked immediately.");
+          showToast(permanent ? "🗑️ Device permanently deleted." : "🗑️ Device revoked immediately.");
           await loadDevices();
         } else {
-          showToast(data.detail || "Failed to revoke device.");
+          showToast(data.detail || "Failed to remove device.");
         }
       } catch (e) {
-        showToast("Error revoking device: " + e.message);
+        showToast("Error removing device: " + e.message);
       }
     }
 
@@ -4407,7 +4718,7 @@ document.addEventListener("DOMContentLoaded", () => {
       refreshDevBtn.addEventListener("click", async () => {
         await initDeviceChannel();
         await loadDevices();
-        showToast("🌸 Refreshed connected devices!");
+        showToast("🐘 Refreshed connected devices!");
       });
     }
 
@@ -4465,7 +4776,7 @@ document.addEventListener("DOMContentLoaded", () => {
           });
           const data = await res.json();
           if (data.success) {
-            showToast("🌸 Device approved and paired successfully!");
+            showToast("🐘 Device approved and paired successfully!");
             if (pairModal) pairModal.style.display = "none";
             await loadDevices();
           } else {
@@ -4511,7 +4822,7 @@ document.addEventListener("DOMContentLoaded", () => {
           if (data.success && data.device && data.device.status === "trusted") {
             currentDeviceData = data.device;
             updateCurrentDeviceUI(currentDeviceData);
-            showToast("🌸 First device verified with password and trusted!");
+            showToast("🐘 First device verified with password and trusted!");
             connectDeviceWebSocket(myId);
             loadDevices();
           } else {
@@ -4536,7 +4847,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (data.success && data.device) {
           currentDeviceData = data.device;
           showPendingPairingUI(currentDeviceData);
-          showToast("Fresh pairing code generated 🌸");
+          showToast("Fresh pairing code generated 🐘");
         }
       } catch (e) {}
     };
@@ -4584,7 +4895,7 @@ document.addEventListener("DOMContentLoaded", () => {
             currentDeviceData = data.device;
             closeFirstDeviceTrustModal();
             updateCurrentDeviceUI(currentDeviceData);
-            showToast("🌸 Device verified with password and trusted!");
+            showToast("🐘 Device verified with password and trusted!");
             connectDeviceWebSocket(myId);
             loadDevices();
           } else {
@@ -4655,7 +4966,7 @@ document.addEventListener("DOMContentLoaded", () => {
           });
           const data = await res.json();
           if (data.success) {
-            showToast("Device renamed 🌸");
+            showToast("Device renamed 🐘");
             loadDevices();
           }
         } catch (e) {}
@@ -4700,7 +5011,7 @@ document.addEventListener("DOMContentLoaded", () => {
           });
           const data = await res.json();
           if (data.success) {
-            showToast("Device settings saved 🌸");
+            showToast("Device settings saved 🐘");
             if (devModal) devModal.style.display = "none";
             loadDevices();
           } else {
@@ -4736,7 +5047,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (testNoteBtn) {
       testNoteBtn.addEventListener("click", () => {
         const id = document.getElementById("editDeviceId").value;
-        const text = prompt("Enter note to send to device:", "Hello from SINBHA! 🌸");
+        const text = prompt("Enter note to send to device:", "Hello from SINBHA! 🐘");
         if (text) {
           sendRemoteCommand(id, "send_note", { text: text });
         }

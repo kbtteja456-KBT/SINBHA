@@ -144,7 +144,7 @@
       <div class="pulse-ring"></div>
       <img src="icon.png" alt="SINBHA Logo" class="logo-img" onerror="this.src='tray_icon.png'">
     </div>
-    <h1>SINBHA is <span>Waking Up</span> 🌸</h1>
+    <h1>SINBHA is <span>Waking Up</span> 🐘</h1>
     <p>
       Your personal AI companion is warming up in the cloud.<br>
       This only takes a few seconds—hang tight!
@@ -155,8 +155,9 @@
       <span id="statusText">Connecting in <b id="countdown">5</b>s...</span>
     </div>
 
-    <div>
-      <button id="retryBtn" class="retry-btn">Retry Now ⚡</button>
+    <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+      <button id="retryBtn" class="retry-btn">Retry Cloud ⚡</button>
+      <button id="localModeBtn" class="retry-btn" style="background: linear-gradient(135deg, #059669, #10b981);">Use Local Mode (Port 8008) 💻</button>
     </div>
 
     <div class="footer-note">
@@ -176,7 +177,7 @@
       try {
         const res = await fetch(`${BACKEND_URL}/api/health`, { cache: 'no-store' });
         if (res.ok) {
-          statusText.innerHTML = 'Connected! Loading app... 🌸';
+          statusText.innerHTML = 'Connected! Loading app... 🐘';
           window.location.href = BACKEND_URL;
           return;
         }
@@ -209,6 +210,18 @@
       clearInterval(timer);
       checkHealth();
     });
+
+    const localBtn = document.getElementById('localModeBtn');
+    if (localBtn) {
+      localBtn.addEventListener('click', () => {
+        clearInterval(timer);
+        if (window.electronAPI && typeof window.electronAPI.switchBackendUrl === 'function') {
+          window.electronAPI.switchBackendUrl('http://127.0.0.1:8008');
+        } else {
+          window.location.href = 'http://127.0.0.1:8008';
+        }
+      });
+    }
 
     // Start initial countdown on load
     startCountdown();

@@ -2977,7 +2977,7 @@ async def health_check():
             "ai_cost_cap_reached": ai_cap_reached,
             "ai_today_messages": global_ai_count,
             "ai_daily_cap": global_ai_cap,
-            "version": "1.0.0"
+            "version": get_app_version()
         }
     )
 

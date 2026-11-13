@@ -56,7 +56,7 @@
           <input type="password" id="loginPassword" placeholder="Enter your password" required autocomplete="current-password" />
         </div>
         <button type="submit" id="loginSubmitBtn" class="auth-submit-btn">
-          Log In 🌸
+          Log In 🐘
         </button>
       </form>
 
@@ -83,11 +83,11 @@
         </div>
 
         <div class="auth-ai-disclaimer">
-          <span>🌸 <strong>Notice:</strong> Messages are processed by an AI provider to assist you with companion support, memory facts, and task scheduling.</span>
+          <span>🐘 <strong>Notice:</strong> Messages are processed by an AI provider to assist you with companion support, memory facts, and task scheduling.</span>
         </div>
 
         <button type="submit" id="signupSubmitBtn" class="auth-submit-btn">
-          Create Account 🌸
+          Create Account 🐘
         </button>
       </form>
     </div>
@@ -148,7 +148,7 @@
     <div id="stopBanner" class="stop-banner" style="display: none;">
       <div class="stop-banner-content">
         <span>🛑 Emergency Stop is active. Processing is paused.</span>
-        <button id="bannerResumeBtn" class="resume-btn">🌸 Resume Chat</button>
+        <button id="bannerResumeBtn" class="resume-btn">🐘 Resume Chat</button>
       </div>
     </div>
 
@@ -308,7 +308,7 @@
         <div class="settings-info-section" style="background: #fff0f3; border: 1.5px solid #fbcfe8; border-radius: 12px; padding: 14px;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
             <div style="display: flex; align-items: center; gap: 8px;">
-              <span style="font-size: 1.2rem;">🌸</span>
+              <span style="font-size: 1.2rem;">🐘</span>
               <strong id="settingsUserEmail" style="color: #9d174d; font-size: 0.94rem;">user@example.com</strong>
             </div>
             <span id="settingsAdminBadge" class="count-tag" style="display: none; background: #f472b6; color: white;">Admin</span>
@@ -645,15 +645,35 @@
             <div style="margin-top: 14px; border-top: 1px solid #fbcfe8; padding-top: 12px;">
               <div style="font-weight: 700; font-size: 0.85rem; color: #1e3a8a; margin-bottom: 4px;">📡 Remote Command Real Device Check</div>
               <p style="font-size: 0.76rem; color: #6b7280; margin-bottom: 8px;">Tests end-to-end delivery through the identical chat path across all connected devices.</p>
+              
+              <label style="display: flex; align-items: center; gap: 8px; font-size: 0.78rem; color: #374151; margin-bottom: 8px; cursor: pointer; user-select: none;">
+                <input type="checkbox" id="chkDelay20s" style="accent-color: #2563eb; width: 16px; height: 16px;">
+                <span>🌙 <strong>Phone in background, screen off</strong> (20s countdown to lock phone)</span>
+              </label>
+
               <button type="button" id="btnRealDeviceCheck" class="confirm-btn-primary" style="width: 100%; justify-content: center; font-size: 0.88rem; font-weight: 700; background: linear-gradient(135deg, #2563eb, #1d4ed8); color: #fff; border: none; border-radius: 8px; padding: 10px; cursor: pointer;">
                 🔍 Run Real Device Check (Cross-Device 6-App Test)
               </button>
+
+              <button type="button" id="btnBackgroundLaunchTest" class="confirm-btn-primary" style="width: 100%; margin-top: 6px; justify-content: center; font-size: 0.84rem; font-weight: 700; background: linear-gradient(135deg, #059669, #047857); color: #fff; border: none; border-radius: 8px; padding: 9px; cursor: pointer;">
+                📱 Run Background Launch Test (App, Settings, URL, Deep Link)
+              </button>
+
               <div id="realDeviceCheckResultsContainer" style="display: none; margin-top: 10px; background: #fff; border: 1.5px solid #bfdbfe; border-radius: 8px; padding: 12px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                   <strong style="font-size: 0.85rem; color: #1e3a8a;">Remote Path Verification:</strong>
                   <span id="realDeviceSummaryBadge" style="font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 12px; background: #e5e7eb; color: #374151;">Ready</span>
                 </div>
                 <div id="realDeviceResultsList" style="display: flex; flex-direction: column; gap: 6px; font-size: 0.8rem;"></div>
+              </div>
+
+              <div id="bgLaunchResultsContainer" style="display: none; margin-top: 10px; background: #fff; border: 1.5px solid #a7f3d0; border-radius: 8px; padding: 12px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                  <strong style="font-size: 0.85rem; color: #065f46;">Background Route Results:</strong>
+                  <span id="bgLaunchSummaryBadge" style="font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 12px; background: #e5e7eb; color: #374151;">Ready</span>
+                </div>
+                <div id="bgLaunchDeviceInfo" style="font-size: 0.76rem; color: #374151; font-weight: 600; margin-bottom: 8px; background: #f0fdf4; padding: 6px 8px; border-radius: 6px;"></div>
+                <div id="bgLaunchResultsList" style="display: flex; flex-direction: column; gap: 6px; font-size: 0.8rem;"></div>
               </div>
             </div>
 
@@ -719,7 +739,7 @@
               </p>
               <div style="display: flex; gap: 6px;">
                 <input type="password" id="firstDevicePasswordInput" placeholder="Account password" style="flex: 1; padding: 6px 10px; border: 1.5px solid #fcd34d; border-radius: 6px; font-size: 0.85rem;" />
-                <button type="button" id="trustFirstDeviceBtn" class="confirm-btn-primary" style="padding: 6px 12px; font-size: 0.8rem; white-space: nowrap;">Trust Device 🌸</button>
+                <button type="button" id="trustFirstDeviceBtn" class="confirm-btn-primary" style="padding: 6px 12px; font-size: 0.8rem; white-space: nowrap;">Trust Device 🐘</button>
               </div>
             </div>
           </div>
@@ -801,7 +821,7 @@
         <div class="settings-reminders-section" id="settingsAppUpdateSection">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
             <h3 style="margin: 0; display: flex; align-items: center; gap: 8px;">
-              <span>🌸 App Version & Updates</span>
+              <span>🐘 App Version & Updates</span>
             </h3>
             <span id="currentAppVersionBadge" class="badge" style="background: #fdf2f8; color: #db2777; font-weight: 700; border: 1px solid #fbcfe8;">v1.0.7</span>
           </div>
@@ -900,7 +920,7 @@
   <div class="confirm-modal-overlay" id="termsModal" style="display: none;">
     <div class="confirm-modal-card" style="max-width: 520px; text-align: left;">
       <div class="modal-sticky-header">
-        <h3 style="margin: 0; color: #db2777;">🌸 Terms of Service <span style="font-size: 0.7rem; background: #fef08a; color: #854d0e; padding: 2px 6px; border-radius: 4px; font-weight: normal;">Needs Legal Review</span></h3>
+        <h3 style="margin: 0; color: #db2777;">🐘 Terms of Service <span style="font-size: 0.7rem; background: #fef08a; color: #854d0e; padding: 2px 6px; border-radius: 4px; font-weight: normal;">Needs Legal Review</span></h3>
         <button id="closeTermsBtn" class="popup-close-btn" aria-label="Close terms of service">&times;</button>
       </div>
       <div class="modal-scroll-body modal-text-content">
@@ -919,13 +939,13 @@
   <div class="confirm-modal-overlay" id="privacyModal" style="display: none;">
     <div class="confirm-modal-card" style="max-width: 520px; text-align: left;">
       <div class="modal-sticky-header">
-        <h3 style="margin: 0; color: #db2777;">🌸 Privacy Policy <span style="font-size: 0.7rem; background: #fef08a; color: #854d0e; padding: 2px 6px; border-radius: 4px; font-weight: normal;">Needs Legal Review</span></h3>
+        <h3 style="margin: 0; color: #db2777;">🐘 Privacy Policy <span style="font-size: 0.7rem; background: #fef08a; color: #854d0e; padding: 2px 6px; border-radius: 4px; font-weight: normal;">Needs Legal Review</span></h3>
         <button id="closePrivacyBtn" class="popup-close-btn" aria-label="Close privacy policy">&times;</button>
       </div>
       <div class="modal-scroll-body modal-text-content">
         <p><strong>1. Strict User Isolation:</strong> Every message, fact, task, and reminder is bound to your user account and never shared with other users. Admins cannot read your chat contents.</p>
         <p><strong>2. Encryption at Rest:</strong> Sensitive message contents and memory facts are stored encrypted at rest in our database using Fernet symmetric encryption.</p>
-        <p><strong>3. AI Processing & Approved Providers:</strong> Messages are processed exclusively by your approved AI model providers: <strong>Groq Cloud</strong> (ultra-fast frontier open-weight models) and <strong>OpenRouter AI</strong> (multi-model gateway). No other third party receives your conversation text. Plain passwords, OTP codes, and credit cards are strictly blocked and never sent. You can switch providers or disable external AI processing entirely in Settings &amp; Privacy.</p>
+        <p><strong>3. AI Processing & Approved Providers:</strong> Messages are processed exclusively by your approved AI model providers: <strong>Groq Cloud</strong> (ultra-fast frontier open-weight models; zero training on customer API data), <strong>Google AI Studio</strong> (Gemini Flash direct fallback; zero training under paid/API terms), <strong>OpenRouter AI</strong> (multi-model gateway paid fallback), and <strong>Local Dev LLM</strong> (isolated offline development server, strictly blocked in production). No other third party receives your conversation text. Plain passwords, OTP codes, and credit cards are strictly blocked and never sent. You can switch any provider off or disable external AI processing entirely in Settings &amp; Privacy.</p>
         <p><strong>4. Screen Agent Privacy & Ephemeral Vision:</strong> When using screen automation, screen captures are transmitted exclusively over encrypted TLS to the vision model to understand the UI. Screenshots are <em>NEVER</em> stored on the server or written to disk. Password managers, banking windows, OTPs, and credit card inputs are strictly blocked from capture and automated typing.</p>
         <p><strong>5. Data Rights:</strong> You can download a complete JSON archive of all your data (Settings → Download My Data) or permanently delete your account and all associated data at any time.</p>
       </div>
@@ -965,7 +985,7 @@
       </div>
 
       <div class="empty-task-state" id="emptyTaskState">
-        <div class="empty-icon-card">🌸</div>
+        <div class="empty-icon-card">🐘</div>
         <h3>No tasks yet</h3>
         <p>When you talk about assignments or to-dos with SINBHA, she'll propose them with <strong>Confirm / Cancel</strong> buttons in chat before saving anything.</p>
       </div>
@@ -1007,7 +1027,7 @@
         <div id="birdNoteOverlay" class="bird-note-overlay">
           <div id="birdNoteTitle" class="bird-note-title">Task Title</div>
           <div id="birdNoteDue" class="bird-note-due">Due: 8:00 AM</div>
-          <div class="bird-note-tap">tap me 🌸</div>
+          <div class="bird-note-tap">tap me 🐘</div>
         </div>
       </div>
     </div>
@@ -1056,7 +1076,7 @@
   <!-- APP UPDATE GATE MODAL (Requirement 5) -->
   <div class="confirm-modal-overlay" id="appUpdateGateModal" style="display: none; z-index: 99999;">
     <div class="confirm-modal-card" style="max-width: 440px; text-align: center;">
-      <div class="confirm-icon-box" style="background: #fdf2f8; color: #db2777; font-size: 2.2rem;">🌸</div>
+      <div class="confirm-icon-box" style="background: #fdf2f8; color: #db2777; font-size: 2.2rem;">🐘</div>
       <h3 id="appUpdateGateTitle" style="color: #0f172a; margin-bottom: 8px;">New Version Available!</h3>
       <p id="appUpdateGateDesc" style="color: #64748b; font-size: 0.9rem; line-height: 1.5; margin-bottom: 20px;">
         A new version of SINBHA is available with important companion enhancements and stability fixes.
@@ -1096,7 +1116,7 @@
         </div>
         <div style="display: flex; justify-content: flex-end; gap: 8px;">
           <button type="button" id="cancelPairCodeBtn" class="confirm-btn-secondary">Cancel</button>
-          <button type="button" id="submitPairCodeBtn" class="confirm-btn-primary">Approve Device 🌸</button>
+          <button type="button" id="submitPairCodeBtn" class="confirm-btn-primary">Approve Device 🐘</button>
         </div>
       </div>
     </div>
@@ -1198,7 +1218,7 @@
       </div>
       <div style="display: flex; justify-content: center; gap: 10px;">
         <button type="button" id="denyRemoteCmdBtn" class="confirm-btn-secondary" style="flex: 1; justify-content: center;">Deny</button>
-        <button type="button" id="allowRemoteCmdBtn" class="confirm-btn-primary" style="flex: 1; justify-content: center;">Allow 🌸</button>
+        <button type="button" id="allowRemoteCmdBtn" class="confirm-btn-primary" style="flex: 1; justify-content: center;">Allow 🐘</button>
       </div>
     </div>
   </div>
@@ -1232,7 +1252,7 @@
         </div>
         <div id="firstDeviceModalError" style="display: none; color: #dc2626; font-size: 0.82rem; font-weight: 600; text-align: left;"></div>
         <button type="submit" id="firstDeviceModalSubmitBtn" class="confirm-btn-primary" style="width: 100%; justify-content: center; padding: 12px; font-size: 0.95rem; font-weight: 700;">
-          ✓ Verify & Trust Device 🌸
+          ✓ Verify & Trust Device 🐘
         </button>
       </form>
     </div>
@@ -1308,7 +1328,7 @@
               const laterBtn = document.getElementById('appUpdateLaterBtn');
 
               if (title) {
-                title.textContent = isMandatory ? ('Update Required for ' + platform) : ('New ' + platform + ' Version Available! 🌸');
+                title.textContent = isMandatory ? ('Update Required for ' + platform) : ('New ' + platform + ' Version Available! 🐘');
               }
               if (desc) {
                 desc.innerHTML = isMandatory

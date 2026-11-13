@@ -40,5 +40,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   launchDesktopApp: (appName) => ipcRenderer.invoke('launch-desktop-app', appName),
   typeInput: (payload) => ipcRenderer.invoke('type-input', payload),
   lockWorkstation: () => ipcRenderer.invoke('lock-workstation'),
-  getDesktopBattery: () => ipcRenderer.invoke('get-desktop-battery')
+  getDesktopBattery: () => ipcRenderer.invoke('get-desktop-battery'),
+
+  // Backend connection control & Local presentation switch
+  switchBackendUrl: (url) => ipcRenderer.invoke('switch-backend-url', url)
 });
