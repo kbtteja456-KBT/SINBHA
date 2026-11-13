@@ -347,7 +347,7 @@ class CommandRelayManager:
                 app_disp = (late_info.get("app_name") if late_info else None) or (
                     entry.get("result", {}).get("app") if isinstance(entry.get("result"), dict) else "app"
                 )
-                update_msg = f"Update: {app_disp} did open 🌸" if (app_disp and app_disp != "app") else "Update: it did open 🌸"
+                update_msg = f"Update: {app_disp} did open 🐘" if (app_disp and app_disp != "app") else "Update: it did open 🐘"
 
                 try:
                     if late_info and late_info.get("message_id"):

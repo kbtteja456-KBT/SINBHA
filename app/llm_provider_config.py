@@ -303,7 +303,7 @@ def build_ordered_provider_chain(
             "model": preferred_model,
             "endpoint": "https://api.groq.com/openai/v1/chat/completions",
             "supports_tools": True,
-            "reasoning_effort": "low" if "gpt-oss" in preferred_model else None
+            "reasoning_effort": None
         })
 
     # 2b. Groq Secondary (Key 2: Additional 200,000 Tokens/Day Quota)
@@ -315,7 +315,7 @@ def build_ordered_provider_chain(
             "model": preferred_model,
             "endpoint": "https://api.groq.com/openai/v1/chat/completions",
             "supports_tools": True,
-            "reasoning_effort": "low" if "gpt-oss" in preferred_model else None
+            "reasoning_effort": None
         })
 
     # 3. Google AI Studio (Fallback 1)

@@ -153,7 +153,7 @@ def send_verification_email(to_email: str, token: str, base_url: Optional[str] =
 
     subject = "Verify your SINBHA account"
     text = (
-        f"Welcome to SINBHA! 🌸\n\n"
+        f"Welcome to SINBHA! 🐘\n\n"
         f"Please verify your email address to unlock device pairing and remote companion features.\n\n"
         f"Verification Link (valid for 24 hours):\n"
         f"{verify_link}\n\n"
@@ -163,7 +163,7 @@ def send_verification_email(to_email: str, token: str, base_url: Optional[str] =
     )
     html = f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 580px; margin: 0 auto; padding: 24px; border: 1px solid #fed7aa; border-radius: 12px; background: #fffaf5;">
-        <h2 style="color: #ea580c; margin-top: 0;">🌸 Welcome to SINBHA</h2>
+        <h2 style="color: #ea580c; margin-top: 0;">🐘 Welcome to SINBHA</h2>
         <p style="font-size: 15px; color: #431407; line-height: 1.5;">
             Thank you for creating an account. Please verify your email address to enable device pairing and remote companion actions.
         </p>

@@ -207,7 +207,7 @@ def _build_agent_system_prompt(
         facts_list_text = "\n".join([f"- {f['fact']}" for f in remembered_facts])
         system_content += f"\n\nSAVED FACTS ABOUT YOUR FRIEND (MEMORIES):\n{facts_list_text}\n(Bring these up naturally when helpful. Never recite as a robotic checklist.)"
     else:
-        system_content += "\n\nSAVED FACTS ABOUT YOUR FRIEND (MEMORIES):\nNone saved yet. If they ask what you remember, let them know your memory is a clean slate right now 🌸"
+        system_content += "\n\nSAVED FACTS ABOUT YOUR FRIEND (MEMORIES):\nNone saved yet. If they ask what you remember, let them know your memory is a clean slate right now 🐘"
 
     if user_devices is not None:
         active_devices = [d for d in user_devices if d.get("status") not in ("revoked", "removed")]
@@ -542,7 +542,7 @@ async def run_agent_loop(
     active_provider = db_module.get_active_ai_provider(user_id) if hasattr(db_module, "get_active_ai_provider") else "auto"
     if active_provider == "disabled":
         return AgentResult(
-            reply="External AI model processing is currently disabled in your Settings. You can re-enable it in Settings at any time! 🌸",
+            reply="External AI model processing is currently disabled in your Settings. You can re-enable it in Settings at any time! 🐘",
             error="ai_disabled",
         )
 
@@ -559,7 +559,7 @@ async def run_agent_loop(
     creds = get_llm_credentials(active_provider)
     if not creds:
         return AgentResult(
-            reply="I'm not quite connected to my brain yet! 🌸 Please check your AI API key in your settings or .env file.",
+            reply="I'm not quite connected to my brain yet! 🐘 Please check your AI API key in your settings or .env file.",
             error="missing_api_key",
         )
 
@@ -649,7 +649,7 @@ async def run_agent_loop(
         elapsed = time.time() - start_time
         if elapsed > AGENT_TIMEOUT_SECONDS:
             return AgentResult(
-                reply="I took a little too long thinking about that! Please try again 🌸",
+                reply="I took a little too long thinking about that! Please try again 🐘",
                 tool_calls_log=tool_calls_log,
                 step_log=step_log,
                 error="agent_timeout",
@@ -782,9 +782,9 @@ async def run_agent_loop(
                     last_res = last_tc.get("result")
                     last_msg = last_res.get("message") if isinstance(last_res, dict) else None
                     if last_msg:
-                        content = f"{last_msg} 🌸"
+                        content = f"{last_msg} 🐘"
                     else:
-                        content = "Done! I took care of that for you 🌸"
+                        content = "Done! I took care of that for you 🐘"
                 else:
                     log_llm_reliability("empty_answer", creds.get("provider"), creds.get("model"))
                     trace_data = {
@@ -1002,7 +1002,7 @@ async def run_agent_loop(
 
     # Exceeded max steps — return whatever we have
     return AgentResult(
-        reply="I tried my best but ran out of thinking steps! Let me know if you need anything else 🌸",
+        reply="I tried my best but ran out of thinking steps! Let me know if you need anything else 🐘",
         tool_calls_log=tool_calls_log,
         proposal=proposal,
         confirmation_card=confirmation_card,

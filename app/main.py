@@ -367,7 +367,7 @@ async def signup_endpoint(payload: SignupRequest, request: Request, response: Re
                 "email": user["email"],
                 "is_verified": False
             },
-            "message": "Account created! 🌸 Please check your email to confirm your account and start chatting."
+            "message": "Account created! 🐘 Please check your email to confirm your account and start chatting."
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -420,7 +420,7 @@ async def login_endpoint(payload: LoginRequest, request: Request, response: Resp
         return {
             "success": True,
             "user": user,
-            "message": "Welcome back! 🌸"
+            "message": "Welcome back! 🐘"
         }
     except ValueError as e:
         msg = str(e)
@@ -568,7 +568,7 @@ async def logout_endpoint(request: Request, response: Response):
         db.revoke_device_command_token(cmd_token)
 
     response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
-    return {"success": True, "message": "Logged out successfully 🌸"}
+    return {"success": True, "message": "Logged out successfully 🐘"}
 
 @app.get("/api/auth/me")
 async def get_me_endpoint(request: Request):
@@ -672,7 +672,7 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
     if len(user_msg) > 2000:
         raise HTTPException(
             status_code=400,
-            detail="Message is too long. Please keep your message under 2,000 characters. 🌸"
+            detail="Message is too long. Please keep your message under 2,000 characters. 🐘"
         )
 
     # Requirement 4: Rate limit check
@@ -680,7 +680,7 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
 
     if not user_msg:
         return JSONResponse({
-            "reply": "I'm listening whenever you want to talk 🌸",
+            "reply": "I'm listening whenever you want to talk 🐘",
             "proposal": None
         })
 
@@ -706,7 +706,7 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
         db.cancel_pending_proposal(user_id, reason="Emergency STOP command received in chat")
         db.cancel_pending_task_action(user_id, reason="Emergency STOP command received in chat")
         
-        stop_reply = "🛑 STOP command received. All operations halted immediately. Type any message or click 'Resume Chat' to continue whenever you're ready 🌸"
+        stop_reply = "🛑 STOP command received. All operations halted immediately. Type any message or click 'Resume Chat' to continue whenever you're ready 🐘"
         db.save_message(user_id, "assistant", stop_reply)
         db.log_audit(user_id, "STOP_TRIGGERED", "User commanded STOP in chat.")
         return JSONResponse({
@@ -732,9 +732,9 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
             if res:
                 db.save_message(user_id, "user", user_msg)
                 if res["action_type"] == "task_complete":
-                    reply_msg = f"Woohoo! 🎉 Marked '{res['task_title']}' as completed! Amazing job! 🌸"
+                    reply_msg = f"Woohoo! 🎉 Marked '{res['task_title']}' as completed! Amazing job! 🐘"
                 else:
-                    reply_msg = f"I've removed '{res['task_title']}' from your tasks 🌸"
+                    reply_msg = f"I've removed '{res['task_title']}' from your tasks 🐘"
                 db.save_message(user_id, "assistant", reply_msg)
                 return JSONResponse({
                     "reply": reply_msg,
@@ -744,7 +744,7 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
         elif is_cancel:
             db.cancel_pending_task_action(user_id, reason="User cancelled in chat")
             db.save_message(user_id, "user", user_msg)
-            reply_msg = "No problem at all! Kept it just as it is 🌸"
+            reply_msg = "No problem at all! Kept it just as it is 🐘"
             db.save_message(user_id, "assistant", reply_msg)
             return JSONResponse({
                 "reply": reply_msg,
@@ -766,7 +766,7 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
             confirmed = db.confirm_pending_proposal(user_id)
             if confirmed:
                 db.save_message(user_id, "user", user_msg)
-                reply_msg = f"Saved! I've added '{confirmed['title']}' to your tasks. You've got this! 🌸"
+                reply_msg = f"Saved! I've added '{confirmed['title']}' to your tasks. You've got this! 🐘"
                 db.save_message(user_id, "assistant", reply_msg)
                 return JSONResponse({
                     "reply": reply_msg,
@@ -776,7 +776,7 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
         elif is_task_cancel:
             db.cancel_pending_proposal(user_id, reason="User cancelled in chat")
             db.save_message(user_id, "user", user_msg)
-            reply_msg = "No problem at all! I dropped that task proposal 🌸"
+            reply_msg = "No problem at all! I dropped that task proposal 🐘"
             db.save_message(user_id, "assistant", reply_msg)
             return JSONResponse({
                 "reply": reply_msg,
@@ -799,7 +799,7 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
             db.save_message(user_id, "user", user_msg)
             db.delete_fact(user_id, target_id)
             db.clear_pending_action(user_id)
-            reply = "I've forgotten that for you! It's wiped from my memory 🌸"
+            reply = "I've forgotten that for you! It's wiped from my memory 🐘"
             db.save_message(user_id, "assistant", reply)
             return JSONResponse({
                 "reply": reply,
@@ -810,7 +810,7 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
         elif is_no:
             db.save_message(user_id, "user", user_msg)
             db.clear_pending_action(user_id)
-            reply = "No problem at all! I'll keep remembering it 🌸"
+            reply = "No problem at all! I'll keep remembering it 🐘"
             db.save_message(user_id, "assistant", reply)
             return JSONResponse({
                 "reply": reply,
@@ -832,7 +832,7 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
             relay_res = await relay_manager.relay_command(user_id, cmd_data)
             db.save_message(user_id, "user", user_msg)
             if relay_res.get("success"):
-                reply = f"🌸 Remote action sent to your device! ({cmd_data.get('type')})"
+                reply = f"🐘 Remote action sent to your device! ({cmd_data.get('type')})"
             else:
                 reply = f"Could not execute remote command: {relay_res.get('message', 'Rejected')}"
             db.save_message(user_id, "assistant", reply)
@@ -844,7 +844,7 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
         elif is_no:
             db.save_message(user_id, "user", user_msg)
             db.clear_pending_action(user_id)
-            reply = "Remote action cancelled 🌸"
+            reply = "Remote action cancelled 🐘"
             db.save_message(user_id, "assistant", reply)
             return JSONResponse({
                 "reply": reply,
@@ -913,7 +913,7 @@ async def _handle_chat_message(payload: ChatRequest, request: Request, user: dic
         )
     except Exception as e:
         logger.error(f"Agent loop error: {e}", exc_info=True)
-        fallback_reply = "I had trouble reaching my AI brain just now. Please try again or tap Retry 🌸"
+        fallback_reply = "I had trouble reaching my AI brain just now. Please try again or tap Retry 🐘"
         db.save_message(user_id, "assistant", fallback_reply)
         return JSONResponse({
             "reply": fallback_reply,
@@ -1056,10 +1056,10 @@ async def confirm_task_endpoint(payload: TaskConfirmWithRemindersRequest = None,
     if not confirmed:
         return JSONResponse({
             "success": False,
-            "reply": "This task proposal has expired or was already resolved 🌸"
+            "reply": "This task proposal has expired or was already resolved 🐘"
         })
 
-    reply_msg = f"Saved! I've added '{confirmed['title']}' to your tasks. You've got this! 🌸"
+    reply_msg = f"Saved! I've added '{confirmed['title']}' to your tasks. You've got this! 🐘"
     db.save_message(user_id, "assistant", reply_msg)
     return JSONResponse({
         "success": True,
@@ -1073,7 +1073,7 @@ async def cancel_task_endpoint(user: dict = Depends(get_current_user)):
     """Cancels pending task proposal for the logged-in user."""
     user_id = user["id"]
     db.cancel_pending_proposal(user_id, reason="User clicked Cancel")
-    reply_msg = "No problem at all! I dropped that task proposal 🌸"
+    reply_msg = "No problem at all! I dropped that task proposal 🐘"
     db.save_message(user_id, "assistant", reply_msg)
     return JSONResponse({
         "success": True,
@@ -1575,7 +1575,7 @@ async def confirm_action_endpoint(payload: ActionConfirmRequest, user: dict = De
         if action == "confirm":
             res = db.confirm_pending_task_action(user_id)
             if res:
-                reply = f"Woohoo! 🎉 Marked '{res['task_title']}' as completed! Amazing job! 🌸" if res["action_type"] == "task_complete" else f"I've removed '{res['task_title']}' from your tasks 🌸"
+                reply = f"Woohoo! 🎉 Marked '{res['task_title']}' as completed! Amazing job! 🐘" if res["action_type"] == "task_complete" else f"I've removed '{res['task_title']}' from your tasks 🐘"
                 db.save_message(user_id, "assistant", reply)
                 return JSONResponse({
                     "success": True,
@@ -1586,20 +1586,20 @@ async def confirm_action_endpoint(payload: ActionConfirmRequest, user: dict = De
                 })
         else:
             db.cancel_pending_task_action(user_id, reason="User clicked Cancel")
-            reply = "No problem at all! Kept it just as it is 🌸"
+            reply = "No problem at all! Kept it just as it is 🐘"
             db.save_message(user_id, "assistant", reply)
             return JSONResponse({"success": True, "reply": reply, "action_performed": "cancelled"})
 
     pending = db.get_pending_action(user_id)
     if not pending:
-        return JSONResponse({"success": False, "reply": "No pending action found 🌸"})
+        return JSONResponse({"success": False, "reply": "No pending action found 🐘"})
 
     if action == "confirm":
         if pending["action_type"] == "forget_fact":
             target_id = pending["target_id"]
             db.delete_fact(user_id, target_id)
             db.clear_pending_action(user_id)
-            reply = "I've forgotten that for you! It's wiped from my memory 🌸"
+            reply = "I've forgotten that for you! It's wiped from my memory 🐘"
             db.save_message(user_id, "assistant", reply)
             return JSONResponse({
                 "success": True,
@@ -1609,12 +1609,12 @@ async def confirm_action_endpoint(payload: ActionConfirmRequest, user: dict = De
             })
     else:
         db.clear_pending_action(user_id)
-        reply = "No problem at all! I'll keep remembering it 🌸"
+        reply = "No problem at all! I'll keep remembering it 🐘"
         db.save_message(user_id, "assistant", reply)
         return JSONResponse({"success": True, "reply": reply, "action_performed": "cancelled"})
 
     db.clear_pending_action(user_id)
-    return JSONResponse({"success": True, "reply": "Action completed 🌸"})
+    return JSONResponse({"success": True, "reply": "Action completed 🐘"})
 
 # ----------------- Emergency STOP / Resume Endpoints (Per-User) -----------------
 
@@ -1641,7 +1641,7 @@ async def resume_endpoint(user: dict = Depends(get_current_user)):
     db.log_audit(user_id, "STOP_RESUMED", "Resume button clicked.")
     return JSONResponse({
         "status": "resumed",
-        "message": "🌸 Welcome back! Everything is quiet and ready."
+        "message": "🐘 Welcome back! Everything is quiet and ready."
     })
 
 # ----------------- Memory & Admin/Dev Endpoints (Requirement 4) -----------------
@@ -2055,7 +2055,7 @@ async def device_websocket_endpoint(websocket: WebSocket):
         await websocket.send_text(json.dumps({
             "type": "ready",
             "device_id": device_id,
-            "message": "Secure channel connected 🌸"
+            "message": "Secure channel connected 🐘"
         }))
 
         # Drain and deliver unexpired offline commands
@@ -3036,10 +3036,10 @@ async def verify_email_page(response: Response, token: Optional[str] = None):
         </head>
         <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #fffaf5;">
             <div style="max-width: 440px; margin: 20px; padding: 32px; background: white; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); text-align: center; border: 1px solid #fed7aa;">
-                <h1 style="color: #ea580c; margin-top: 0; font-size: 28px;">🌸 Email Verified!</h1>
+                <h1 style="color: #ea580c; margin-top: 0; font-size: 28px;">🐘 Email Verified!</h1>
                 <p style="color: #431407; font-size: 16px; line-height: 1.5;">Your email has been confirmed. You are now logged in!</p>
                 <div style="margin-top: 24px;">
-                    <a href="/?verified=true" style="display: inline-block; background: #f97316; color: white; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 600; font-size: 16px;">Open SINBHA & Start Chatting 🌸</a>
+                    <a href="/?verified=true" style="display: inline-block; background: #f97316; color: white; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 600; font-size: 16px;">Open SINBHA & Start Chatting 🐘</a>
                 </div>
                 <p style="color: #9a3412; font-size: 13px; margin-top: 16px;">Opening your app directly...</p>
             </div>
@@ -3154,7 +3154,7 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     local_ip = get_local_ip()
     print("=" * 60)
-    print("🌸 SINBHA is running!")
+    print("🐘 SINBHA is running!")
     print(f"👉 On your computer:  http://localhost:{port}")
     print(f"👉 On your phone:     http://{local_ip}:{port}")
     print("=" * 60)

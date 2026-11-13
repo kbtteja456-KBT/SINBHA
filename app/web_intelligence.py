@@ -663,7 +663,7 @@ class WebIntelligenceAgent:
             )
             latency = int((time.time() - start_time) * 1000)
             return ResearchSearchResponse(
-                answer=brain_res.get("reply", "I'm right here with you 🌸"),
+                answer=brain_res.get("reply", "I'm right here with you 🐘"),
                 sources=[],
                 citations=[],
                 search_performed=False,

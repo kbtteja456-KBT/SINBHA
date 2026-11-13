@@ -2251,7 +2251,7 @@ def approve_device_pairing(user_id: int, code: str, approver_device_id: Optional
         )
         return {
             "success": True,
-            "message": f"Device '{matched_target.name}' is now paired and trusted! 🌸",
+            "message": f"Device '{matched_target.name}' is now paired and trusted! 🐘",
             "device": _device_to_dict(matched_target)
         }
 
